@@ -23,7 +23,7 @@
 #include "config.h"
 #endif
 
-#include <assert.h>
+#include <winpr/assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -80,6 +80,7 @@ static const UINT32 rfx_default_quantization_values[] = { 6, 6, 6, 6, 7, 7, 8, 8
 
 static void rfx_profiler_create(RFX_CONTEXT* context)
 {
+	WINPR_UNUSED(context);
 	PROFILER_CREATE(context->priv->prof_rfx_decode_rgb, "rfx_decode_rgb")
 	PROFILER_CREATE(context->priv->prof_rfx_decode_component, "rfx_decode_component")
 	PROFILER_CREATE(context->priv->prof_rfx_rlgr_decode, "rfx_rlgr_decode")
@@ -99,6 +100,7 @@ static void rfx_profiler_create(RFX_CONTEXT* context)
 
 static void rfx_profiler_free(RFX_CONTEXT* context)
 {
+	WINPR_UNUSED(context);
 	PROFILER_FREE(context->priv->prof_rfx_decode_rgb)
 	PROFILER_FREE(context->priv->prof_rfx_decode_component)
 	PROFILER_FREE(context->priv->prof_rfx_rlgr_decode)
@@ -118,6 +120,8 @@ static void rfx_profiler_free(RFX_CONTEXT* context)
 
 static void rfx_profiler_print(RFX_CONTEXT* context)
 {
+	WINPR_UNUSED(context);
+
 	PROFILER_PRINT_HEADER
 	PROFILER_PRINT(context->priv->prof_rfx_decode_rgb)
 	PROFILER_PRINT(context->priv->prof_rfx_decode_component)
@@ -155,18 +159,19 @@ static void rfx_tile_init(void* obj)
 
 static void* rfx_decoder_tile_new(const void* val)
 {
+	const size_t size = 4 * 64 * 64;
 	RFX_TILE* tile = NULL;
 	WINPR_UNUSED(val);
 
 	if (!(tile = (RFX_TILE*)calloc(1, sizeof(RFX_TILE))))
 		return NULL;
 
-	if (!(tile->data = (BYTE*)_aligned_malloc(4 * 64 * 64, 16)))
+	if (!(tile->data = (BYTE*)_aligned_malloc(size, 16)))
 	{
 		free(tile);
 		return NULL;
 	}
-
+	memset(tile->data, 0xff, size);
 	tile->allocated = TRUE;
 	return tile;
 }
@@ -364,10 +369,10 @@ void rfx_context_free(RFX_CONTEXT* context)
 	if (!context)
 		return;
 
-	assert(NULL != context);
-	assert(NULL != context->priv);
-	assert(NULL != context->priv->TilePool);
-	assert(NULL != context->priv->BufferPool);
+	WINPR_ASSERT(NULL != context);
+	WINPR_ASSERT(NULL != context->priv);
+	WINPR_ASSERT(NULL != context->priv->TilePool);
+	WINPR_ASSERT(NULL != context->priv->BufferPool);
 	priv = context->priv;
 	/* coverity[address_free] */
 	rfx_message_free(context, &context->currentMessage);
@@ -1465,12 +1470,12 @@ RFX_MESSAGE* rfx_encode_message(RFX_CONTEXT* context, const RFX_RECT* rects, siz
 	RECTANGLE_16 currentTileRect;
 	const RECTANGLE_16* regionRect;
 	const RECTANGLE_16* extents;
-	assert(data);
-	assert(rects);
-	assert(numRects > 0);
-	assert(w > 0);
-	assert(h > 0);
-	assert(s > 0);
+	WINPR_ASSERT(data);
+	WINPR_ASSERT(rects);
+	WINPR_ASSERT(numRects > 0);
+	WINPR_ASSERT(w > 0);
+	WINPR_ASSERT(h > 0);
+	WINPR_ASSERT(s > 0);
 
 	if (!(message = (RFX_MESSAGE*)calloc(1, sizeof(RFX_MESSAGE))))
 		return NULL;
@@ -1504,8 +1509,8 @@ RFX_MESSAGE* rfx_encode_message(RFX_CONTEXT* context, const RFX_RECT* rects, siz
 		goto skip_encoding_loop;
 
 	extents = region16_extents(&rectsRegion);
-	assert(extents->right - extents->left > 0);
-	assert(extents->bottom - extents->top > 0);
+	WINPR_ASSERT(extents->right - extents->left > 0);
+	WINPR_ASSERT(extents->bottom - extents->top > 0);
 	maxTilesX = 1 + TILE_NO(extents->right - 1) - TILE_NO(extents->left);
 	maxTilesY = 1 + TILE_NO(extents->bottom - 1) - TILE_NO(extents->top);
 	maxNbTiles = maxTilesX * maxTilesY;

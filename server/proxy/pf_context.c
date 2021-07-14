@@ -31,11 +31,13 @@ static wHashTable* create_channel_ids_map()
 	if (!table)
 		return NULL;
 
-	table->hash = HashTable_StringHash;
-	table->keyCompare = HashTable_StringCompare;
-	table->keyClone = HashTable_StringClone;
-	table->keyFree = HashTable_StringFree;
+	if (!HashTable_SetupForStringData(table, FALSE))
+		goto fail;
+
 	return table;
+fail:
+	HashTable_Free(table);
+	return NULL;
 }
 
 /* Proxy context initialization callback */
@@ -86,12 +88,9 @@ error:
 static void client_to_proxy_context_free(freerdp_peer* client, rdpContext* ctx)
 {
 	pServerContext* context = (pServerContext*)ctx;
-	proxyServer* server;
 
 	if (!client || !context)
 		return;
-
-	server = (proxyServer*)client->ContextExtra;
 
 	WTSCloseServer((HANDLE)context->vcm);
 
@@ -229,10 +228,8 @@ proxyData* proxy_data_new(void)
 		goto error;
 
 	/* modules_info maps between plugin name to custom data */
-	pdata->modules_info->hash = HashTable_StringHash;
-	pdata->modules_info->keyCompare = HashTable_StringCompare;
-	pdata->modules_info->keyClone = HashTable_StringClone;
-	pdata->modules_info->keyFree = HashTable_StringFree;
+	if (!HashTable_SetupForStringData(pdata->modules_info, FALSE))
+		goto error;
 
 	return pdata;
 error:

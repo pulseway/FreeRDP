@@ -29,6 +29,7 @@
 #include <winpr/crt.h>
 #include <winpr/sam.h>
 #include <winpr/print.h>
+#include <winpr/file.h>
 
 #include "../log.h"
 
@@ -89,13 +90,13 @@ WINPR_SAM* SamOpen(const char* filename, BOOL readOnly)
 		filename = WINPR_SAM_FILE;
 
 	if (readOnly)
-		fp = fopen(filename, "r");
+		fp = winpr_fopen(filename, "r");
 	else
 	{
-		fp = fopen(filename, "r+");
+		fp = winpr_fopen(filename, "r+");
 
 		if (!fp)
-			fp = fopen(filename, "w+");
+			fp = winpr_fopen(filename, "w+");
 	}
 
 	if (fp)
@@ -136,17 +137,17 @@ static BOOL SamLookupStart(WINPR_SAM* sam)
 		return FALSE;
 
 	sam->context = NULL;
-	sam->buffer = (char*)calloc(fileSize + 2, 1);
+	sam->buffer = (char*)calloc((size_t)fileSize + 2, 1);
 
 	if (!sam->buffer)
 		return FALSE;
 
-	readSize = fread(sam->buffer, fileSize, 1, sam->fp);
+	readSize = fread(sam->buffer, (size_t)fileSize, 1, sam->fp);
 
 	if (!readSize)
 	{
 		if (!ferror(sam->fp))
-			readSize = fileSize;
+			readSize = (size_t)fileSize;
 	}
 
 	if (readSize < 1)
@@ -336,13 +337,14 @@ WINPR_SAM_ENTRY* SamLookupUserW(WINPR_SAM* sam, LPCWSTR User, UINT32 UserLength,
 	WINPR_SAM_ENTRY* entry = NULL;
 	char* utfUser = NULL;
 	char* utfDomain = NULL;
-	const size_t UserCharLength = UserLength / sizeof(WCHAR);
-	const size_t DomainCharLength = DomainLength / sizeof(WCHAR);
-
-	rc = ConvertFromUnicode(CP_UTF8, 0, User, UserCharLength, &utfUser, 0, NULL, NULL);
+	const UINT32 UserCharLength = UserLength / sizeof(WCHAR);
+	const UINT32 DomainCharLength = DomainLength / sizeof(WCHAR);
+	if ((UserCharLength > INT_MAX) || (DomainCharLength > INT_MAX))
+		goto fail;
+	rc = ConvertFromUnicode(CP_UTF8, 0, User, (int)UserCharLength, &utfUser, 0, NULL, NULL);
 	if ((rc < 0) || ((size_t)rc != UserCharLength))
 		goto fail;
-	rc = ConvertFromUnicode(CP_UTF8, 0, Domain, DomainCharLength, &utfDomain, 0, NULL, NULL);
+	rc = ConvertFromUnicode(CP_UTF8, 0, Domain, (int)DomainCharLength, &utfDomain, 0, NULL, NULL);
 	if ((rc < 0) || ((size_t)rc != DomainCharLength))
 		goto fail;
 	entry = SamLookupUserA(sam, utfUser, UserCharLength, utfDomain, DomainCharLength);

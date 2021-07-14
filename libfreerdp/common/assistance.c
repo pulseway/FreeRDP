@@ -29,6 +29,7 @@
 #include <winpr/print.h>
 #include <winpr/windows.h>
 #include <winpr/ssl.h>
+#include <winpr/file.h>
 
 #include <freerdp/log.h>
 #include <freerdp/client/file.h>
@@ -1122,7 +1123,11 @@ int freerdp_assistance_parse_file(rdpAssistanceFile* file, const char* name, con
 	BYTE* buffer;
 	FILE* fp = NULL;
 	size_t readSize;
-	INT64 fileSize;
+	union
+	{
+		INT64 i64;
+		size_t s;
+	} fileSize;
 
 	if (!name)
 	{
@@ -1132,7 +1137,7 @@ int freerdp_assistance_parse_file(rdpAssistanceFile* file, const char* name, con
 
 	free(file->filename);
 	file->filename = _strdup(name);
-	fp = fopen(name, "r");
+	fp = winpr_fopen(name, "r");
 
 	if (!fp)
 	{
@@ -1141,17 +1146,17 @@ int freerdp_assistance_parse_file(rdpAssistanceFile* file, const char* name, con
 	}
 
 	_fseeki64(fp, 0, SEEK_END);
-	fileSize = _ftelli64(fp);
+	fileSize.i64 = _ftelli64(fp);
 	_fseeki64(fp, 0, SEEK_SET);
 
-	if (fileSize < 1)
+	if (fileSize.i64 < 1)
 	{
 		WLog_ERR(TAG, "Failed to read ASSISTANCE file %s ", name);
 		fclose(fp);
 		return -1;
 	}
 
-	buffer = (BYTE*)malloc(fileSize + 2);
+	buffer = (BYTE*)malloc(fileSize.s + 2);
 
 	if (!buffer)
 	{
@@ -1159,12 +1164,12 @@ int freerdp_assistance_parse_file(rdpAssistanceFile* file, const char* name, con
 		return -1;
 	}
 
-	readSize = fread(buffer, fileSize, 1, fp);
+	readSize = fread(buffer, fileSize.s, 1, fp);
 
 	if (!readSize)
 	{
 		if (!ferror(fp))
-			readSize = fileSize;
+			readSize = fileSize.s;
 	}
 
 	fclose(fp);
@@ -1177,9 +1182,9 @@ int freerdp_assistance_parse_file(rdpAssistanceFile* file, const char* name, con
 		return -1;
 	}
 
-	buffer[fileSize] = '\0';
-	buffer[fileSize + 1] = '\0';
-	status = freerdp_assistance_parse_file_buffer(file, (char*)buffer, fileSize, password);
+	buffer[fileSize.s] = '\0';
+	buffer[fileSize.s + 1] = '\0';
+	status = freerdp_assistance_parse_file_buffer(file, (char*)buffer, fileSize.s, password);
 	free(buffer);
 	return status;
 }

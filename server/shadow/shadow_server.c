@@ -124,7 +124,7 @@ int shadow_server_command_line_status_print(rdpShadowServer* server, int argc, c
 
 	if (status == COMMAND_LINE_STATUS_PRINT_VERSION)
 	{
-		WLog_INFO(TAG, "FreeRDP version %s (git %s)", FREERDP_VERSION_FULL, GIT_REVISION);
+		WLog_INFO(TAG, "FreeRDP version %s (git %s)", FREERDP_VERSION_FULL, FREERDP_GIT_REVISION);
 		return COMMAND_LINE_STATUS_PRINT_VERSION;
 	}
 	else if (status == COMMAND_LINE_STATUS_PRINT_BUILDCONFIG)
@@ -284,10 +284,13 @@ int shadow_server_parse_command_line(rdpShadowServer* server, int argc, char** a
 			if ((x < 0) || (y < 0) || (w < 1) || (h < 1) || (errno != 0))
 				return -1;
 
-			server->subRect.left = x;
-			server->subRect.top = y;
-			server->subRect.right = x + w;
-			server->subRect.bottom = y + h;
+			if ((x > UINT16_MAX) || (y > UINT16_MAX) || (x + w > UINT16_MAX) ||
+			    (y + h > UINT16_MAX))
+				return -1;
+			server->subRect.left = (UINT16)x;
+			server->subRect.top = (UINT16)y;
+			server->subRect.right = (UINT16)(x + w);
+			server->subRect.bottom = (UINT16)(y + h);
 			server->shareSubRect = TRUE;
 		}
 		CommandLineSwitchCase(arg, "auth")
@@ -362,6 +365,36 @@ int shadow_server_parse_command_line(rdpShadowServer* server, int argc, char** a
 			if (!WLog_AddStringLogFilters(arg->Value))
 				return COMMAND_LINE_ERROR;
 		}
+		CommandLineSwitchCase(arg, "gfx-progressive")
+		{
+			if (!freerdp_settings_set_bool(settings, FreeRDP_GfxProgressive,
+			                               arg->Value ? TRUE : FALSE))
+				return COMMAND_LINE_ERROR;
+		}
+		CommandLineSwitchCase(arg, "gfx-rfx")
+		{
+			if (!freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec,
+			                               arg->Value ? TRUE : FALSE))
+				return COMMAND_LINE_ERROR;
+		}
+		CommandLineSwitchCase(arg, "gfx-planar")
+		{
+			if (!freerdp_settings_set_bool(settings, FreeRDP_GfxPlanar, arg->Value ? TRUE : FALSE))
+				return COMMAND_LINE_ERROR;
+		}
+		CommandLineSwitchCase(arg, "gfx-avc420")
+		{
+			if (!freerdp_settings_set_bool(settings, FreeRDP_GfxH264, arg->Value ? TRUE : FALSE))
+				return COMMAND_LINE_ERROR;
+		}
+		CommandLineSwitchCase(arg, "gfx-avc444")
+		{
+			if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444v2,
+			                               arg->Value ? TRUE : FALSE))
+				return COMMAND_LINE_ERROR;
+			if (!freerdp_settings_set_bool(settings, FreeRDP_GfxAVC444, arg->Value ? TRUE : FALSE))
+				return COMMAND_LINE_ERROR;
+		}
 		CommandLineSwitchDefault(arg)
 		{
 		}
@@ -372,9 +405,9 @@ int shadow_server_parse_command_line(rdpShadowServer* server, int argc, char** a
 
 	if (arg && (arg->Flags & COMMAND_LINE_ARGUMENT_PRESENT))
 	{
-		int index;
-		int numMonitors;
-		MONITOR_DEF monitors[16];
+		UINT32 index;
+		UINT32 numMonitors;
+		MONITOR_DEF monitors[16] = { 0 };
 		numMonitors = shadow_enum_monitors(monitors, 16);
 
 		if (arg->Flags & COMMAND_LINE_VALUE_PRESENT)
@@ -382,24 +415,21 @@ int shadow_server_parse_command_line(rdpShadowServer* server, int argc, char** a
 			/* Select monitors */
 			long val = strtol(arg->Value, NULL, 0);
 
-			if ((val < 0) || (errno != 0) || (val >= numMonitors))
+			if ((val < 0) || (errno != 0) || ((UINT32)val >= numMonitors))
 				status = COMMAND_LINE_STATUS_PRINT;
 
-			server->selectedMonitor = val;
+			server->selectedMonitor = (UINT32)val;
 		}
 		else
 		{
-			int width, height;
-			MONITOR_DEF* monitor;
-
 			/* List monitors */
 
 			for (index = 0; index < numMonitors; index++)
 			{
-				monitor = &monitors[index];
-				width = monitor->right - monitor->left;
-				height = monitor->bottom - monitor->top;
-				WLog_INFO(TAG, "      %s [%d] %dx%d\t+%" PRId32 "+%" PRId32 "",
+				const MONITOR_DEF* monitor = &monitors[index];
+				const INT64 width = monitor->right - monitor->left + 1;
+				const INT64 height = monitor->bottom - monitor->top + 1;
+				WLog_INFO(TAG, "      %s [%d] %" PRId64 "x%" PRId64 "\t+%" PRId32 "+%" PRId32 "",
 				          (monitor->flags == 1) ? "*" : " ", index, width, height, monitor->left,
 				          monitor->top);
 			}
@@ -651,7 +681,7 @@ static int shadow_server_init_config_path(rdpShadowServer* server)
 
 		if (userLibraryPath)
 		{
-			if (!PathFileExistsA(userLibraryPath) && !PathMakePathA(userLibraryPath, 0))
+			if (!winpr_PathFileExists(userLibraryPath) && !winpr_PathMakePath(userLibraryPath, 0))
 			{
 				WLog_ERR(TAG, "Failed to create directory '%s'", userLibraryPath);
 				free(userLibraryPath);
@@ -662,8 +692,8 @@ static int shadow_server_init_config_path(rdpShadowServer* server)
 
 			if (userApplicationSupportPath)
 			{
-				if (!PathFileExistsA(userApplicationSupportPath) &&
-				    !PathMakePathA(userApplicationSupportPath, 0))
+				if (!winpr_PathFileExists(userApplicationSupportPath) &&
+				    !winpr_PathMakePath(userApplicationSupportPath, 0))
 				{
 					WLog_ERR(TAG, "Failed to create directory '%s'", userApplicationSupportPath);
 					free(userLibraryPath);
@@ -688,7 +718,7 @@ static int shadow_server_init_config_path(rdpShadowServer* server)
 
 		if (configHome)
 		{
-			if (!PathFileExistsA(configHome) && !PathMakePathA(configHome, 0))
+			if (!winpr_PathFileExists(configHome) && !winpr_PathMakePath(configHome, 0))
 			{
 				WLog_ERR(TAG, "Failed to create directory '%s'", configHome);
 				free(configHome);
@@ -714,7 +744,7 @@ static BOOL shadow_server_init_certificate(rdpShadowServer* server)
 	char* makecert_argv[6] = { "makecert", "-rdp", "-live", "-silent", "-y", "5" };
 	int makecert_argc = (sizeof(makecert_argv) / sizeof(char*));
 
-	if (!PathFileExistsA(server->ConfigPath) && !PathMakePathA(server->ConfigPath, 0))
+	if (!winpr_PathFileExists(server->ConfigPath) && !winpr_PathMakePath(server->ConfigPath, 0))
 	{
 		WLog_ERR(TAG, "Failed to create directory '%s'", server->ConfigPath);
 		return FALSE;
@@ -723,7 +753,7 @@ static BOOL shadow_server_init_certificate(rdpShadowServer* server)
 	if (!(filepath = GetCombinedPath(server->ConfigPath, "shadow")))
 		return FALSE;
 
-	if (!PathFileExistsA(filepath) && !PathMakePathA(filepath, 0))
+	if (!winpr_PathFileExists(filepath) && !winpr_PathMakePath(filepath, 0))
 	{
 		if (!CreateDirectoryA(filepath, 0))
 		{
@@ -738,7 +768,8 @@ static BOOL shadow_server_init_certificate(rdpShadowServer* server)
 	if (!server->CertificateFile || !server->PrivateKeyFile)
 		goto out_fail;
 
-	if ((!PathFileExistsA(server->CertificateFile)) || (!PathFileExistsA(server->PrivateKeyFile)))
+	if ((!winpr_PathFileExists(server->CertificateFile)) ||
+	    (!winpr_PathFileExists(server->PrivateKeyFile)))
 	{
 		makecert = makecert_context_new();
 
@@ -751,13 +782,13 @@ static BOOL shadow_server_init_certificate(rdpShadowServer* server)
 		if (makecert_context_set_output_file_name(makecert, "shadow") != 1)
 			goto out_fail;
 
-		if (!PathFileExistsA(server->CertificateFile))
+		if (!winpr_PathFileExists(server->CertificateFile))
 		{
 			if (makecert_context_output_certificate_file(makecert, filepath) != 1)
 				goto out_fail;
 		}
 
-		if (!PathFileExistsA(server->PrivateKeyFile))
+		if (!winpr_PathFileExists(server->PrivateKeyFile))
 		{
 			if (makecert_context_output_private_key_file(makecert, filepath) != 1)
 				goto out_fail;

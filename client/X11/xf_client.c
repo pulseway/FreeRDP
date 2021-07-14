@@ -26,7 +26,7 @@
 #include "config.h"
 #endif
 
-#include <assert.h>
+#include <winpr/assert.h>
 #include <float.h>
 
 #include <X11/Xlib.h>
@@ -844,7 +844,7 @@ static BOOL xf_get_pixmap_info(xfContext* xfc)
 	XPixmapFormatValues* pf;
 	XPixmapFormatValues* pfs;
 	XWindowAttributes window_attributes;
-	assert(xfc->display);
+	WINPR_ASSERT(xfc->display);
 	pfs = XListPixmapFormats(xfc->display, &pf_count);
 
 	if (!pfs)
@@ -1332,7 +1332,7 @@ static BOOL xf_post_connect(freerdp* instance)
 	update->SetKeyboardIndicators = xf_keyboard_set_indicators;
 	update->SetKeyboardImeStatus = xf_keyboard_set_ime_status;
 
-	if (!(xfc->clipboard = xf_clipboard_new(xfc)))
+	if (settings->RedirectClipboard && !(xfc->clipboard = xf_clipboard_new(xfc)))
 		return FALSE;
 
 	if (!(xfc->xfDisp = xf_disp_new(xfc)))
@@ -1401,11 +1401,8 @@ static DWORD WINAPI xf_input_thread(LPVOID arg)
 	DWORD status;
 	DWORD nCount;
 	HANDLE events[3];
-	XEvent xevent;
 	wMessage msg;
 	wMessageQueue* queue;
-	int pending_status = 1;
-	int process_status = 1;
 	freerdp* instance = (freerdp*)arg;
 	xfContext* xfc = (xfContext*)instance->context;
 	queue = freerdp_get_message_queue(instance, FREERDP_INPUT_MESSAGE_QUEUE);
@@ -1434,26 +1431,7 @@ static DWORD WINAPI xf_input_thread(LPVOID arg)
 
 				if (WaitForSingleObject(events[1], 0) == WAIT_OBJECT_0)
 				{
-					do
-					{
-						xf_lock_x11(xfc);
-						pending_status = XPending(xfc->display);
-						xf_unlock_x11(xfc);
-
-						if (pending_status)
-						{
-							xf_lock_x11(xfc);
-							ZeroMemory(&xevent, sizeof(xevent));
-							XNextEvent(xfc->display, &xevent);
-							process_status = xf_event_process(instance, &xevent);
-							xf_unlock_x11(xfc);
-
-							if (!process_status)
-								break;
-						}
-					} while (pending_status);
-
-					if (!process_status)
+					if (!xf_process_x_events(xfc->context.instance))
 					{
 						running = FALSE;
 						break;
@@ -1472,6 +1450,7 @@ static DWORD WINAPI xf_input_thread(LPVOID arg)
 	}
 
 	MessageQueue_PostQuit(queue, 0);
+	freerdp_abort_connect(xfc->context.instance);
 	ExitThread(0);
 	return 0;
 }
@@ -1533,6 +1512,12 @@ static DWORD WINAPI xf_client_thread(LPVOID param)
 		else if (freerdp_get_last_error(instance->context) ==
 		         FREERDP_ERROR_SECURITY_NEGO_CONNECT_FAILED)
 			exit_code = XF_EXIT_NEGO_FAILURE;
+ 		else if (freerdp_get_last_error(instance->context) ==
+ 				 FREERDP_ERROR_CONNECT_LOGON_FAILURE)
+ 			exit_code = XF_EXIT_LOGON_FAILURE;
+ 		else if (freerdp_get_last_error(instance->context) ==
+ 				 FREERDP_ERROR_CONNECT_ACCOUNT_LOCKED_OUT)
+ 			exit_code = XF_EXIT_ACCOUNT_LOCKED_OUT;
 		else
 			exit_code = XF_EXIT_CONN_FAILED;
 	}
@@ -1657,7 +1642,7 @@ static DWORD WINAPI xf_client_thread(LPVOID param)
 		if (!handle_window_events(instance))
 			break;
 
-		if ((status != WAIT_TIMEOUT) && (waitStatus == WAIT_OBJECT_0))
+		if ((waitStatus != WAIT_TIMEOUT) && (waitStatus == WAIT_OBJECT_0))
 		{
 			timerEvent.now = GetTickCount64();
 			PubSub_OnTimer(context->pubSub, context, &timerEvent);
@@ -1697,7 +1682,7 @@ end:
 
 DWORD xf_exit_code_from_disconnect_reason(DWORD reason)
 {
-	if (reason == 0 || (reason >= XF_EXIT_PARSE_ARGUMENTS && reason <= XF_EXIT_NEGO_FAILURE))
+	if (reason == 0 || (reason >= XF_EXIT_PARSE_ARGUMENTS && reason <= XF_EXIT_ACCOUNT_LOCKED_OUT))
 		return reason;
 	/* License error set */
 	else if (reason >= 0x100 && reason <= 0x10A)
@@ -1827,11 +1812,11 @@ static Atom get_supported_atom(xfContext* xfc, const char* atomName)
 static BOOL xfreerdp_client_new(freerdp* instance, rdpContext* context)
 {
 	xfContext* xfc = (xfContext*)instance->context;
-	assert(context);
-	assert(xfc);
-	assert(!xfc->display);
-	assert(!xfc->mutex);
-	assert(!xfc->x11event);
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(xfc);
+	WINPR_ASSERT(!xfc->display);
+	WINPR_ASSERT(!xfc->mutex);
+	WINPR_ASSERT(!xfc->x11event);
 	instance->PreConnect = xf_pre_connect;
 	instance->PostConnect = xf_post_connect;
 	instance->PostDisconnect = xf_post_disconnect;

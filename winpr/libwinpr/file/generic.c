@@ -42,7 +42,7 @@
 #include <io.h>
 #include <sys/stat.h>
 #else
-#include <assert.h>
+#include <winpr/assert.h>
 #include <pthread.h>
 #include <dirent.h>
 #include <libgen.h>
@@ -191,7 +191,7 @@ extern HANDLE_CREATOR* GetCommHandleCreator(void);
 
 static void _HandleCreatorsInit()
 {
-	assert(_HandleCreators == NULL);
+	WINPR_ASSERT(_HandleCreators == NULL);
 	_HandleCreators = ArrayList_New(TRUE);
 
 	if (!_HandleCreators)
@@ -200,11 +200,11 @@ static void _HandleCreatorsInit()
 	/*
 	 * Register all file handle creators.
 	 */
-	ArrayList_Add(_HandleCreators, GetNamedPipeClientHandleCreator());
+	ArrayList_Append(_HandleCreators, GetNamedPipeClientHandleCreator());
 #if defined __linux__ && !defined ANDROID
-	ArrayList_Add(_HandleCreators, GetCommHandleCreator());
+	ArrayList_Append(_HandleCreators, GetCommHandleCreator());
 #endif /* __linux__ && !defined ANDROID */
-	ArrayList_Add(_HandleCreators, GetFileHandleCreator());
+	ArrayList_Append(_HandleCreators, GetFileHandleCreator());
 }
 
 #ifdef HAVE_AIO_H
@@ -1299,7 +1299,6 @@ int UnixChangeFileMode(const char* filename, int flags)
 #else
 	int rc;
 	WCHAR* wfl = NULL;
-	int fl = 0;
 
 	if (ConvertToUnicode(CP_UTF8, 0, filename, -1, &wfl, 0) <= 0)
 		return -1;

@@ -105,7 +105,7 @@ BOOL rpc_ncacn_http_send_in_channel_request(RpcChannel* inChannel)
 BOOL rpc_ncacn_http_recv_in_channel_response(RpcChannel* inChannel, HttpResponse* response)
 {
 	const char* token64 = NULL;
-	int ntlmTokenLength = 0;
+	size_t ntlmTokenLength = 0;
 	BYTE* ntlmTokenData = NULL;
 	rdpNtlm* ntlm;
 
@@ -202,7 +202,7 @@ BOOL rpc_ncacn_http_ntlm_init(rdpContext* context, RpcChannel* channel)
 		return TRUE;
 	}
 
-	if (!ntlm_client_make_spn(ntlm, _T("HTTP"), settings->GatewayHostname))
+	if (!ntlm_client_make_spn(ntlm, "HTTP", settings->GatewayHostname))
 	{
 		return TRUE;
 	}
@@ -259,7 +259,7 @@ BOOL rpc_ncacn_http_send_out_channel_request(RpcChannel* outChannel, BOOL replac
 BOOL rpc_ncacn_http_recv_out_channel_response(RpcChannel* outChannel, HttpResponse* response)
 {
 	const char* token64 = NULL;
-	int ntlmTokenLength = 0;
+	size_t ntlmTokenLength = 0;
 	BYTE* ntlmTokenData = NULL;
 	rdpNtlm* ntlm;
 

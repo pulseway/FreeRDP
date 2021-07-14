@@ -700,6 +700,8 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_AutoAcceptCertificate (1419)
 #define FreeRDP_AutoDenyCertificate (1420)
 #define FreeRDP_CertificateAcceptedFingerprints (1421)
+#define FreeRDP_CertificateUseKnownHosts (1422)
+#define FreeRDP_CertificateCallbackPreferPEM (1423)
 #define FreeRDP_Workarea (1536)
 #define FreeRDP_Fullscreen (1537)
 #define FreeRDP_PercentScreen (1538)
@@ -819,6 +821,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_KeyboardHook (2633)
 #define FreeRDP_HasHorizontalWheel (2634)
 #define FreeRDP_HasExtendedMouseEvent (2635)
+#define FreeRDP_SuspendInput (2636)
 #define FreeRDP_BrushSupportLevel (2688)
 #define FreeRDP_GlyphSupportLevel (2752)
 #define FreeRDP_GlyphCache (2753)
@@ -859,6 +862,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_GfxSendQoeAck (3846)
 #define FreeRDP_GfxAVC444v2 (3847)
 #define FreeRDP_GfxCapsFilter (3848)
+#define FreeRDP_GfxPlanar (3849)
 #define FreeRDP_BitmapCacheV3CodecId (3904)
 #define FreeRDP_DrawNineGridEnabled (3968)
 #define FreeRDP_DrawNineGridCacheSize (3969)
@@ -898,6 +902,7 @@ typedef struct _RDPDR_PARALLEL RDPDR_PARALLEL;
 #define FreeRDP_TcpAckTimeout (5194)
 #define FreeRDP_ActionScript (5195)
 #define FreeRDP_Floatbar (5196)
+#define FreeRDP_TcpConnectTimeout (5197)
 
 /**
  * FreeRDP Settings Data Structure
@@ -1176,7 +1181,9 @@ struct rdp_settings
 	ALIGN64 BOOL AutoAcceptCertificate;            /* 1419 */
 	ALIGN64 BOOL AutoDenyCertificate;              /* 1420 */
 	ALIGN64 char* CertificateAcceptedFingerprints; /* 1421 */
-	UINT64 padding1472[1472 - 1422];               /* 1422 */
+	ALIGN64 BOOL CertificateUseKnownHosts;         /* 1422 */
+	ALIGN64 BOOL CertificateCallbackPreferPEM;     /* 1423 */
+	UINT64 padding1472[1472 - 1424];               /* 1424 */
 	UINT64 padding1536[1536 - 1472];               /* 1472 */
 
 	/**
@@ -1363,7 +1370,13 @@ struct rdp_settings
 	ALIGN64 UINT32 KeyboardHook;         /* 2633 */
 	ALIGN64 BOOL HasHorizontalWheel;     /* 2634 */
 	ALIGN64 BOOL HasExtendedMouseEvent;  /* 2635 */
-	UINT64 padding2688[2688 - 2636];     /* 2636 */
+
+	/** SuspendInput disables processing of keyboard/mouse/multitouch input.
+	 * If used by an implementation ensure proper state resync after reenabling
+	 * input
+	 */
+	ALIGN64 BOOL SuspendInput;           /* 2636 */
+	UINT64 padding2688[2688 - 2637];     /* 2637 */
 
 	/* Brush Capabilities */
 	ALIGN64 UINT32 BrushSupportLevel; /* 2688 */
@@ -1463,7 +1476,8 @@ struct rdp_settings
 	ALIGN64 BOOL GfxSendQoeAck;      /* 3846 */
 	ALIGN64 BOOL GfxAVC444v2;        /* 3847 */
 	ALIGN64 UINT32 GfxCapsFilter;    /* 3848 */
-	UINT64 padding3904[3904 - 3849]; /* 3849 */
+	ALIGN64 BOOL GfxPlanar;          /* 3849 */
+	UINT64 padding3904[3904 - 3850]; /* 3850 */
 
 	/**
 	 * Caches
@@ -1555,7 +1569,8 @@ struct rdp_settings
 	ALIGN64 UINT32 TcpAckTimeout;         /* 5194 */
 	ALIGN64 char* ActionScript;           /* 5195 */
 	ALIGN64 UINT32 Floatbar;              /* 5196 */
-	UINT64 padding5312[5312 - 5197];      /* 5197 */
+	ALIGN64 UINT32 TcpConnectTimeout;     /* 5197 */
+	UINT64 padding5312[5312 - 5198];      /* 5198 */
 
 	/**
 	 * WARNING: End of ABI stable zone!
@@ -1638,7 +1653,9 @@ extern "C"
 	FREERDP_API BOOL freerdp_static_channel_collection_del(rdpSettings* settings, const char* name);
 	FREERDP_API ADDIN_ARGV* freerdp_static_channel_collection_find(rdpSettings* settings,
 	                                                               const char* name);
+#if defined(WITH_FREERDP_DEPRECATED)
 	FREERDP_API WINPR_DEPRECATED(ADDIN_ARGV* freerdp_static_channel_clone(ADDIN_ARGV* channel));
+#endif
 
 	FREERDP_API void freerdp_static_channel_collection_free(rdpSettings* settings);
 
@@ -1646,10 +1663,13 @@ extern "C"
 	                                                        ADDIN_ARGV* channel);
 	FREERDP_API BOOL freerdp_dynamic_channel_collection_del(rdpSettings* settings,
 	                                                        const char* name);
-	FREERDP_API ADDIN_ARGV* freerdp_dynamic_channel_collection_find(rdpSettings* settings,
+	FREERDP_API ADDIN_ARGV* freerdp_dynamic_channel_collection_find(const rdpSettings* settings,
 	                                                                const char* name);
 
+#if defined(WITH_FREERDP_DEPRECATED)
 	FREERDP_API WINPR_DEPRECATED(ADDIN_ARGV* freerdp_dynamic_channel_clone(ADDIN_ARGV* channel));
+#endif
+
 	FREERDP_API void freerdp_dynamic_channel_collection_free(rdpSettings* settings);
 
 	FREERDP_API void freerdp_target_net_addresses_free(rdpSettings* settings);
@@ -1667,6 +1687,7 @@ extern "C"
 	 * the functions freerdp_get_param_* and freerdp_set_param_* are deprecated.
 	 * use freerdp_settings_get_* and freerdp_settings_set_* as a replacement!
 	 */
+#if defined(WITH_FREERDP_DEPRECATED)
 	FREERDP_API WINPR_DEPRECATED(BOOL freerdp_get_param_bool(const rdpSettings* settings, int id));
 	FREERDP_API WINPR_DEPRECATED(int freerdp_set_param_bool(rdpSettings* settings, int id,
 	                                                        BOOL param));
@@ -1689,6 +1710,7 @@ extern "C"
 	                                                            int id));
 	FREERDP_API WINPR_DEPRECATED(int freerdp_set_param_string(rdpSettings* settings, int id,
 	                                                          const char* param));
+#endif
 
 	FREERDP_API BOOL freerdp_settings_get_bool(const rdpSettings* settings, size_t id);
 	FREERDP_API BOOL freerdp_settings_set_bool(rdpSettings* settings, size_t id, BOOL param);

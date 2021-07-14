@@ -25,6 +25,7 @@
 
 #include <winpr/crt.h>
 #include <winpr/path.h>
+#include <winpr/string.h>
 #include <winpr/file.h>
 #include <winpr/synch.h>
 #include <winpr/library.h>
@@ -66,8 +67,7 @@ static void* freerdp_channels_find_static_entry_in_table(const STATIC_ENTRY_TABL
 void* freerdp_channels_client_find_static_entry(const char* name, const char* identifier)
 {
 	size_t index = 0;
-	STATIC_ENTRY_TABLE* pEntry;
-	pEntry = (STATIC_ENTRY_TABLE*)&CLIENT_STATIC_ENTRY_TABLES[index++];
+	const STATIC_ENTRY_TABLE* pEntry = &CLIENT_STATIC_ENTRY_TABLES[index++];
 
 	while (pEntry->table != NULL)
 	{
@@ -76,7 +76,7 @@ void* freerdp_channels_client_find_static_entry(const char* name, const char* id
 			return freerdp_channels_find_static_entry_in_table(pEntry, identifier);
 		}
 
-		pEntry = (STATIC_ENTRY_TABLE*)&CLIENT_STATIC_ENTRY_TABLES[index++];
+		pEntry = &CLIENT_STATIC_ENTRY_TABLES[index++];
 	}
 
 	return NULL;
@@ -498,7 +498,7 @@ void* channel_client_create_handler(rdpContext* ctx, LPVOID userdata, MsgHandler
 	}
 	internals->msg_handler = msg_handler;
 	internals->userdata = userdata;
-	internals->channel_name = strdup(channel_name);
+	internals->channel_name = _strdup(channel_name);
 	internals->ctx = ctx;
 	if (!(ctx->settings->ThreadingFlags & THREADING_FLAGS_DISABLE_THREADS))
 	{

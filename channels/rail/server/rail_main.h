@@ -22,6 +22,7 @@
 
 #include <freerdp/rail.h>
 #include <freerdp/server/rail.h>
+#include <freerdp/utils/channel_pdu_tracker.h>
 
 #include <winpr/crt.h>
 #include <winpr/wlog.h>
@@ -29,16 +30,15 @@
 
 #include "../rail_common.h"
 
-struct _rail_server_private
+struct s_rail_server_private
 {
 	HANDLE thread;
 	HANDLE stopEvent;
 	HANDLE channelEvent;
 	void* rail_channel;
 
-	wStream* input_stream;
-
 	DWORD channelFlags;
+	ChannelPduTracker* channelPduTracker;
 };
 
 #endif /* FREERDP_CHANNEL_RAIL_SERVER_MAIN_H */

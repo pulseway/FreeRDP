@@ -26,7 +26,7 @@ typedef struct
 	BOOL called;
 } UserApcArg;
 
-void CALLBACK userApc(ULONG_PTR arg)
+static void CALLBACK userApc(ULONG_PTR arg)
 {
 	UserApcArg* userArg = (UserApcArg*)arg;
 	userArg->called = TRUE;
@@ -66,7 +66,7 @@ static VOID CALLBACK Timer1APCProc(LPVOID lpArg, DWORD dwTimerLowValue, DWORD dw
 {
 	UncleanCloseData* data = (UncleanCloseData*)lpArg;
 	data->timer1Calls++;
-	CloseHandle(data->timer2);
+	(void)CloseHandle(data->timer2);
 	data->endTest = TRUE;
 }
 
@@ -78,7 +78,7 @@ static VOID CALLBACK Timer2APCProc(LPVOID lpArg, DWORD dwTimerLowValue, DWORD dw
 
 static DWORD /*WINAPI*/ closeHandleTest(LPVOID lpThreadParameter)
 {
-	LARGE_INTEGER dueTime;
+	LARGE_INTEGER dueTime = WINPR_C_ARRAY_INIT;
 	UncleanCloseData* data = (UncleanCloseData*)lpThreadParameter;
 	data->endTest = FALSE;
 
@@ -99,9 +99,8 @@ static DWORD /*WINAPI*/ closeHandleTest(LPVOID lpThreadParameter)
 
 int TestSynchAPC(int argc, char* argv[])
 {
-	HANDLE thread = NULL;
+	HANDLE thread = nullptr;
 	UserApcArg userApcArg;
-	UncleanCloseData uncleanCloseData;
 
 	userApcArg.error = FALSE;
 	userApcArg.called = FALSE;
@@ -125,50 +124,28 @@ int TestSynchAPC(int argc, char* argv[])
 	userApcArg.called = FALSE;
 
 	/* test that the APC is cleaned up even when not called */
-	thread = CreateThread(NULL, 0, uncleanThread, &userApcArg, 0, NULL);
+	thread = CreateThread(nullptr, 0, uncleanThread, &userApcArg, 0, nullptr);
 	if (!thread)
 		return 10;
-	WaitForSingleObject(thread, INFINITE);
-	CloseHandle(thread);
+	(void)WaitForSingleObject(thread, INFINITE);
+	(void)CloseHandle(thread);
 
 	if (userApcArg.called || userApcArg.error)
 		return 11;
 
 	/* test a remote APC queuing */
-	thread = CreateThread(NULL, 0, cleanThread, &userApcArg, 0, NULL);
+	thread = CreateThread(nullptr, 0, cleanThread, &userApcArg, 0, nullptr);
 	if (!thread)
 		return 20;
 
 	if (!QueueUserAPC((PAPCFUNC)userApc, thread, (ULONG_PTR)&userApcArg))
 		return 21;
 
-	WaitForSingleObject(thread, INFINITE);
-	CloseHandle(thread);
+	(void)WaitForSingleObject(thread, INFINITE);
+	(void)CloseHandle(thread);
 
 	if (!userApcArg.called)
 		return 22;
 
-#if 0
-	/* test cleanup of timer completions */
-	memset(&uncleanCloseData, 0, sizeof(uncleanCloseData));
-	uncleanCloseData.timer1 = CreateWaitableTimerA(NULL, FALSE, NULL);
-	if (!uncleanCloseData.timer1)
-		return 31;
-
-	uncleanCloseData.timer2 = CreateWaitableTimerA(NULL, FALSE, NULL);
-	if (!uncleanCloseData.timer2)
-		return 32;
-
-	thread = CreateThread(NULL, 0, closeHandleTest, &uncleanCloseData, 0, NULL);
-	if (!thread)
-		return 33;
-
-	WaitForSingleObject(thread, INFINITE);
-	CloseHandle(thread);
-
-	if (uncleanCloseData.timer1Calls != 1 || uncleanCloseData.timer2Calls != 0)
-		return 34;
-	CloseHandle(uncleanCloseData.timer1);
-#endif
 	return 0;
 }

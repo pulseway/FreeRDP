@@ -21,16 +21,20 @@
 #define FREERDP_API_H
 
 #include <winpr/winpr.h>
+#include <winpr/wlog.h>
 #include <winpr/platform.h>
+
+/* To silence missing prototype warnings for library entry points use this macro.
+ * It first declares the function as prototype and then again as function implementation
+ */
+#define FREERDP_ENTRY_POINT(fkt) \
+	fkt;                         \
+	fkt
 
 #ifdef _WIN32
 #define FREERDP_CC __cdecl
 #else
 #define FREERDP_CC
-#endif
-
-#ifdef _WIN32
-#define __func__ __FUNCTION__
 #endif
 
 #if defined _WIN32 || defined __CYGWIN__
@@ -48,50 +52,70 @@
 #endif
 #endif
 #else
-#if __GNUC__ >= 4
+#if defined(__GNUC__) && (__GNUC__ >= 4)
+#if defined(__cplusplus) && (__cplusplus >= 201703L)
+#define FREERDP_API [[gnu::visibility("default")]]
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 202311L)
+#define FREERDP_API [[gnu::visibility("default")]]
+#else
 #define FREERDP_API __attribute__((visibility("default")))
+#endif
 #else
 #define FREERDP_API
 #endif
 #endif
 
-#ifdef BUILD_TESTING
+#if defined(EXPORT_ALL_SYMBOLS)
 #define FREERDP_LOCAL FREERDP_API
 #else
 #if defined _WIN32 || defined __CYGWIN__
 #define FREERDP_LOCAL
 #else
-#if __GNUC__ >= 4
+#if defined(__GNUC__) && (__GNUC__ >= 4)
+#if defined(__cplusplus) && (__cplusplus >= 201703L)
+#define FREERDP_LOCAL [[gnu::visibility("hidden")]]
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 202311L)
+#define FREERDP_LOCAL [[gnu::visibility("hidden")]]
+#else
 #define FREERDP_LOCAL __attribute__((visibility("hidden")))
+#endif
 #else
 #define FREERDP_LOCAL
 #endif
 #endif
 #endif
 
-#ifdef FREERDP_TEST_EXPORTS
-#define FREERDP_TEST_API FREERDP_API
+#define IFCALL(_cb, ...)                                                \
+	do                                                                  \
+	{                                                                   \
+		if (_cb != nullptr)                                             \
+			_cb(__VA_ARGS__);                                           \
+		else                                                            \
+			WLog_VRB("com.freerdp.api", "IFCALL(" #_cb ") == nullptr"); \
+	} while (0)
+#define IFCALLRET(_cb, _ret, ...)                                          \
+	do                                                                     \
+	{                                                                      \
+		if (_cb != nullptr)                                                \
+			_ret = _cb(__VA_ARGS__);                                       \
+		else                                                               \
+			WLog_VRB("com.freerdp.api", "IFCALLRET(" #_cb ") == nullptr"); \
+	} while (0)
+
+#if defined(__GNUC__) || defined(__clang__)
+#define IFCALLRESULT(_default_return, _cb, ...)                               \
+	__extension__({                                                           \
+		if (_cb == nullptr)                                                   \
+		{                                                                     \
+			WLog_VRB("com.freerdp.api", "IFCALLRESULT(" #_cb ") == nullptr"); \
+		}                                                                     \
+		((_cb != nullptr) ? _cb(__VA_ARGS__) : (_default_return));            \
+	})
 #else
-#define FREERDP_TEST_API
+#define IFCALLRESULT(_default_return, _cb, ...) \
+	((_cb != nullptr) ? _cb(__VA_ARGS__) : (_default_return))
 #endif
 
-#define IFCALL(_cb, ...)      \
-	do                        \
-	{                         \
-		if (_cb != NULL)      \
-		{                     \
-			_cb(__VA_ARGS__); \
-		}                     \
-	} while (0)
-#define IFCALLRET(_cb, _ret, ...)    \
-	do                               \
-	{                                \
-		if (_cb != NULL)             \
-		{                            \
-			_ret = _cb(__VA_ARGS__); \
-		}                            \
-	} while (0)
-#define IFCALLRESULT(_default_return, _cb, ...) \
-	((_cb != NULL) ? _cb(__VA_ARGS__) : (_default_return))
+#define ALIGN64 DECLSPEC_ALIGN(8)
 
 #endif /* FREERDP_API */

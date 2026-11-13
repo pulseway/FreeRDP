@@ -30,26 +30,34 @@
 #include <winpr/stream.h>
 #include <winpr/sysinfo.h>
 
-#define TYPE_ID_AUTODETECT_REQUEST 0x00
-#define TYPE_ID_AUTODETECT_RESPONSE 0x01
+#include "state.h"
 
-FREERDP_LOCAL int rdp_recv_autodetect_request_packet(rdpRdp* rdp, wStream* s);
-FREERDP_LOCAL int rdp_recv_autodetect_response_packet(rdpRdp* rdp, wStream* s);
-
-FREERDP_LOCAL rdpAutoDetect* autodetect_new(void);
 FREERDP_LOCAL void autodetect_free(rdpAutoDetect* autodetect);
 
+WINPR_ATTR_MALLOC(autodetect_free, 1)
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL rdpAutoDetect* autodetect_new(rdpContext* context);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL state_run_t autodetect_recv_request_packet(rdpAutoDetect* autodetect,
+                                                         RDP_TRANSPORT_TYPE transport, wStream* s);
+
+/** An auto-detect request in an [MS-RDPEMT] 2.2.1.1.1 RDP_TUNNEL_SUBHEADER, which is the whole
+ * subheader. */
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL state_run_t autodetect_recv_tunnel_request(rdpAutoDetect* autodetect,
+                                                         RDP_TRANSPORT_TYPE transport, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL state_run_t autodetect_recv_response_packet(rdpAutoDetect* autodetect,
+                                                          RDP_TRANSPORT_TYPE transport, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL FREERDP_AUTODETECT_STATE autodetect_get_state(rdpAutoDetect* autodetect);
+
 FREERDP_LOCAL void autodetect_register_server_callbacks(rdpAutoDetect* autodetect);
-FREERDP_LOCAL BOOL autodetect_send_connecttime_rtt_measure_request(rdpContext* context,
-                                                                   UINT16 sequenceNumber);
-FREERDP_LOCAL BOOL autodetect_send_connecttime_bandwidth_measure_start(rdpContext* context,
-                                                                       UINT16 sequenceNumber);
-FREERDP_LOCAL BOOL autodetect_send_bandwidth_measure_payload(rdpContext* context,
-                                                             UINT16 payloadLength,
-                                                             UINT16 sequenceNumber);
-FREERDP_LOCAL BOOL autodetect_send_connecttime_bandwidth_measure_stop(rdpContext* context,
-                                                                      UINT16 payloadLength,
-                                                                      UINT16 sequenceNumber);
+FREERDP_LOCAL void autodetect_on_connect_time_auto_detect_begin(rdpAutoDetect* autodetect);
+FREERDP_LOCAL void autodetect_on_connect_time_auto_detect_progress(rdpAutoDetect* autodetect);
 
 #define AUTODETECT_TAG FREERDP_TAG("core.autodetect")
 

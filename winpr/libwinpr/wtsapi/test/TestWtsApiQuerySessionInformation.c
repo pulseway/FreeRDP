@@ -6,19 +6,21 @@
 
 int TestWtsApiQuerySessionInformation(int argc, char* argv[])
 {
-	DWORD index, i;
-	DWORD count;
-	BOOL bSuccess;
-	HANDLE hServer;
-	LPSTR pBuffer;
-	DWORD sessionId;
-	DWORD bytesReturned;
-	PWTS_SESSION_INFOA pSessionInfo;
+	DWORD count = 0;
+	BOOL bSuccess = 0;
+	HANDLE hServer = nullptr;
+	LPSTR pBuffer = nullptr;
+	DWORD sessionId = 0;
+	DWORD bytesReturned = 0;
+	PWTS_SESSION_INFOA pSessionInfo = nullptr;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 #ifndef _WIN32
-	if (!GetEnvironmentVariableA("WTSAPI_LIBRARY", NULL, 0))
+	if (!GetEnvironmentVariableA("WTSAPI_LIBRARY", nullptr, 0))
 	{
-		printf("%s: No RDS environment detected, skipping test\n", __FUNCTION__);
+		printf("%s: No RDS environment detected, skipping test\n", __func__);
 		return 0;
 	}
 #endif
@@ -26,7 +28,7 @@ int TestWtsApiQuerySessionInformation(int argc, char* argv[])
 	hServer = WTS_CURRENT_SERVER_HANDLE;
 
 	count = 0;
-	pSessionInfo = NULL;
+	pSessionInfo = nullptr;
 
 	bSuccess = WTSEnumerateSessionsA(hServer, 0, 1, &pSessionInfo, &count);
 
@@ -38,20 +40,20 @@ int TestWtsApiQuerySessionInformation(int argc, char* argv[])
 
 	printf("WTSEnumerateSessions count: %" PRIu32 "\n", count);
 
-	for (index = 0; index < count; index++)
+	for (DWORD index = 0; index < count; index++)
 	{
-		char* Username;
-		char* Domain;
-		char* ClientName;
-		ULONG ClientBuildNumber;
-		USHORT ClientProductId;
-		ULONG ClientHardwareId;
-		USHORT ClientProtocolType;
-		PWTS_CLIENT_DISPLAY ClientDisplay;
-		PWTS_CLIENT_ADDRESS ClientAddress;
-		WTS_CONNECTSTATE_CLASS ConnectState;
+		char* Username = nullptr;
+		char* Domain = nullptr;
+		char* ClientName = nullptr;
+		ULONG ClientBuildNumber = 0;
+		USHORT ClientProductId = 0;
+		ULONG ClientHardwareId = 0;
+		USHORT ClientProtocolType = 0;
+		PWTS_CLIENT_DISPLAY ClientDisplay = nullptr;
+		PWTS_CLIENT_ADDRESS ClientAddress = nullptr;
+		WTS_CONNECTSTATE_CLASS ConnectState = WTSInit;
 
-		pBuffer = NULL;
+		pBuffer = nullptr;
 		bytesReturned = 0;
 
 		sessionId = pSessionInfo[index].SessionId;
@@ -179,7 +181,7 @@ int TestWtsApiQuerySessionInformation(int argc, char* argv[])
 		ClientAddress = (PWTS_CLIENT_ADDRESS)pBuffer;
 		printf("\tWTSClientAddress: AddressFamily: %" PRIu32 " Address: ",
 		       ClientAddress->AddressFamily);
-		for (i = 0; i < sizeof(ClientAddress->Address); i++)
+		for (DWORD i = 0; i < sizeof(ClientAddress->Address); i++)
 			printf("%02" PRIX8 "", ClientAddress->Address[i]);
 		printf("\n");
 

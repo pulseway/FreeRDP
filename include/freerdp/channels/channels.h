@@ -26,37 +26,168 @@
 
 #include <freerdp/api.h>
 #include <freerdp/types.h>
-#include <freerdp/freerdp.h>
+#include <freerdp/settings.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
+	/** @since version 3.28.0 */
+	typedef struct
+	{
+		char channelName[CHANNEL_NAME_LEN + 1];
+		uint32_t channelId;
+
+		uint64_t bytesIn;
+		uint64_t bytesOut;
+
+		uint64_t fragmentsIn;
+		uint64_t fragmentsOut;
+
+		uint64_t packetsIn;
+		uint64_t packetsOut;
+	} StaticClientChannelStat;
+
+	/** @since version 3.28.0 */
+	typedef struct
+	{
+		size_t count;
+		StaticClientChannelStat* stats;
+	} StaticClientChannelStats;
+
+	/** @since version 3.9.0 */
+	typedef BOOL (*freerdp_channel_handle_fkt_t)(rdpContext* context, void* userdata);
+
+	/** @brief free function for StaticClientChannelStat
+	 *
+	 *  @param stats A pointer to a \ref StaticClientChannelStats allocated by \ref
+	 * freerdp_channels_client_stats
+	 *
+	 *  @since version 3.28.0
+	 */
+	FREERDP_API void freerdp_channel_client_stats_free(StaticClientChannelStats* stats);
+
+	/** @brief return statistics for all static channels used
+	 *
+	 * @note must be called from RDP thread
+	 *
+	 * @param channels A pointer to the channels of the instance. Must not be nullptr
+	 *
+	 * @return An allocated \ref StaticClientChannelStats or nullptr in case of failure
+	 * @since version 3.28.0
+	 */
+	WINPR_ATTR_MALLOC(freerdp_channel_client_stats_free, 1)
+	FREERDP_API StaticClientChannelStats* freerdp_channels_client_stats(rdpChannels* channels);
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API int freerdp_channels_client_load(rdpChannels* channels, rdpSettings* settings,
 	                                             PVIRTUALCHANNELENTRY entry, void* data);
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API int freerdp_channels_client_load_ex(rdpChannels* channels, rdpSettings* settings,
 	                                                PVIRTUALCHANNELENTRYEX entryEx, void* data);
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API int freerdp_channels_load_plugin(rdpChannels* channels, rdpSettings* settings,
 	                                             const char* name, void* data);
-	FREERDP_API BOOL freerdp_channels_get_fds(rdpChannels* channels, freerdp* instance,
-	                                          void** read_fds, int* read_count, void** write_fds,
-	                                          int* write_count);
+#if defined(WITH_FREERDP_DEPRECATED)
+	WINPR_DEPRECATED_VAR("Use freerdp_channels_get_event_handle",
+	                     WINPR_ATTR_NODISCARD FREERDP_API BOOL freerdp_channels_get_fds(
+	                         rdpChannels* channels, freerdp* instance, void** read_fds,
+	                         int* read_count, void** write_fds, int* write_count));
+#endif
+
 	FREERDP_API BOOL freerdp_channels_check_fds(rdpChannels* channels, freerdp* instance);
 
+	WINPR_ATTR_NODISCARD
 	FREERDP_API void* freerdp_channels_get_static_channel_interface(rdpChannels* channels,
 	                                                                const char* name);
 
+	/** @brief A channel may register an event handle and a callback function to be called by \b
+	 * freerdp_check_event_handles
+	 *
+	 *  If a channel can not or does not want to use a thread to process data asynchronously it can
+	 * register a \b non-blocking function that does this processing. Notification is done with the
+	 * \b event-handle which will trigger the RDP loop. So this function is triggered until the \b
+	 * event-handle is reset.
+	 *  @note This function may be called even without the \b event-handle to be set, so it must be
+	 * capable of handling these calls properly.
+	 *
+	 *  @param channels A pointer to the channels instance to register with. Must not be \b nullptr
+	 *  @param handle A \b event-handle to be used to notify the RDP main thread that the callback
+	 * function should be called again. Must not be \b INVALID_HANDLE_PARAM
+	 *  @param fkt The callback function responsible to handle the channel specifics. Must not be \b
+	 * nullptr
+	 *  @param userdata A pointer to a channel specific context. Most likely the channel context.
+	 * May be \b nullptr if not required.
+	 *
+	 *  @return \b TRUE if successful, \b FALSE if any error occurs.
+	 *  @since version 3.9.0 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL freerdp_client_channel_register(rdpChannels* channels, HANDLE handle,
+	                                                 freerdp_channel_handle_fkt_t fkt,
+	                                                 void* userdata);
+
+	/** @brief Remove an existing registration for \b event-handle from the channels instance
+	 *
+	 *  @param channels A pointer to the channels instance to register with. Must not be \b nullptr
+	 *  @param handle A \b event-handle to be used to notify the RDP main thread that the callback
+	 * function should be called again. Must not be \b INVALID_HANDLE_PARAM
+	 *
+	 *  @return \b TRUE if successful, \b FALSE if any error occurs.
+	 *  @since version 3.9.0 */
+	FREERDP_API BOOL freerdp_client_channel_unregister(rdpChannels* channels, HANDLE handle);
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API HANDLE freerdp_channels_get_event_handle(freerdp* instance);
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API int freerdp_channels_process_pending_messages(freerdp* instance);
 
+	WINPR_ATTR_NODISCARD
 	FREERDP_API BOOL freerdp_channels_data(freerdp* instance, UINT16 channelId, const BYTE* data,
 	                                       size_t dataSize, UINT32 flags, size_t totalSize);
 
+#if defined(WITH_RDPEUDP)
+	/** Delivers data received through a dynamic-to-static channel bridge.
+	 *
+	 * Unlike freerdp_channels_data(), this remains enabled after the original static transport
+	 * has been disabled for a tunnelled channel.
+	 * @since version 3.33.0 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL freerdp_channels_data_bridge(freerdp* instance, UINT16 channelId,
+	                                              const BYTE* data, size_t dataSize, UINT32 flags,
+	                                              size_t totalSize);
+#endif
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API UINT16 freerdp_channels_get_id_by_name(freerdp* instance, const char* channel_name);
+
+	/** Sends one message of a static virtual channel on the dynamic channel that carries it.
+	 *  @since version 3.33.0 */
+	typedef BOOL (*freerdp_channels_bridge_send_fkt_t)(void* custom, const BYTE* data,
+	                                                   size_t length);
+
+	/** Sends the data of the static virtual channel @p name with @p send from now on, as
+	 *  [MS-RDPEDYC] 3.1.5.4 requires once a dynamic channel carries that channel. @p custom is
+	 *  passed to @p send and to @p fnFree, which is called once the channel no longer uses it
+	 *  and no send is in progress. On failure the caller keeps @p custom.
+	 *
+	 *  A @p send of nullptr removes the active bridge, but does not re-enable the original static
+	 *  transport. @p fnFree is not used then, and a @p custom other than nullptr only removes the
+	 *  bridge set with that @p custom, not one set since.
+	 *  @since version 3.33.0 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL freerdp_channels_set_static_bridge(freerdp* instance, const char* name,
+	                                                    freerdp_channels_bridge_send_fkt_t send,
+	                                                    void (*fnFree)(void* custom), void* custom);
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API const char* freerdp_channels_get_name_by_id(freerdp* instance, UINT16 channelId);
 
-	FREERDP_API PWtsApiFunctionTable FreeRDP_InitWtsApi(void);
+	WINPR_ATTR_NODISCARD
+	FREERDP_API const WtsApiFunctionTable* FreeRDP_InitWtsApi(void);
 
 #ifdef __cplusplus
 }

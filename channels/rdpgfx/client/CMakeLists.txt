@@ -17,25 +17,15 @@
 
 define_channel_client("rdpgfx")
 
-set(${MODULE_PREFIX}_SRCS
-	rdpgfx_main.c
-	rdpgfx_main.h
-	rdpgfx_codec.c
-	rdpgfx_codec.h
-	../rdpgfx_common.c
-	../rdpgfx_common.h)
+set(${MODULE_PREFIX}_SRCS rdpgfx_main.c rdpgfx_main.h rdpgfx_codec.c rdpgfx_codec.h ../rdpgfx_common.c
+                          ../rdpgfx_common.h
+)
 
+set(${MODULE_PREFIX}_LIBS winpr freerdp)
 include_directories(..)
 
 add_channel_client_library(${MODULE_PREFIX} ${MODULE_NAME} ${CHANNEL_NAME} TRUE "DVCPluginEntry")
 
-
-
-target_link_libraries(${MODULE_NAME} winpr freerdp)
-
-if (WITH_DEBUG_SYMBOLS AND MSVC AND NOT BUILTIN_CHANNELS AND BUILD_SHARED_LIBS)
-	install(FILES ${CMAKE_BINARY_DIR}/${MODULE_NAME}.pdb DESTINATION ${FREERDP_ADDIN_PATH} COMPONENT symbols)
+if(BUILD_FUZZERS OR BUILD_TESTING)
+  add_subdirectory(test)
 endif()
-
-set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "Channels/${CHANNEL_NAME}/Client")
-

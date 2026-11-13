@@ -5,14 +5,17 @@
 
 int TestWtsApiShutdownSystem(int argc, char* argv[])
 {
-	BOOL bSuccess;
-	HANDLE hServer;
-	DWORD ShutdownFlag;
+	BOOL bSuccess = 0;
+	HANDLE hServer = nullptr;
+	DWORD ShutdownFlag = 0;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 #ifndef _WIN32
-	if (!GetEnvironmentVariableA("WTSAPI_LIBRARY", NULL, 0))
+	if (!GetEnvironmentVariableA("WTSAPI_LIBRARY", nullptr, 0))
 	{
-		printf("%s: No RDS environment detected, skipping test\n", __FUNCTION__);
+		printf("%s: No RDS environment detected, skipping test\n", __func__);
 		return 0;
 	}
 #endif

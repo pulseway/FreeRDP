@@ -19,6 +19,7 @@
  */
 
 #include <winpr/crt.h>
+#include <winpr/crypto.h>
 #include <winpr/wlog.h>
 #include <winpr/synch.h>
 #include <winpr/thread.h>
@@ -28,20 +29,34 @@
 
 static int status = 0;
 
-LONG* pLoopCount = NULL;
-BOOL bStopTest = FALSE;
+static LONG* pLoopCount = nullptr;
+static BOOL bStopTest = FALSE;
+
+static UINT32 prand(UINT32 max)
+{
+	UINT32 tmp = 0;
+	if (max <= 1)
+		return 1;
+	if (winpr_RAND(&tmp, sizeof(tmp)) < 0)
+	{
+		(void)fprintf(stderr, "winpr_RAND failing, retry...\n");
+		// NOLINTNEXTLINE(concurrency-mt-unsafe)
+		exit(-1);
+	}
+	return tmp % (max - 1) + 1;
+}
 
 static DWORD WINAPI test_error_thread(LPVOID arg)
 {
-	int id;
-	DWORD dwErrorSet;
-	DWORD dwErrorGet;
+	int id = 0;
+	DWORD dwErrorSet = 0;
+	DWORD dwErrorGet = 0;
 
 	id = (int)(size_t)arg;
 
 	do
 	{
-		dwErrorSet = (DWORD)rand();
+		dwErrorSet = prand(UINT32_MAX - 1) + 1;
 		SetLastError(dwErrorSet);
 		if ((dwErrorGet = GetLastError()) != dwErrorSet)
 		{
@@ -60,14 +75,17 @@ static DWORD WINAPI test_error_thread(LPVOID arg)
 
 int TestErrorSetLastError(int argc, char* argv[])
 {
-	DWORD error;
+	DWORD error = 0;
 	HANDLE threads[4];
-	int i;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	/* We must initialize WLog here. It will check for settings
 	 * in the environment and if the variables are not set, the last
 	 * error state is changed... */
-	WLog_GetRoot();
+	if (!WLog_GetRoot())
+		return -1;
 
 	SetLastError(ERROR_ACCESS_DENIED);
 
@@ -80,7 +98,7 @@ int TestErrorSetLastError(int argc, char* argv[])
 		return -1;
 	}
 
-	pLoopCount = _aligned_malloc(sizeof(LONG), sizeof(LONG));
+	pLoopCount = winpr_aligned_calloc(1, sizeof(LONG), sizeof(LONG));
 	if (!pLoopCount)
 	{
 		printf("Unable to allocate memory\n");
@@ -88,28 +106,29 @@ int TestErrorSetLastError(int argc, char* argv[])
 	}
 	*pLoopCount = 0;
 
-	for (i = 0; i < 4; i++)
+	for (int i = 0; i < 4; i++)
 	{
-		if (!(threads[i] = CreateThread(NULL, 0, test_error_thread, (void*)(size_t)0, 0, NULL)))
+		if (!(threads[i] =
+		          CreateThread(nullptr, 0, test_error_thread, (void*)(size_t)0, 0, nullptr)))
 		{
 			printf("Failed to create thread #%d\n", i);
 			return -1;
 		}
 	}
 
-	// let the threads run for at least 2 seconds
-	Sleep(2000);
+	// let the threads run for at least 0.2 seconds
+	Sleep(200);
 	bStopTest = TRUE;
 
-	WaitForSingleObject(threads[0], INFINITE);
-	WaitForSingleObject(threads[1], INFINITE);
-	WaitForSingleObject(threads[2], INFINITE);
-	WaitForSingleObject(threads[3], INFINITE);
+	(void)WaitForSingleObject(threads[0], INFINITE);
+	(void)WaitForSingleObject(threads[1], INFINITE);
+	(void)WaitForSingleObject(threads[2], INFINITE);
+	(void)WaitForSingleObject(threads[3], INFINITE);
 
-	CloseHandle(threads[0]);
-	CloseHandle(threads[1]);
-	CloseHandle(threads[2]);
-	CloseHandle(threads[3]);
+	(void)CloseHandle(threads[0]);
+	(void)CloseHandle(threads[1]);
+	(void)CloseHandle(threads[2]);
+	(void)CloseHandle(threads[3]);
 
 	error = GetLastError();
 
@@ -127,6 +146,7 @@ int TestErrorSetLastError(int argc, char* argv[])
 	}
 
 	printf("Completed %" PRId32 " iterations.\n", *pLoopCount);
+	winpr_aligned_free(pLoopCount);
 
 	return status;
 }

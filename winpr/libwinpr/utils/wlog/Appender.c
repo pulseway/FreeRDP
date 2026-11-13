@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include "Appender.h"
 
@@ -31,7 +29,7 @@ void WLog_Appender_Free(wLog* log, wLogAppender* appender)
 	if (appender->Layout)
 	{
 		WLog_Layout_Free(log, appender->Layout);
-		appender->Layout = NULL;
+		appender->Layout = nullptr;
 	}
 
 	DeleteCriticalSection(&appender->lock);
@@ -41,7 +39,7 @@ void WLog_Appender_Free(wLog* log, wLogAppender* appender)
 wLogAppender* WLog_GetLogAppender(wLog* log)
 {
 	if (!log)
-		return NULL;
+		return nullptr;
 
 	if (!log->Appender)
 		return WLog_GetLogAppender(log->Parent);
@@ -52,7 +50,7 @@ wLogAppender* WLog_GetLogAppender(wLog* log)
 BOOL WLog_OpenAppender(wLog* log)
 {
 	int status = 0;
-	wLogAppender* appender;
+	wLogAppender* appender = nullptr;
 
 	appender = WLog_GetLogAppender(log);
 
@@ -74,7 +72,7 @@ BOOL WLog_OpenAppender(wLog* log)
 BOOL WLog_CloseAppender(wLog* log)
 {
 	int status = 0;
-	wLogAppender* appender;
+	wLogAppender* appender = nullptr;
 
 	appender = WLog_GetLogAppender(log);
 
@@ -95,10 +93,10 @@ BOOL WLog_CloseAppender(wLog* log)
 
 static wLogAppender* WLog_Appender_New(wLog* log, DWORD logAppenderType)
 {
-	wLogAppender* appender;
+	wLogAppender* appender = nullptr;
 
 	if (!log)
-		return NULL;
+		return nullptr;
 
 	switch (logAppenderType)
 	{
@@ -114,39 +112,43 @@ static wLogAppender* WLog_Appender_New(wLog* log, DWORD logAppenderType)
 		case WLOG_APPENDER_CALLBACK:
 			appender = WLog_CallbackAppender_New(log);
 			break;
-#ifdef HAVE_SYSLOG_H
+#ifdef WINPR_HAVE_SYSLOG_H
 		case WLOG_APPENDER_SYSLOG:
 			appender = WLog_SyslogAppender_New(log);
 			break;
 #endif
-#ifdef HAVE_JOURNALD_H
+#ifdef WINPR_HAVE_JOURNALD_H
 		case WLOG_APPENDER_JOURNALD:
 			appender = WLog_JournaldAppender_New(log);
 			break;
 #endif
 		case WLOG_APPENDER_UDP:
-			appender = (wLogAppender*)WLog_UdpAppender_New(log);
+			appender = WLog_UdpAppender_New(log);
 			break;
 		default:
-			fprintf(stderr, "%s: unknown handler type %" PRIu32 "\n", __FUNCTION__,
-			        logAppenderType);
-			appender = NULL;
+			(void)fprintf(stderr, "%s: unknown handler type %" PRIu32 "\n", __func__,
+			              logAppenderType);
+			appender = nullptr;
 			break;
 	}
 
 	if (!appender)
-		appender = (wLogAppender*)WLog_ConsoleAppender_New(log);
+		appender = WLog_ConsoleAppender_New(log);
 
 	if (!appender)
-		return NULL;
+		return nullptr;
 
 	if (!(appender->Layout = WLog_Layout_New(log)))
 	{
 		WLog_Appender_Free(log, appender);
-		return NULL;
+		return nullptr;
 	}
 
-	InitializeCriticalSectionAndSpinCount(&appender->lock, 4000);
+	if (!InitializeCriticalSectionAndSpinCount(&appender->lock, 4000))
+	{
+		WLog_Appender_Free(log, appender);
+		return nullptr;
+	}
 
 	return appender;
 }
@@ -159,11 +161,11 @@ BOOL WLog_SetLogAppenderType(wLog* log, DWORD logAppenderType)
 	if (log->Appender)
 	{
 		WLog_Appender_Free(log, log->Appender);
-		log->Appender = NULL;
+		log->Appender = nullptr;
 	}
 
 	log->Appender = WLog_Appender_New(log, logAppenderType);
-	return log->Appender != NULL;
+	return log->Appender != nullptr;
 }
 
 BOOL WLog_ConfigureAppender(wLogAppender* appender, const char* setting, void* value)
@@ -176,4 +178,45 @@ BOOL WLog_ConfigureAppender(wLogAppender* appender, const char* setting, void* v
 		return appender->Set(appender, setting, value);
 	else
 		return FALSE;
+}
+
+BOOL WLog_SetAppenderContext(wLogAppender* appender, wLogMessageType type, void* context)
+{
+	if (!appender)
+		return FALSE;
+	switch (type)
+	{
+		case WLOG_MESSAGE_TEXT:
+			appender->TextMessageContext = context;
+			return TRUE;
+		case WLOG_MESSAGE_DATA:
+			appender->DataMessageContext = context;
+			return TRUE;
+		case WLOG_MESSAGE_IMAGE:
+			appender->ImageMessageContext = context;
+			return TRUE;
+		case WLOG_MESSAGE_PACKET:
+			appender->PacketMessageContext = context;
+			return TRUE;
+		default:
+			return FALSE;
+	}
+}
+
+void* WLog_GetAppenderContext(wLogAppender* appender, wLogMessageType type)
+{
+	WINPR_ASSERT(appender);
+	switch (type)
+	{
+		case WLOG_MESSAGE_TEXT:
+			return appender->TextMessageContext;
+		case WLOG_MESSAGE_DATA:
+			return appender->DataMessageContext;
+		case WLOG_MESSAGE_IMAGE:
+			return appender->ImageMessageContext;
+		case WLOG_MESSAGE_PACKET:
+			return appender->PacketMessageContext;
+		default:
+			return nullptr;
+	}
 }

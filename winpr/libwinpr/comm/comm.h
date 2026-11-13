@@ -21,19 +21,23 @@
 #ifndef WINPR_COMM_PRIVATE_H
 #define WINPR_COMM_PRIVATE_H
 
-#if defined __linux__ && !defined ANDROID
-
+#if defined(__linux__)
+#define WINPR_HAVE_COMM_COUNTERS
 #include <linux/serial.h>
-#include <sys/eventfd.h>
+#endif
 
 #include <winpr/comm.h>
 
 #include "../handle/handle.h"
-#include "config.h"
+#include <winpr/config.h>
+
+#if defined(WINPR_HAVE_SYS_EVENTFD_H)
+#include <sys/eventfd.h>
+#endif
 
 struct winpr_comm
 {
-	WINPR_HANDLE_DEF();
+	WINPR_HANDLE common;
 
 	int fd;
 
@@ -65,12 +69,20 @@ struct winpr_comm
 
 	CRITICAL_SECTION
 	EventsLock; /* protects counters, WaitEventMask and PendingEvents */
+#if defined(WINPR_HAVE_COMM_COUNTERS)
 	struct serial_icounter_struct counters;
+#endif
 	ULONG WaitEventMask;
 	ULONG PendingEvents;
 
-	char eventChar;
+	BYTE eventChar;
 	/* NB: CloseHandle() has to free resources */
+	ULONG XOnLimit;
+	ULONG XOffLimit;
+
+#if defined(WINPR_HAVE_COMM_COUNTERS)
+	BOOL TIOCGICOUNTSupported;
+#endif
 };
 
 typedef struct winpr_comm WINPR_COMM;
@@ -88,22 +100,35 @@ typedef struct winpr_comm WINPR_COMM;
 #define SERIAL_EV_RX80FULL 0x0400
 #define SERIAL_EV_EVENT1 0x0800
 #define SERIAL_EV_EVENT2 0x1000
-#define SERIAL_EV_FREERDP_WAITING 0x4000 /* bit today unused by other SERIAL_EV_* */
-#define SERIAL_EV_FREERDP_STOP 0x8000    /* bit today unused by other SERIAL_EV_* */
+#define SERIAL_EV_WINPR_WAITING 0x4000 /* bit today unused by other SERIAL_EV_* */
+#define SERIAL_EV_WINPR_STOP 0x8000    /* bit today unused by other SERIAL_EV_* */
 
-#define FREERDP_PURGE_TXABORT 0x00000001 /* abort pending transmission */
-#define FREERDP_PURGE_RXABORT 0x00000002 /* abort pending reception */
+#define WINPR_PURGE_TXABORT 0x00000001 /* abort pending transmission */
+#define WINPR_PURGE_RXABORT 0x00000002 /* abort pending reception */
 
-void CommLog_Print(DWORD wlog_level, ...);
+#define CommLog_Print(level, ...) CommLog_PrintEx(level, __FILE__, __LINE__, __func__, __VA_ARGS__)
+WINPR_ATTR_FORMAT_ARG(5, 6)
+void CommLog_PrintEx(DWORD level, const char* file, size_t line, const char* fkt,
+                     WINPR_FORMAT_ARG const char* fmt, ...);
 
 BOOL CommIsHandled(HANDLE handle);
+BOOL CommIsHandleValid(HANDLE handle);
 BOOL CommCloseHandle(HANDLE handle);
+const HANDLE_CREATOR* GetCommHandleCreator(void);
 
+#define CommIoCtl(pComm, ctl, data) \
+	CommIoCtl_int((pComm), (ctl), (data), __FILE__, __func__, __LINE__)
+BOOL CommIoCtl_int(WINPR_COMM* pComm, unsigned long int ctl, void* data, const char* file,
+                   const char* fkt, size_t line);
+BOOL CommUpdateIOCount(HANDLE handle, BOOL checkSupportStatus);
+
+const char* CommSerialEvString(ULONG status, char* buffer, size_t size);
+
+#if defined(WINPR_HAVE_SYS_EVENTFD_H)
 #ifndef WITH_EVENTFD_READ_WRITE
 int eventfd_read(int fd, eventfd_t* value);
 int eventfd_write(int fd, eventfd_t value);
 #endif
-
-#endif /* __linux__ */
+#endif
 
 #endif /* WINPR_COMM_PRIVATE_H */

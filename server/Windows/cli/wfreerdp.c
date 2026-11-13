@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +31,7 @@
 
 #include "wfreerdp.h"
 
+#include <freerdp/server/server-common.h>
 #include <freerdp/log.h>
 #define TAG SERVER_TAG("windows")
 
@@ -48,13 +47,14 @@ BOOL CALLBACK moncb(HMONITOR hMonitor, HDC hdcMonitor, LPRECT lprcMonitor, LPARA
 
 int main(int argc, char* argv[])
 {
+	freerdp_server_warn_unmaintained(argc, argv);
+
 	BOOL screen_selected = FALSE;
-	int index;
+	int index = 1;
 	wfServer* server;
 	server = wfreerdp_server_new();
 	set_screen_id(0);
 	// handle args
-	index = 1;
 	errno = 0;
 
 	while (index < argc)
@@ -62,17 +62,16 @@ int main(int argc, char* argv[])
 		// first the args that will cause the program to terminate
 		if (strcmp("--list-screens", argv[index]) == 0)
 		{
-			_TCHAR name[128];
 			int width;
 			int height;
 			int bpp;
-			int i;
 			WLog_INFO(TAG, "Detecting screens...");
 			WLog_INFO(TAG, "ID\tResolution\t\tName (Interface)");
 
-			for (i = 0;; i++)
+			for (int i = 0;; i++)
 			{
-				if (get_screen_info(i, name, &width, &height, &bpp) != 0)
+				_TCHAR name[128] = WINPR_C_ARRAY_INIT;
+				if (get_screen_info(i, name, ARRAYSIZE(name), &width, &height, &bpp) != 0)
 				{
 					if ((width * height * bpp) == 0)
 						continue;
@@ -92,7 +91,7 @@ int main(int argc, char* argv[])
 				vscreen_w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
 				vscreen_h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 				WLog_INFO(TAG, "");
-				EnumDisplayMonitors(NULL, NULL, moncb, 0);
+				EnumDisplayMonitors(nullptr, nullptr, moncb, 0);
 				IDcount = 0;
 				WLog_INFO(TAG, "Virtual Screen = %dx%d", vscreen_w, vscreen_h);
 			}
@@ -112,7 +111,7 @@ int main(int argc, char* argv[])
 				return 0;
 			}
 
-			val = strtoul(argv[index], NULL, 0);
+			val = strtoul(argv[index], nullptr, 0);
 
 			if ((errno != 0) || (val > UINT32_MAX))
 				return -1;
@@ -123,7 +122,7 @@ int main(int argc, char* argv[])
 
 		if (index == argc - 1)
 		{
-			UINT32 val = strtoul(argv[index], NULL, 0);
+			UINT32 val = strtoul(argv[index], nullptr, 0);
 
 			if ((errno != 0) || (val > UINT32_MAX))
 				return -1;
@@ -135,18 +134,17 @@ int main(int argc, char* argv[])
 
 	if (screen_selected == FALSE)
 	{
-		_TCHAR name[128];
 		int width;
 		int height;
 		int bpp;
-		int i;
 		WLog_INFO(TAG, "screen id not provided. attempting to detect...");
 		WLog_INFO(TAG, "Detecting screens...");
 		WLog_INFO(TAG, "ID\tResolution\t\tName (Interface)");
 
-		for (i = 0;; i++)
+		for (int i = 0;; i++)
 		{
-			if (get_screen_info(i, name, &width, &height, &bpp) != 0)
+			_TCHAR name[128] = WINPR_C_ARRAY_INIT;
+			if (get_screen_info(i, name, ARRAYSIZE(name), &width, &height, &bpp) != 0)
 			{
 				if ((width * height * bpp) == 0)
 					continue;
@@ -165,7 +163,7 @@ int main(int argc, char* argv[])
 
 	WLog_INFO(TAG, "Starting server");
 	wfreerdp_server_start(server);
-	WaitForSingleObject(server->thread, INFINITE);
+	(void)WaitForSingleObject(server->thread, INFINITE);
 	WLog_INFO(TAG, "Stopping server");
 	wfreerdp_server_stop(server);
 	wfreerdp_server_free(server);

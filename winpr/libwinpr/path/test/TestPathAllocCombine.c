@@ -14,8 +14,11 @@ static const TCHAR testPathOutMorePathBackslash[] = _T("C:\\Microsoft Visual Stu
 
 int TestPathAllocCombine(int argc, char* argv[])
 {
-	HRESULT status;
-	LPTSTR PathOut;
+	HRESULT status = 0;
+	LPTSTR PathOut = nullptr;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	/* Base Path: Backslash, More Path: No Backslash */
 
@@ -33,7 +36,7 @@ int TestPathAllocCombine(int argc, char* argv[])
 		return -1;
 	}
 
-	HeapFree(GetProcessHeap(), 0, PathOut);
+	free(PathOut);
 
 	/* Base Path: Backslash, More Path: Backslash */
 
@@ -52,7 +55,7 @@ int TestPathAllocCombine(int argc, char* argv[])
 		return -1;
 	}
 
-	HeapFree(GetProcessHeap(), 0, PathOut);
+	free(PathOut);
 
 	/* Base Path: No Backslash, More Path: Backslash */
 
@@ -71,7 +74,7 @@ int TestPathAllocCombine(int argc, char* argv[])
 		return -1;
 	}
 
-	HeapFree(GetProcessHeap(), 0, PathOut);
+	free(PathOut);
 
 	/* Base Path: No Backslash, More Path: No Backslash */
 
@@ -89,7 +92,7 @@ int TestPathAllocCombine(int argc, char* argv[])
 		return -1;
 	}
 
-	HeapFree(GetProcessHeap(), 0, PathOut);
+	free(PathOut);
 
 	return 0;
 }

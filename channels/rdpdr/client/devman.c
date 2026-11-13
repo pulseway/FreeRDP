@@ -21,9 +21,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +39,8 @@
 
 #include "devman.h"
 
+#define TAG CHANNELS_TAG("rdpdr.client")
+
 static void devman_device_free(void* obj)
 {
 	DEVICE* device = (DEVICE*)obj;
@@ -48,22 +48,23 @@ static void devman_device_free(void* obj)
 	if (!device)
 		return;
 
-	IFCALL(device->Free, device);
+	if (device->Free)
+		device->Free(device);
 }
 
 DEVMAN* devman_new(rdpdrPlugin* rdpdr)
 {
-	DEVMAN* devman;
+	DEVMAN* devman = nullptr;
 
 	if (!rdpdr)
-		return NULL;
+		return nullptr;
 
 	devman = (DEVMAN*)calloc(1, sizeof(DEVMAN));
 
 	if (!devman)
 	{
-		WLog_INFO(TAG, "calloc failed!");
-		return NULL;
+		WLog_Print(rdpdr->log, WLOG_INFO, "calloc failed!");
+		return nullptr;
 	}
 
 	devman->plugin = (void*)rdpdr;
@@ -72,9 +73,9 @@ DEVMAN* devman_new(rdpdrPlugin* rdpdr)
 
 	if (!devman->devices)
 	{
-		WLog_INFO(TAG, "ListDictionary_New failed!");
+		WLog_Print(rdpdr->log, WLOG_INFO, "ListDictionary_New failed!");
 		free(devman);
-		return NULL;
+		return nullptr;
 	}
 
 	ListDictionary_ValueObject(devman->devices)->fnObjectFree = devman_device_free;
@@ -89,12 +90,12 @@ void devman_free(DEVMAN* devman)
 
 void devman_unregister_device(DEVMAN* devman, void* key)
 {
-	DEVICE* device;
+	DEVICE* device = nullptr;
 
 	if (!devman || !key)
 		return;
 
-	device = (DEVICE*)ListDictionary_Remove(devman->devices, key);
+	device = (DEVICE*)ListDictionary_Take(devman->devices, key);
 
 	if (device)
 		devman_device_free(device);
@@ -107,7 +108,7 @@ void devman_unregister_device(DEVMAN* devman, void* key)
  */
 static UINT devman_register_device(DEVMAN* devman, DEVICE* device)
 {
-	void* key = NULL;
+	void* key = nullptr;
 
 	if (!devman || !device)
 		return ERROR_INVALID_PARAMETER;
@@ -126,29 +127,33 @@ static UINT devman_register_device(DEVMAN* devman, DEVICE* device)
 
 DEVICE* devman_get_device_by_id(DEVMAN* devman, UINT32 id)
 {
-	DEVICE* device = NULL;
+	DEVICE* device = nullptr;
 	void* key = (void*)(size_t)id;
 
 	if (!devman)
-		return NULL;
+	{
+		WLog_ERR(TAG, "device manager=nullptr");
+		return nullptr;
+	}
 
 	device = (DEVICE*)ListDictionary_GetItemValue(devman->devices, key);
+	if (!device)
+		WLog_WARN(TAG, "could not find device ID 0x%08" PRIx32, id);
 	return device;
 }
 
 DEVICE* devman_get_device_by_type(DEVMAN* devman, UINT32 type)
 {
-	DEVICE* device = NULL;
-	ULONG_PTR* keys;
-	int count, x;
+	DEVICE* device = nullptr;
+	ULONG_PTR* keys = nullptr;
 
 	if (!devman)
-		return NULL;
+		return nullptr;
 
 	ListDictionary_Lock(devman->devices);
-	count = ListDictionary_GetKeys(devman->devices, &keys);
+	const size_t count = ListDictionary_GetKeys(devman->devices, &keys);
 
-	for (x = 0; x < count; x++)
+	for (size_t x = 0; x < count; x++)
 	{
 		DEVICE* cur = (DEVICE*)ListDictionary_GetItemValue(devman->devices, (void*)keys[x]);
 
@@ -178,12 +183,12 @@ static const char PARALLEL_SERVICE_NAME[] = "parallel";
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT devman_load_device_service(DEVMAN* devman, const RDPDR_DEVICE* device, rdpContext* rdpcontext)
+UINT devman_load_device_service(DEVMAN* devman, RDPDR_DEVICE* device, rdpContext* rdpcontext)
 {
-	const char* ServiceName = NULL;
-	DEVICE_SERVICE_ENTRY_POINTS ep;
-	PDEVICE_SERVICE_ENTRY entry = NULL;
-	union {
+	const char* ServiceName = nullptr;
+	DEVICE_SERVICE_ENTRY_POINTS ep = WINPR_C_ARRAY_INIT;
+	union
+	{
 		const RDPDR_DEVICE* cdp;
 		RDPDR_DEVICE* dp;
 	} devconv;
@@ -214,8 +219,9 @@ UINT devman_load_device_service(DEVMAN* devman, const RDPDR_DEVICE* device, rdpC
 	else
 		WLog_INFO(TAG, "Loading device service %s (static)", ServiceName);
 
-	entry = (PDEVICE_SERVICE_ENTRY)freerdp_load_channel_addin_entry(ServiceName, NULL,
-	                                                                "DeviceServiceEntry", 0);
+	PVIRTUALCHANNELENTRY pvce =
+	    freerdp_load_channel_addin_entry(ServiceName, nullptr, "DeviceServiceEntry", 0);
+	PDEVICE_SERVICE_ENTRY entry = WINPR_FUNC_PTR_CAST(pvce, PDEVICE_SERVICE_ENTRY);
 
 	if (!entry)
 	{

@@ -22,21 +22,27 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include <winpr/crt.h>
+#include <winpr/sysinfo.h>
+#include <winpr/assert.h>
 #include <winpr/stream.h>
 
+#include <winpr/print.h>
+#include <winpr/sspicli.h>
+
 #include <freerdp/types.h>
+#include <freerdp/freerdp.h>
 #include <freerdp/constants.h>
 #include <freerdp/channels/log.h>
 #include <freerdp/channels/rdpdr.h>
+#include <freerdp/utils/rdpdr_utils.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -56,10 +62,6 @@
 #include <unistd.h>
 #endif
 
-#ifdef HAVE_UNISTD_H
-#include <unistd.h>
-#endif
-
 #include "rdpdr_capabilities.h"
 
 #include "devman.h"
@@ -67,36 +69,170 @@
 
 #include "rdpdr_main.h"
 
-typedef struct _DEVICE_DRIVE_EXT DEVICE_DRIVE_EXT;
+#define TAG CHANNELS_TAG("rdpdr.client")
+
 /* IMPORTANT: Keep in sync with DRIVE_DEVICE */
-struct _DEVICE_DRIVE_EXT
+typedef struct
 {
 	DEVICE device;
 	WCHAR* path;
 	BOOL automount;
-};
+} DEVICE_DRIVE_EXT;
 
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT rdpdr_send_device_list_announce_request(rdpdrPlugin* rdpdr, BOOL userLoggedOn);
-
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT rdpdr_send_device_list_remove_request(rdpdrPlugin* rdpdr, UINT32 count, UINT32 ids[])
+static const char* rdpdr_state_str(enum RDPDR_CHANNEL_STATE state)
 {
-	UINT32 i;
-	wStream* s;
-	s = Stream_New(NULL, count * sizeof(UINT32) + 8);
+	switch (state)
+	{
+		case RDPDR_CHANNEL_STATE_INITIAL:
+			return "RDPDR_CHANNEL_STATE_INITIAL";
+		case RDPDR_CHANNEL_STATE_ANNOUNCE:
+			return "RDPDR_CHANNEL_STATE_ANNOUNCE";
+		case RDPDR_CHANNEL_STATE_ANNOUNCE_REPLY:
+			return "RDPDR_CHANNEL_STATE_ANNOUNCE_REPLY";
+		case RDPDR_CHANNEL_STATE_NAME_REQUEST:
+			return "RDPDR_CHANNEL_STATE_NAME_REQUEST";
+		case RDPDR_CHANNEL_STATE_SERVER_CAPS:
+			return "RDPDR_CHANNEL_STATE_SERVER_CAPS";
+		case RDPDR_CHANNEL_STATE_CLIENT_CAPS:
+			return "RDPDR_CHANNEL_STATE_CLIENT_CAPS";
+		case RDPDR_CHANNEL_STATE_CLIENTID_CONFIRM:
+			return "RDPDR_CHANNEL_STATE_CLIENTID_CONFIRM";
+		case RDPDR_CHANNEL_STATE_READY:
+			return "RDPDR_CHANNEL_STATE_READY";
+		case RDPDR_CHANNEL_STATE_USER_LOGGEDON:
+			return "RDPDR_CHANNEL_STATE_USER_LOGGEDON";
+		default:
+			return "RDPDR_CHANNEL_STATE_UNKNOWN";
+	}
+}
+
+static const char* support_str(BOOL val)
+{
+	if (val)
+		return "supported";
+	return "not found";
+}
+
+static const char* rdpdr_caps_pdu_str(UINT32 flag)
+{
+	switch (flag)
+	{
+		case RDPDR_DEVICE_REMOVE_PDUS:
+			return "RDPDR_USER_LOGGEDON_PDU";
+		case RDPDR_CLIENT_DISPLAY_NAME_PDU:
+			return "RDPDR_CLIENT_DISPLAY_NAME_PDU";
+		case RDPDR_USER_LOGGEDON_PDU:
+			return "RDPDR_USER_LOGGEDON_PDU";
+		default:
+			return "RDPDR_UNKNONW";
+	}
+}
+
+static BOOL rdpdr_check_extended_pdu_flag(rdpdrPlugin* rdpdr, UINT32 flag)
+{
+	WINPR_ASSERT(rdpdr);
+
+	const BOOL client = (rdpdr->clientExtendedPDU & flag) != 0;
+	const BOOL server = (rdpdr->serverExtendedPDU & flag) != 0;
+
+	if (!client || !server)
+	{
+		WLog_Print(rdpdr->log, WLOG_WARN, "Checking ExtendedPDU::%s, client %s, server %s",
+		           rdpdr_caps_pdu_str(flag), support_str(client), support_str(server));
+		return FALSE;
+	}
+	return TRUE;
+}
+
+BOOL rdpdr_state_advance(rdpdrPlugin* rdpdr, enum RDPDR_CHANNEL_STATE next)
+{
+	WINPR_ASSERT(rdpdr);
+
+	if (next != rdpdr->state)
+		WLog_Print(rdpdr->log, WLOG_DEBUG, "[RDPDR] transition from %s to %s",
+		           rdpdr_state_str(rdpdr->state), rdpdr_state_str(next));
+	rdpdr->state = next;
+	return TRUE;
+}
+
+static BOOL device_foreach(rdpdrPlugin* rdpdr, BOOL abortOnFail,
+                           BOOL (*fkt)(ULONG_PTR key, void* element, void* data), void* data)
+{
+	BOOL rc = TRUE;
+	ULONG_PTR* keys = nullptr;
+
+	ListDictionary_Lock(rdpdr->devman->devices);
+	const size_t count = ListDictionary_GetKeys(rdpdr->devman->devices, &keys);
+	for (size_t x = 0; x < count; x++)
+	{
+		void* element = ListDictionary_GetItemValue(rdpdr->devman->devices, (void*)keys[x]);
+		if (!fkt(keys[x], element, data))
+		{
+			rc = FALSE;
+			if (abortOnFail)
+				break;
+		}
+	}
+	free(keys);
+	ListDictionary_Unlock(rdpdr->devman->devices);
+	return rc;
+}
+
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT rdpdr_try_send_device_list_announce_request(rdpdrPlugin* rdpdr);
+
+static BOOL rdpdr_load_drive(rdpdrPlugin* rdpdr, const char* name, const char* path, BOOL automount)
+{
+	UINT rc = ERROR_INTERNAL_ERROR;
+	union
+	{
+		RDPDR_DRIVE* drive;
+		RDPDR_DEVICE* device;
+	} drive;
+	const char* args[] = { name, path, automount ? nullptr : name };
+
+	drive.device = freerdp_device_new(RDPDR_DTYP_FILESYSTEM, ARRAYSIZE(args), args);
+	if (!drive.device)
+		goto fail;
+
+	WINPR_ASSERT(rdpdr->context.RdpdrRegisterDevice);
+	rc = rdpdr->context.RdpdrRegisterDevice(&rdpdr->context, drive.device, &drive.device->Id);
+	if (rc != CHANNEL_RC_OK)
+		goto fail;
+
+fail:
+	freerdp_device_free(drive.device);
+	return rc == CHANNEL_RC_OK;
+}
+
+/**
+ * Function description
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+static UINT rdpdr_send_device_list_remove_request(rdpdrPlugin* rdpdr, UINT32 count,
+                                                  const UINT32 ids[])
+{
+	wStream* s = nullptr;
+
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(ids || (count == 0));
+
+	if (count == 0)
+		return CHANNEL_RC_OK;
+
+	if (!rdpdr_check_extended_pdu_flag(rdpdr, RDPDR_DEVICE_REMOVE_PDUS))
+		return CHANNEL_RC_OK;
+
+	s = StreamPool_Take(rdpdr->pool, count * sizeof(UINT32) + 8);
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "Stream_New failed!");
+		WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_New failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
@@ -104,7 +240,7 @@ static UINT rdpdr_send_device_list_remove_request(rdpdrPlugin* rdpdr, UINT32 cou
 	Stream_Write_UINT16(s, PAKID_CORE_DEVICELIST_REMOVE);
 	Stream_Write_UINT32(s, count);
 
-	for (i = 0; i < count; i++)
+	for (UINT32 i = 0; i < count; i++)
 		Stream_Write_UINT32(s, ids[i]);
 
 	Stream_SealLength(s);
@@ -113,23 +249,35 @@ static UINT rdpdr_send_device_list_remove_request(rdpdrPlugin* rdpdr, UINT32 cou
 
 #if defined(_UWP) || defined(__IOS__)
 
-void first_hotplug(rdpdrPlugin* rdpdr)
+static UINT handle_hotplug(WINPR_ATTR_UNUSED RdpdrClientContext* context,
+                           WINPR_ATTR_UNUSED RdpdrHotplugEventType type)
+{
+	return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+static void first_hotplug(WINPR_ATTR_UNUSED rdpdrPlugin* rdpdr)
 {
 }
 
-static DWORD WINAPI drive_hotplug_thread_func(LPVOID arg)
+static DWORD WINAPI drive_hotplug_thread_func(WINPR_ATTR_UNUSED LPVOID arg)
 {
 	return CHANNEL_RC_OK;
 }
 
-static UINT drive_hotplug_thread_terminate(rdpdrPlugin* rdpdr)
+static UINT drive_hotplug_thread_terminate(WINPR_ATTR_UNUSED rdpdrPlugin* rdpdr)
 {
 	return CHANNEL_RC_OK;
 }
 
-#elif _WIN32
+#elif defined(_WIN32)
 
-BOOL check_path(const char* path)
+static UINT handle_hotplug(WINPR_ATTR_UNUSED RdpdrClientContext* context,
+                           WINPR_ATTR_UNUSED RdpdrHotplugEventType type)
+{
+	return CHANNEL_RC_OK;
+}
+
+static BOOL check_path(const char* path)
 {
 	UINT type = GetDriveTypeA(path);
 
@@ -137,32 +285,25 @@ BOOL check_path(const char* path)
 	      type == DRIVE_REMOTE))
 		return FALSE;
 
-	return GetVolumeInformationA(path, NULL, 0, NULL, NULL, NULL, NULL, 0);
+	return GetVolumeInformationA(path, nullptr, 0, nullptr, nullptr, nullptr, nullptr, 0);
 }
 
-void first_hotplug(rdpdrPlugin* rdpdr)
+static void first_hotplug(rdpdrPlugin* rdpdr)
 {
-	size_t i;
 	DWORD unitmask = GetLogicalDrives();
 
-	for (i = 0; i < 26; i++)
+	for (size_t i = 0; i < 26; i++)
 	{
 		if (unitmask & 0x01)
 		{
 			char drive_path[] = { 'c', ':', '\\', '\0' };
 			char drive_name[] = { 'c', '\0' };
-			RDPDR_DRIVE drive = { 0 };
 			drive_path[0] = 'A' + (char)i;
 			drive_name[0] = 'A' + (char)i;
 
 			if (check_path(drive_path))
 			{
-				drive.Type = RDPDR_DTYP_FILESYSTEM;
-				drive.Path = drive_path;
-				drive.Name = drive_name;
-				drive.automount = TRUE;
-				devman_load_device_service(rdpdr->devman, (const RDPDR_DEVICE*)&drive,
-				                           rdpdr->rdpcontext);
+				rdpdr_load_drive(rdpdr, drive_name, drive_path, TRUE);
 			}
 		}
 
@@ -170,7 +311,7 @@ void first_hotplug(rdpdrPlugin* rdpdr)
 	}
 }
 
-LRESULT CALLBACK hotplug_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK hotplug_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
 	rdpdrPlugin* rdpdr;
 	PDEV_BROADCAST_HDR lpdb = (PDEV_BROADCAST_HDR)lParam;
@@ -187,9 +328,8 @@ LRESULT CALLBACK hotplug_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 					{
 						PDEV_BROADCAST_VOLUME lpdbv = (PDEV_BROADCAST_VOLUME)lpdb;
 						DWORD unitmask = lpdbv->dbcv_unitmask;
-						int i;
 
-						for (i = 0; i < 26; i++)
+						for (int i = 0; i < 26; i++)
 						{
 							if (unitmask & 0x01)
 							{
@@ -200,16 +340,7 @@ LRESULT CALLBACK hotplug_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 
 								if (check_path(drive_path))
 								{
-									RDPDR_DRIVE drive = { 0 };
-
-									drive.Type = RDPDR_DTYP_FILESYSTEM;
-									drive.Path = drive_path;
-									drive.automount = TRUE;
-									drive.Name = drive_name;
-									devman_load_device_service(rdpdr->devman,
-									                           (const RDPDR_DEVICE*)&drive,
-									                           rdpdr->rdpcontext);
-									rdpdr_send_device_list_announce_request(rdpdr, TRUE);
+									rdpdr_load_drive(rdpdr, drive_name, drive_path, TRUE);
 								}
 							}
 
@@ -224,21 +355,20 @@ LRESULT CALLBACK hotplug_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 					{
 						PDEV_BROADCAST_VOLUME lpdbv = (PDEV_BROADCAST_VOLUME)lpdb;
 						DWORD unitmask = lpdbv->dbcv_unitmask;
-						int i, j, count;
 						char drive_name_upper, drive_name_lower;
-						ULONG_PTR* keys = NULL;
+						ULONG_PTR* keys = nullptr;
 						DEVICE_DRIVE_EXT* device_ext;
-						UINT32 ids[1];
 
-						for (i = 0; i < 26; i++)
+						for (int i = 0; i < 26; i++)
 						{
 							if (unitmask & 0x01)
 							{
 								drive_name_upper = 'A' + i;
 								drive_name_lower = 'a' + i;
-								count = ListDictionary_GetKeys(rdpdr->devman->devices, &keys);
+								const size_t count =
+								    ListDictionary_GetKeys(rdpdr->devman->devices, &keys);
 
-								for (j = 0; j < count; j++)
+								for (size_t j = 0; j < count; j++)
 								{
 									device_ext = (DEVICE_DRIVE_EXT*)ListDictionary_GetItemValue(
 									    rdpdr->devman->devices, (void*)keys[j]);
@@ -251,15 +381,15 @@ LRESULT CALLBACK hotplug_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 									{
 										if (device_ext->automount)
 										{
-											devman_unregister_device(rdpdr->devman, (void*)keys[j]);
-											ids[0] = keys[j];
-
-											if ((error = rdpdr_send_device_list_remove_request(
-											         rdpdr, 1, ids)))
+											const uint32_t ids[] = { (uint32_t)keys[j] };
+											WINPR_ASSERT(rdpdr->context.RdpdrUnregisterDevice);
+											error = rdpdr->context.RdpdrUnregisterDevice(
+											    &rdpdr->context, ARRAYSIZE(ids), ids);
+											if (error)
 											{
-												// dont end on error, just report ?
-												WLog_ERR(
-												    TAG,
+												// don't end on error, just report ?
+												WLog_Print(
+												    rdpdr->log, WLOG_ERROR,
 												    "rdpdr_send_device_list_remove_request failed "
 												    "with error %" PRIu32 "!",
 												    error);
@@ -308,16 +438,17 @@ static DWORD WINAPI drive_hotplug_thread_func(LPVOID arg)
 	wnd_cls.lpfnWndProc = hotplug_proc;
 	wnd_cls.cbClsExtra = 0;
 	wnd_cls.cbWndExtra = 0;
-	wnd_cls.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-	wnd_cls.hCursor = NULL;
+	wnd_cls.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+	wnd_cls.hCursor = nullptr;
 	wnd_cls.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
-	wnd_cls.lpszMenuName = NULL;
+	wnd_cls.lpszMenuName = nullptr;
 	wnd_cls.lpszClassName = L"DRIVE_HOTPLUG";
-	wnd_cls.hInstance = NULL;
-	wnd_cls.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
+	wnd_cls.hInstance = nullptr;
+	wnd_cls.hIconSm = LoadIcon(nullptr, IDI_APPLICATION);
 	RegisterClassEx(&wnd_cls);
 	/* create window */
-	hwnd = CreateWindowEx(0, L"DRIVE_HOTPLUG", NULL, 0, 0, 0, 0, 0, NULL, NULL, NULL, NULL);
+	hwnd = CreateWindowEx(0, L"DRIVE_HOTPLUG", nullptr, 0, 0, 0, 0, 0, nullptr, nullptr, nullptr,
+	                      nullptr);
 	SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)rdpdr);
 	rdpdr->hotplug_wnd = hwnd;
 	/* register device interface to hwnd */
@@ -355,7 +486,7 @@ static UINT drive_hotplug_thread_terminate(rdpdrPlugin* rdpdr)
 	if (rdpdr->hotplug_wnd && !PostMessage(rdpdr->hotplug_wnd, WM_QUIT, 0, 0))
 	{
 		error = GetLastError();
-		WLog_ERR(TAG, "PostMessage failed with error %" PRIu32 "", error);
+		WLog_Print(rdpdr->log, WLOG_ERROR, "PostMessage failed with error %" PRIu32 "", error);
 	}
 
 	return error;
@@ -365,7 +496,7 @@ static UINT drive_hotplug_thread_terminate(rdpdrPlugin* rdpdr)
 
 #define MAX_USB_DEVICES 100
 
-typedef struct _hotplug_dev
+typedef struct
 {
 	char* path;
 	BOOL to_add;
@@ -376,34 +507,36 @@ typedef struct _hotplug_dev
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT handle_hotplug(rdpdrPlugin* rdpdr)
+static UINT handle_hotplug(WINPR_ATTR_UNUSED RdpdrClientContext* context,
+                           WINPR_ATTR_UNUSED RdpdrHotplugEventType type)
 {
-	struct dirent* pDirent;
-	DIR* pDir;
-	char fullpath[PATH_MAX];
-	char* szdir = (char*)"/Volumes";
-	struct stat buf;
-	hotplug_dev dev_array[MAX_USB_DEVICES];
-	int count;
-	DEVICE_DRIVE_EXT* device_ext;
-	ULONG_PTR* keys = NULL;
-	int i, j;
-	int size = 0;
-	UINT error;
-	UINT32 ids[1];
-	pDir = opendir(szdir);
+	WINPR_ASSERT(context);
+	rdpdrPlugin* rdpdr = context->handle;
 
-	if (pDir == NULL)
+	struct dirent* pDirent = nullptr;
+	char fullpath[PATH_MAX] = WINPR_C_ARRAY_INIT;
+	char* szdir = (char*)"/Volumes";
+	struct stat buf = WINPR_C_ARRAY_INIT;
+	hotplug_dev dev_array[MAX_USB_DEVICES] = WINPR_C_ARRAY_INIT;
+	int count = 0;
+	DEVICE_DRIVE_EXT* device_ext = nullptr;
+	ULONG_PTR* keys = nullptr;
+	int size = 0;
+	UINT error = ERROR_INTERNAL_ERROR;
+
+	DIR* pDir = opendir(szdir);
+
+	if (pDir == nullptr)
 	{
 		printf("Cannot open directory\n");
 		return ERROR_OPEN_FAILED;
 	}
 
-	while ((pDirent = readdir(pDir)) != NULL)
+	while ((pDirent = readdir(pDir)) != nullptr)
 	{
 		if (pDirent->d_name[0] != '.')
 		{
-			sprintf_s(fullpath, ARRAYSIZE(fullpath), "%s/%s", szdir, pDirent->d_name);
+			(void)sprintf_s(fullpath, ARRAYSIZE(fullpath), "%s/%s", szdir, pDirent->d_name);
 			if (stat(fullpath, &buf) != 0)
 				continue;
 
@@ -427,9 +560,9 @@ static UINT handle_hotplug(rdpdrPlugin* rdpdr)
 	/* delete removed devices */
 	count = ListDictionary_GetKeys(rdpdr->devman->devices, &keys);
 
-	for (j = 0; j < count; j++)
+	for (size_t j = 0; j < count; j++)
 	{
-		char* path = NULL;
+		char* path = nullptr;
 		BOOL dev_found = FALSE;
 		device_ext =
 		    (DEVICE_DRIVE_EXT*)ListDictionary_GetItemValue(rdpdr->devman->devices, (void*)keys[j]);
@@ -440,22 +573,23 @@ static UINT handle_hotplug(rdpdrPlugin* rdpdr)
 		if (device_ext->device.type != RDPDR_DTYP_FILESYSTEM)
 			continue;
 
-		if (device_ext->path == NULL)
+		if (device_ext->path == nullptr)
 			continue;
 
-		if (ConvertFromUnicode(CP_UTF8, 0, device_ext->path, -1, &path, 0, NULL, FALSE) <= 0)
+		path = ConvertWCharToUtf8Alloc(device_ext->path, nullptr);
+		if (!path)
 			continue;
 
-		/* not plugable device */
-		if (strstr(path, "/Volumes/") == NULL)
+		/* not pluggable device */
+		if (strstr(path, "/Volumes/") == nullptr)
 		{
 			free(path);
 			continue;
 		}
 
-		for (i = 0; i < size; i++)
+		for (size_t i = 0; i < size; i++)
 		{
-			if (strstr(path, dev_array[i].path) != NULL)
+			if (strstr(path, dev_array[i].path) != nullptr)
 			{
 				dev_found = TRUE;
 				dev_array[i].to_add = FALSE;
@@ -467,53 +601,37 @@ static UINT handle_hotplug(rdpdrPlugin* rdpdr)
 
 		if (!dev_found)
 		{
-			devman_unregister_device(rdpdr->devman, (void*)keys[j]);
-			ids[0] = keys[j];
-
-			if ((error = rdpdr_send_device_list_remove_request(rdpdr, 1, ids)))
+			const uint32_t ids[] = { (uint32_t)keys[j] };
+			WINPR_ASSERT(rdpdr->context.RdpdrUnregisterDevice);
+			error = rdpdr->context.RdpdrUnregisterDevice(&rdpdr->context, ARRAYSIZE(ids), ids);
+			if (error)
 			{
-				WLog_ERR(TAG,
-				         "rdpdr_send_device_list_remove_request failed with error %" PRIu32 "!",
-				         error);
+				WLog_Print(rdpdr->log, WLOG_ERROR,
+				           "rdpdr_send_device_list_remove_request failed with error %" PRIu32 "!",
+				           error);
 				goto cleanup;
 			}
 		}
 	}
 
 	/* add new devices */
-	for (i = 0; i < size; i++)
+	for (size_t i = 0; i < size; i++)
 	{
-		if (dev_array[i].to_add)
+		const hotplug_dev* dev = &dev_array[i];
+		if (dev->to_add)
 		{
-			RDPDR_DRIVE drive = { 0 };
-			char* name;
-
-			drive.Type = RDPDR_DTYP_FILESYSTEM;
-			drive.Path = dev_array[i].path;
-			drive.automount = TRUE;
-			name = strrchr(drive.Path, '/') + 1;
-			drive.Name = name;
-
-			if (!drive.Name)
-			{
-				error = CHANNEL_RC_NO_MEMORY;
+			const char* path = dev->path;
+			const char* name = strrchr(path, '/') + 1;
+			error = rdpdr_load_drive(rdpdr, name, path, TRUE);
+			if (error)
 				goto cleanup;
-			}
-
-			if ((error = devman_load_device_service(rdpdr->devman, (RDPDR_DEVICE*)&drive,
-			                                        rdpdr->rdpcontext)))
-			{
-				WLog_ERR(TAG, "devman_load_device_service failed!");
-				error = CHANNEL_RC_NO_MEMORY;
-				goto cleanup;
-			}
 		}
 	}
 
 cleanup:
 	free(keys);
 
-	for (i = 0; i < size; i++)
+	for (size_t i = 0; i < size; i++)
 		free(dev_array[i].path);
 
 	return error;
@@ -526,58 +644,85 @@ static void drive_hotplug_fsevent_callback(ConstFSEventStreamRef streamRef,
                                            const FSEventStreamEventId eventIds[])
 {
 	rdpdrPlugin* rdpdr;
-	size_t i;
 	UINT error;
 	char** paths = (char**)eventPaths;
 	rdpdr = (rdpdrPlugin*)clientCallBackInfo;
 
-	for (i = 0; i < numEvents; i++)
+	for (size_t i = 0; i < numEvents; i++)
 	{
 		if (strcmp(paths[i], "/Volumes/") == 0)
 		{
-			if ((error = handle_hotplug(rdpdr)))
+			UINT error = ERROR_CALL_NOT_IMPLEMENTED;
+			if (rdpdr->context.RdpdrHotplugDevice)
+				error = rdpdr->context.RdpdrHotplugDevice(&rdpdr->context,
+				                                          RDPDR_HOTPLUG_CHECK_FOR_CHANGES);
+			switch (error)
 			{
-				WLog_ERR(TAG, "handle_hotplug failed with error %" PRIu32 "!", error);
+				case ERROR_DISK_CHANGE:
+				case CHANNEL_RC_OK:
+					break;
+				case ERROR_CALL_NOT_IMPLEMENTED:
+					break;
+				default:
+					WLog_Print(rdpdr->log, WLOG_ERROR,
+					           "handle_hotplug failed with error %" PRIu32 "!", error);
+					break;
 			}
-			else
-				rdpdr_send_device_list_announce_request(rdpdr, TRUE);
-
-			return;
 		}
 	}
 }
 
-void first_hotplug(rdpdrPlugin* rdpdr)
+static void first_hotplug(rdpdrPlugin* rdpdr)
 {
-	UINT error;
+	WINPR_ASSERT(rdpdr);
+	UINT error = ERROR_CALL_NOT_IMPLEMENTED;
+	if (rdpdr->context.RdpdrHotplugDevice)
+		error = rdpdr->context.RdpdrHotplugDevice(&rdpdr->context, RDPDR_HOTPLUG_FIRST_CHECK);
 
-	if ((error = handle_hotplug(rdpdr)))
+	switch (error)
 	{
-		WLog_ERR(TAG, "handle_hotplug failed with error %" PRIu32 "!", error);
+		case ERROR_DISK_CHANGE:
+		case CHANNEL_RC_OK:
+		case ERROR_CALL_NOT_IMPLEMENTED:
+			break;
+		default:
+			WLog_Print(rdpdr->log, WLOG_ERROR, "handle_hotplug failed with error %" PRIu32 "!",
+			           error);
+			break;
 	}
 }
 
 static DWORD WINAPI drive_hotplug_thread_func(LPVOID arg)
 {
-	rdpdrPlugin* rdpdr;
-	FSEventStreamRef fsev;
-	rdpdr = (rdpdrPlugin*)arg;
+	rdpdrPlugin* rdpdr = (rdpdrPlugin*)arg;
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(rdpdr->stopEvent);
+
 	CFStringRef path = CFSTR("/Volumes/");
-	CFArrayRef pathsToWatch = CFArrayCreate(kCFAllocatorMalloc, (const void**)&path, 1, NULL);
-	FSEventStreamContext ctx;
-	ZeroMemory(&ctx, sizeof(ctx));
-	ctx.info = arg;
-	fsev =
+	CFArrayRef pathsToWatch = CFArrayCreate(kCFAllocatorMalloc, (const void**)&path, 1, nullptr);
+	FSEventStreamContext ctx = {
+		.copyDescription = nullptr, .info = arg, .release = nullptr, .retain = nullptr, .version = 0
+	};
+	FSEventStreamRef fsev =
 	    FSEventStreamCreate(kCFAllocatorMalloc, drive_hotplug_fsevent_callback, &ctx, pathsToWatch,
 	                        kFSEventStreamEventIdSinceNow, 1, kFSEventStreamCreateFlagNone);
-	rdpdr->runLoop = CFRunLoopGetCurrent();
-	FSEventStreamScheduleWithRunLoop(fsev, rdpdr->runLoop, kCFRunLoopDefaultMode);
+
+	dispatch_queue_t queue = dispatch_queue_create(TAG, nullptr);
+	FSEventStreamSetDispatchQueue(fsev, queue);
 	FSEventStreamStart(fsev);
-	CFRunLoopRun();
+	WLog_Print(rdpdr->log, WLOG_DEBUG, "Started hotplug watcher");
+	HANDLE handles[] = { rdpdr->stopEvent, freerdp_abort_event(rdpdr->rdpcontext) };
+	const DWORD status = WaitForMultipleObjects(ARRAYSIZE(handles), handles, FALSE, INFINITE);
+	WLog_Print(rdpdr->log, WLOG_DEBUG, "Stopped hotplug watcher");
 	FSEventStreamStop(fsev);
 	FSEventStreamRelease(fsev);
-	ExitThread(CHANNEL_RC_OK);
-	return CHANNEL_RC_OK;
+	dispatch_release(queue);
+
+	UINT error = CHANNEL_RC_OK;
+	if (status > WAIT_OBJECT_0 + ARRAYSIZE(handles))
+		error = ERROR_INTERNAL_ERROR;
+	ExitThread(error);
+	return error;
 }
 
 #else
@@ -588,32 +733,31 @@ static const char* automountLocations[] = { "/run/user/%lu/gvfs", "/run/media/%s
 static BOOL isAutomountLocation(const char* path)
 {
 	const size_t nrLocations = sizeof(automountLocations) / sizeof(automountLocations[0]);
-	size_t x;
-	char buffer[MAX_PATH];
+	char buffer[MAX_PATH] = WINPR_C_ARRAY_INIT;
 	uid_t uid = getuid();
-	char uname[MAX_PATH] = { 0 };
+	char uname[MAX_PATH] = WINPR_C_ARRAY_INIT;
+	ULONG size = sizeof(uname) - 1;
 
-#ifndef HAVE_GETLOGIN_R
-	strncpy(uname, getlogin(), sizeof(uname));
-#else
-	if (getlogin_r(uname, sizeof(uname)) != 0)
+	if (!GetUserNameExA(NameSamCompatible, uname, &size))
 		return FALSE;
-#endif
 
 	if (!path)
 		return FALSE;
 
-	for (x = 0; x < nrLocations; x++)
+	for (size_t x = 0; x < nrLocations; x++)
 	{
 		const char* location = automountLocations[x];
-		size_t length;
+		size_t length = 0;
 
+		WINPR_PRAGMA_DIAG_PUSH
+		WINPR_PRAGMA_DIAG_IGNORED_FORMAT_NONLITERAL
 		if (strstr(location, "%lu"))
-			snprintf(buffer, sizeof(buffer), location, (unsigned long)uid);
+			(void)snprintf(buffer, sizeof(buffer), location, (unsigned long)uid);
 		else if (strstr(location, "%s"))
-			snprintf(buffer, sizeof(buffer), location, uname);
+			(void)snprintf(buffer, sizeof(buffer), location, uname);
 		else
-			snprintf(buffer, sizeof(buffer), "%s", location);
+			(void)snprintf(buffer, sizeof(buffer), "%s", location);
+		WINPR_PRAGMA_DIAG_POP
 
 		length = strnlen(buffer, sizeof(buffer));
 
@@ -640,7 +784,7 @@ static BOOL isAutomountLocation(const char* path)
 
 #define MAX_USB_DEVICES 100
 
-typedef struct _hotplug_dev
+typedef struct
 {
 	char* path;
 	BOOL to_add;
@@ -654,21 +798,21 @@ static void handle_mountpoint(hotplug_dev* dev_array, size_t* size, const char* 
 	if (isAutomountLocation(mountpoint) && (*size < MAX_USB_DEVICES))
 	{
 		dev_array[*size].path = _strdup(mountpoint);
-		dev_array[*size + 1].to_add = TRUE;
+		dev_array[*size].to_add = TRUE;
 		(*size)++;
 	}
 }
 
 #ifdef __sun
 #include <sys/mnttab.h>
-static UINT handle_platform_mounts_sun(hotplug_dev* dev_array, size_t* size)
+static UINT handle_platform_mounts_sun(wLog* log, hotplug_dev* dev_array, size_t* size)
 {
 	FILE* f;
 	struct mnttab ent;
-	f = fopen("/etc/mnttab", "r");
-	if (f == NULL)
+	f = winpr_fopen("/etc/mnttab", "r");
+	if (f == nullptr)
 	{
-		WLog_ERR(TAG, "fopen failed!");
+		WLog_Print(log, WLOG_ERROR, "fopen failed!");
 		return ERROR_OPEN_FAILED;
 	}
 	while (getmntent(f, &ent) == 0)
@@ -682,201 +826,210 @@ static UINT handle_platform_mounts_sun(hotplug_dev* dev_array, size_t* size)
 
 #if defined(__FreeBSD__) || defined(__OpenBSD__)
 #include <sys/mount.h>
-static UINT handle_platform_mounts_bsd(hotplug_dev* dev_array, size_t* size)
+static UINT handle_platform_mounts_bsd(wLog* log, hotplug_dev* dev_array, size_t* size)
 {
 	int mntsize;
-	size_t idx;
-	struct statfs* mntbuf = NULL;
+	struct statfs* mntbuf = nullptr;
 
 	mntsize = getmntinfo(&mntbuf, MNT_NOWAIT);
 	if (!mntsize)
 	{
 		/* TODO: handle 'errno' */
-		WLog_ERR(TAG, "getmntinfo failed!");
+		WLog_Print(log, WLOG_ERROR, "getmntinfo failed!");
 		return ERROR_OPEN_FAILED;
 	}
-	for (idx = 0; idx < (size_t)mntsize; idx++)
+	for (size_t idx = 0; idx < (size_t)mntsize; idx++)
 	{
 		handle_mountpoint(dev_array, size, mntbuf[idx].f_mntonname);
 	}
-	free(mntbuf);
 	return ERROR_SUCCESS;
 }
 #endif
 
 #if defined(__LINUX__) || defined(__linux__)
 #include <mntent.h>
-static UINT handle_platform_mounts_linux(hotplug_dev* dev_array, size_t* size)
+static struct mntent* getmntent_x(FILE* f, struct mntent* buffer, char* pathbuffer,
+                                  size_t pathbuffersize)
 {
-	FILE* f;
-	struct mntent* ent;
-	f = fopen("/proc/mounts", "r");
-	if (f == NULL)
+#if defined(FREERDP_HAVE_GETMNTENT_R)
+	WINPR_ASSERT(pathbuffersize <= INT32_MAX);
+	return getmntent_r(f, buffer, pathbuffer, (int)pathbuffersize);
+#else
+	(void)buffer;
+	(void)pathbuffer;
+	(void)pathbuffersize;
+	return getmntent(f);
+#endif
+}
+
+static UINT handle_platform_mounts_linux(wLog* log, hotplug_dev* dev_array, size_t* size)
+{
+	FILE* f = nullptr;
+	struct mntent mnt = WINPR_C_ARRAY_INIT;
+	char pathbuffer[PATH_MAX] = WINPR_C_ARRAY_INIT;
+	struct mntent* ent = nullptr;
+	f = winpr_fopen("/proc/mounts", "r");
+	if (f == nullptr)
 	{
-		WLog_ERR(TAG, "fopen failed!");
+		WLog_Print(log, WLOG_ERROR, "fopen failed!");
 		return ERROR_OPEN_FAILED;
 	}
-	while ((ent = getmntent(f)) != NULL)
+	while ((ent = getmntent_x(f, &mnt, pathbuffer, sizeof(pathbuffer))) != nullptr)
 	{
 		handle_mountpoint(dev_array, size, ent->mnt_dir);
 	}
-	fclose(f);
+	(void)fclose(f);
 	return ERROR_SUCCESS;
 }
 #endif
 
-static UINT handle_platform_mounts(hotplug_dev* dev_array, size_t* size)
+static UINT handle_platform_mounts(wLog* log, hotplug_dev* dev_array, size_t* size)
 {
 #ifdef __sun
-	return handle_platform_mounts_sun(dev_array, size);
+	return handle_platform_mounts_sun(log, dev_array, size);
 #elif defined(__FreeBSD__) || defined(__OpenBSD__)
-	return handle_platform_mounts_bsd(dev_array, size);
+	return handle_platform_mounts_bsd(log, dev_array, size);
 #elif defined(__LINUX__) || defined(__linux__)
-	return handle_platform_mounts_linux(dev_array, size);
+	return handle_platform_mounts_linux(log, dev_array, size);
 #endif
 	return ERROR_CALL_NOT_IMPLEMENTED;
+}
+
+static BOOL device_not_plugged(ULONG_PTR key, void* element, void* data)
+{
+	const WCHAR* path = (const WCHAR*)data;
+	DEVICE_DRIVE_EXT* device_ext = (DEVICE_DRIVE_EXT*)element;
+
+	WINPR_UNUSED(key);
+	WINPR_ASSERT(path);
+
+	if (!device_ext || (device_ext->device.type != RDPDR_DTYP_FILESYSTEM) || !device_ext->path)
+		return TRUE;
+	if (_wcscmp(device_ext->path, path) != 0)
+		return TRUE;
+	return FALSE;
 }
 
 static BOOL device_already_plugged(rdpdrPlugin* rdpdr, const hotplug_dev* device)
 {
 	BOOL rc = FALSE;
-	int count, x;
-	ULONG_PTR* keys = NULL;
-	WCHAR* path = NULL;
-	int status;
+	WCHAR* path = nullptr;
 
 	if (!rdpdr || !device)
 		return TRUE;
 	if (!device->to_add)
 		return TRUE;
 
-	status = ConvertToUnicode(CP_UTF8, 0, device->path, -1, &path, 0);
-	if (status <= 0)
+	WINPR_ASSERT(rdpdr->devman);
+	WINPR_ASSERT(device->path);
+
+	path = ConvertUtf8ToWCharAlloc(device->path, nullptr);
+	if (!path)
 		return TRUE;
 
-	ListDictionary_Lock(rdpdr->devman->devices);
-	count = ListDictionary_GetKeys(rdpdr->devman->devices, &keys);
-	for (x = 0; x < count; x++)
-	{
-		DEVICE_DRIVE_EXT* device_ext =
-		    (DEVICE_DRIVE_EXT*)ListDictionary_GetItemValue(rdpdr->devman->devices, (void*)keys[x]);
-
-		if (!device_ext || (device_ext->device.type != RDPDR_DTYP_FILESYSTEM) || !device_ext->path)
-			continue;
-		if (_wcscmp(device_ext->path, path) == 0)
-		{
-			rc = TRUE;
-			break;
-		}
-	}
-	free(keys);
+	rc = device_foreach(rdpdr, TRUE, device_not_plugged, path);
 	free(path);
-	ListDictionary_Unlock(rdpdr->devman->devices);
-	return rc;
+	return !rc;
 }
 
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT handle_hotplug(rdpdrPlugin* rdpdr)
+struct hotplug_delete_arg
 {
-	hotplug_dev dev_array[MAX_USB_DEVICES] = { 0 };
-	size_t i;
-	size_t size = 0;
-	int count, j;
-	ULONG_PTR* keys = NULL;
-	UINT32 ids[1];
-	UINT error = ERROR_SUCCESS;
+	hotplug_dev* dev_array;
+	size_t dev_array_size;
+	rdpdrPlugin* rdpdr;
+};
 
-	error = handle_platform_mounts(dev_array, &size);
+static BOOL hotplug_delete_foreach(ULONG_PTR key, void* element, void* data)
+{
+	char* path = nullptr;
+	BOOL dev_found = FALSE;
+	struct hotplug_delete_arg* arg = (struct hotplug_delete_arg*)data;
+	DEVICE_DRIVE_EXT* device_ext = (DEVICE_DRIVE_EXT*)element;
 
-	/* delete removed devices */
-	count = ListDictionary_GetKeys(rdpdr->devman->devices, &keys);
+	WINPR_ASSERT(arg);
+	WINPR_ASSERT(arg->rdpdr);
+	WINPR_ASSERT(arg->dev_array || (arg->dev_array_size == 0));
+	WINPR_ASSERT(key <= UINT32_MAX);
 
-	for (j = 0; j < count; j++)
+	if (!device_ext || (device_ext->device.type != RDPDR_DTYP_FILESYSTEM) || !device_ext->path ||
+	    !device_ext->automount)
+		return TRUE;
+
+	WINPR_ASSERT(device_ext->path);
+	path = ConvertWCharToUtf8Alloc(device_ext->path, nullptr);
+	if (!path)
+		return FALSE;
+
+	/* not pluggable device */
+	if (isAutomountLocation(path))
 	{
-		char* path = NULL;
-		BOOL dev_found = FALSE;
-		DEVICE_DRIVE_EXT* device_ext =
-		    (DEVICE_DRIVE_EXT*)ListDictionary_GetItemValue(rdpdr->devman->devices, (void*)keys[j]);
-
-		if (!device_ext || (device_ext->device.type != RDPDR_DTYP_FILESYSTEM) ||
-		    !device_ext->path || !device_ext->automount)
-			continue;
-
-		ConvertFromUnicode(CP_UTF8, 0, device_ext->path, -1, &path, 0, NULL, NULL);
-
-		if (!path)
-			continue;
-
-		/* not plugable device */
-		if (isAutomountLocation(path))
+		for (size_t i = 0; i < arg->dev_array_size; i++)
 		{
-			for (i = 0; i < size; i++)
+			hotplug_dev* cur = &arg->dev_array[i];
+			if (cur->path && strstr(path, cur->path) != nullptr)
 			{
-				if (strstr(path, dev_array[i].path) != NULL)
-				{
-					dev_found = TRUE;
-					dev_array[i].to_add = FALSE;
-					break;
-				}
-			}
-		}
-
-		free(path);
-
-		if (!dev_found)
-		{
-			devman_unregister_device(rdpdr->devman, (void*)keys[j]);
-			ids[0] = keys[j];
-
-			if ((error = rdpdr_send_device_list_remove_request(rdpdr, 1, ids)))
-			{
-				WLog_ERR(TAG,
-				         "rdpdr_send_device_list_remove_request failed with error %" PRIu32 "!",
-				         error);
-				goto cleanup;
+				dev_found = TRUE;
+				cur->to_add = FALSE;
+				break;
 			}
 		}
 	}
 
-	/* add new devices */
-	for (i = 0; i < size; i++)
+	free(path);
+
+	if (!dev_found)
 	{
-		if (!device_already_plugged(rdpdr, &dev_array[i]))
+		const UINT32 ids[1] = { (UINT32)key };
+		WINPR_ASSERT(arg->rdpdr->context.RdpdrUnregisterDevice);
+		const UINT error =
+		    arg->rdpdr->context.RdpdrUnregisterDevice(&arg->rdpdr->context, ARRAYSIZE(ids), ids);
+
+		if (error)
 		{
-			RDPDR_DRIVE drive = { 0 };
-			char* name;
+			WLog_Print(arg->rdpdr->log, WLOG_ERROR,
+			           "rdpdr_send_device_list_remove_request failed with error %" PRIu32 "!",
+			           error);
+			return FALSE;
+		}
+	}
 
-			drive.Type = RDPDR_DTYP_FILESYSTEM;
-			drive.Path = dev_array[i].path;
-			drive.automount = TRUE;
-			name = strrchr(drive.Path, '/') + 1;
-			drive.Name = name;
+	return TRUE;
+}
 
-			if (!drive.Name)
-			{
-				WLog_ERR(TAG, "_strdup failed!");
-				error = CHANNEL_RC_NO_MEMORY;
-				goto cleanup;
-			}
+static UINT handle_hotplug(RdpdrClientContext* context,
+                           WINPR_ATTR_UNUSED RdpdrHotplugEventType type)
+{
+	WINPR_ASSERT(context);
+	rdpdrPlugin* rdpdr = context->handle;
 
-			if ((error = devman_load_device_service(rdpdr->devman, (const RDPDR_DEVICE*)&drive,
-			                                        rdpdr->rdpcontext)))
-			{
-				WLog_ERR(TAG, "devman_load_device_service failed!");
-				goto cleanup;
-			}
+	hotplug_dev dev_array[MAX_USB_DEVICES] = WINPR_C_ARRAY_INIT;
+	size_t size = 0;
+	UINT error = ERROR_SUCCESS;
+	struct hotplug_delete_arg arg = { dev_array, ARRAYSIZE(dev_array), rdpdr };
+
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(rdpdr->devman);
+
+	error = handle_platform_mounts(rdpdr->log, dev_array, &size);
+
+	/* delete removed devices */
+	/* Ignore result */ device_foreach(rdpdr, FALSE, hotplug_delete_foreach, &arg);
+
+	/* add new devices */
+	for (size_t i = 0; i < size; i++)
+	{
+		hotplug_dev* cur = &dev_array[i];
+		if (!device_already_plugged(rdpdr, cur))
+		{
+			const char* path = cur->path;
+			const char* name = strrchr(path, '/') + 1;
+
+			rdpdr_load_drive(rdpdr, name, path, TRUE);
 			error = ERROR_DISK_CHANGE;
 		}
 	}
 
-cleanup:
-	free(keys);
-
-	for (i = 0; i < size; i++)
+	for (size_t i = 0; i < size; i++)
 		free(dev_array[i].path);
 
 	return error;
@@ -884,46 +1037,63 @@ cleanup:
 
 static void first_hotplug(rdpdrPlugin* rdpdr)
 {
-	UINT error;
+	UINT error = ERROR_CALL_NOT_IMPLEMENTED;
 
-	if ((error = handle_hotplug(rdpdr)))
+	WINPR_ASSERT(rdpdr);
+	if (rdpdr->context.RdpdrHotplugDevice)
+		error = rdpdr->context.RdpdrHotplugDevice(&rdpdr->context, RDPDR_HOTPLUG_FIRST_CHECK);
+
+	switch (error)
 	{
-		WLog_ERR(TAG, "handle_hotplug failed with error %" PRIu32 "!", error);
+		case ERROR_DISK_CHANGE:
+		case CHANNEL_RC_OK:
+		case ERROR_OPEN_FAILED:
+		case ERROR_CALL_NOT_IMPLEMENTED:
+			break;
+		default:
+			WLog_Print(rdpdr->log, WLOG_ERROR, "handle_hotplug failed with error %" PRIu32 "!",
+			           error);
+			break;
 	}
 }
 
 static DWORD WINAPI drive_hotplug_thread_func(LPVOID arg)
 {
-	rdpdrPlugin* rdpdr;
-	UINT error = 0;
-	DWORD status;
-	rdpdr = (rdpdrPlugin*)arg;
+	rdpdrPlugin* rdpdr = (rdpdrPlugin*)arg;
 
-	while ((status = WaitForSingleObject(rdpdr->stopEvent, 1000)) == WAIT_TIMEOUT)
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(rdpdr->stopEvent);
+
+	while (WaitForSingleObject(rdpdr->stopEvent, 1000) == WAIT_TIMEOUT)
 	{
-		error = handle_hotplug(rdpdr);
+		UINT error = ERROR_CALL_NOT_IMPLEMENTED;
+		if (rdpdr->context.RdpdrHotplugDevice)
+			error =
+			    rdpdr->context.RdpdrHotplugDevice(&rdpdr->context, RDPDR_HOTPLUG_CHECK_FOR_CHANGES);
 		switch (error)
 		{
 			case ERROR_DISK_CHANGE:
-				rdpdr_send_device_list_announce_request(rdpdr, TRUE);
 				break;
 			case CHANNEL_RC_OK:
 			case ERROR_OPEN_FAILED:
 			case ERROR_CALL_NOT_IMPLEMENTED:
 				break;
 			default:
-				WLog_ERR(TAG, "handle_hotplug failed with error %" PRIu32 "!", error);
+				WLog_Print(rdpdr->log, WLOG_ERROR, "handle_hotplug failed with error %" PRIu32 "!",
+				           error);
 				goto out;
 		}
 	}
 
 out:
-	error = GetLastError();
+{
+	const UINT error = GetLastError();
 	if (error && rdpdr->rdpcontext)
-		setChannelError(rdpdr->rdpcontext, error, "drive_hotplug_thread_func reported an error");
+		setChannelError(rdpdr->rdpcontext, error, "reported an error");
 
 	ExitThread(error);
 	return error;
+}
 }
 
 #endif
@@ -936,32 +1106,100 @@ out:
  */
 static UINT drive_hotplug_thread_terminate(rdpdrPlugin* rdpdr)
 {
-	UINT error;
+	UINT error = 0;
+
+	WINPR_ASSERT(rdpdr);
 
 	if (rdpdr->hotplugThread)
 	{
-		SetEvent(rdpdr->stopEvent);
-#ifdef __MACOSX__
-		CFRunLoopStop(rdpdr->runLoop);
+#if !defined(_WIN32)
+		if (rdpdr->stopEvent)
+			(void)SetEvent(rdpdr->stopEvent);
 #endif
 
 		if (WaitForSingleObject(rdpdr->hotplugThread, INFINITE) == WAIT_FAILED)
 		{
 			error = GetLastError();
-			WLog_ERR(TAG, "WaitForSingleObject failed with error %" PRIu32 "!", error);
+			WLog_Print(rdpdr->log, WLOG_ERROR, "WaitForSingleObject failed with error %" PRIu32 "!",
+			           error);
 			return error;
 		}
 
-		CloseHandle(rdpdr->hotplugThread);
-		CloseHandle(rdpdr->stopEvent);
-		rdpdr->stopEvent = NULL;
-		rdpdr->hotplugThread = NULL;
+		(void)CloseHandle(rdpdr->hotplugThread);
+		rdpdr->hotplugThread = nullptr;
 	}
 
 	return CHANNEL_RC_OK;
 }
 
 #endif
+
+static UINT rdpdr_add_devices(rdpdrPlugin* rdpdr)
+{
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(rdpdr->rdpcontext);
+
+	rdpSettings* settings = rdpdr->rdpcontext->settings;
+	WINPR_ASSERT(settings);
+
+	for (UINT32 index = 0; index < freerdp_settings_get_uint32(settings, FreeRDP_DeviceCount);
+	     index++)
+	{
+		RDPDR_DEVICE* device =
+		    freerdp_settings_get_pointer_array_writable(settings, FreeRDP_DeviceArray, index);
+		WINPR_ASSERT(device);
+
+		if (device->Type == RDPDR_DTYP_FILESYSTEM)
+		{
+			const char DynamicDrives[] = "DynamicDrives";
+			const RDPDR_DRIVE* drive = (const RDPDR_DRIVE*)device;
+			if (!drive->Path)
+				continue;
+
+			const char wildcard[] = "*";
+			BOOL hotplugAll = strncmp(drive->Path, wildcard, sizeof(wildcard)) == 0;
+			BOOL hotplugLater = strncmp(drive->Path, DynamicDrives, sizeof(DynamicDrives)) == 0;
+
+			if (hotplugAll || hotplugLater)
+			{
+				if (!rdpdr->async)
+				{
+					WLog_Print(rdpdr->log, WLOG_WARN,
+					           "Drive hotplug is not supported in synchronous mode!");
+					continue;
+				}
+
+				if (hotplugAll)
+					first_hotplug(rdpdr);
+
+				/* There might be multiple hotplug related device entries.
+				 * Ensure the thread is only started once
+				 */
+				if (!rdpdr->hotplugThread)
+				{
+					rdpdr->hotplugThread =
+					    CreateThread(nullptr, 0, drive_hotplug_thread_func, rdpdr, 0, nullptr);
+					if (!rdpdr->hotplugThread)
+					{
+						WLog_Print(rdpdr->log, WLOG_ERROR, "CreateThread failed!");
+						return ERROR_INTERNAL_ERROR;
+					}
+				}
+
+				continue;
+			}
+		}
+
+		const UINT error = devman_load_device_service(rdpdr->devman, device, rdpdr->rdpcontext);
+		if (error)
+		{
+			WLog_Print(rdpdr->log, WLOG_ERROR,
+			           "devman_load_device_service failed with error %" PRIu32 "!", error);
+			return error;
+		}
+	}
+	return CHANNEL_RC_OK;
+}
 
 /**
  * Function description
@@ -970,82 +1208,83 @@ static UINT drive_hotplug_thread_terminate(rdpdrPlugin* rdpdr)
  */
 static UINT rdpdr_process_connect(rdpdrPlugin* rdpdr)
 {
-	UINT32 index;
-	rdpSettings* settings;
-	UINT error = CHANNEL_RC_OK;
+	WINPR_ASSERT(rdpdr);
+
 	rdpdr->devman = devman_new(rdpdr);
 
 	if (!rdpdr->devman)
 	{
-		WLog_ERR(TAG, "devman_new failed!");
+		WLog_Print(rdpdr->log, WLOG_ERROR, "devman_new failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
-	settings = (rdpSettings*)rdpdr->channelEntryPoints.pExtendedData;
+	WINPR_ASSERT(rdpdr->rdpcontext);
 
-	if (settings->ClientHostname)
-		strncpy(rdpdr->computerName, settings->ClientHostname, sizeof(rdpdr->computerName) - 1);
-	else
-		strncpy(rdpdr->computerName, settings->ComputerName, sizeof(rdpdr->computerName) - 1);
+	rdpSettings* settings = rdpdr->rdpcontext->settings;
+	WINPR_ASSERT(settings);
 
-	for (index = 0; index < settings->DeviceCount; index++)
+	rdpdr->ignoreInvalidDevices = freerdp_settings_get_bool(settings, FreeRDP_IgnoreInvalidDevices);
+
+	const char* name = freerdp_settings_get_string(settings, FreeRDP_ClientHostname);
+	if (!name)
+		name = freerdp_settings_get_string(settings, FreeRDP_ComputerName);
+	if (!name)
 	{
-		const RDPDR_DEVICE* device = settings->DeviceArray[index];
+		DWORD size = ARRAYSIZE(rdpdr->computerName);
+		if (!GetComputerNameExA(ComputerNameNetBIOS, rdpdr->computerName, &size))
+			return ERROR_INTERNAL_ERROR;
+	}
+	else
+		strncpy(rdpdr->computerName, name, strnlen(name, sizeof(rdpdr->computerName)));
 
-		if (device->Type == RDPDR_DTYP_FILESYSTEM)
+	return rdpdr_add_devices(rdpdr);
+}
+
+WINPR_ATTR_NODISCARD
+static UINT32 generate(rdpdrPlugin* rdpdr, UINT32 received)
+{
+	UINT32 clientID = received;
+	int rc = -1;
+
+	/* BUGFIX: Mirroring the server supplied version breaks the channel for windows XP.
+	 * Use a randomly generated ID instead. see [MS-RDPEFS] 3.2.5.1.3 Sending a Client Announce
+	 * Reply Message
+	 */
+	if ((rdpdr->serverVersionMajor == RDPDR_VERSION_MAJOR) &&
+	    (rdpdr->serverVersionMinor < RDPDR_VERSION_MINOR_RDP6X))
+	{
+		while ((clientID == 0) || (clientID == UINT32_MAX) || (clientID == received) || (rc < 0))
 		{
-			const char DynamicDrives[] = "DynamicDrives";
-			const RDPDR_DRIVE* drive = (const RDPDR_DRIVE*)device;
-			BOOL hotplugAll = strncmp(drive->Path, "*", 2) == 0;
-			BOOL hotplugLater = strncmp(drive->Path, DynamicDrives, sizeof(DynamicDrives)) == 0;
-			if (drive->Path && (hotplugAll || hotplugLater))
-			{
-				if (hotplugAll)
-					first_hotplug(rdpdr);
-#ifndef _WIN32
-
-				if (!(rdpdr->stopEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
-				{
-					WLog_ERR(TAG, "CreateEvent failed!");
-					return ERROR_INTERNAL_ERROR;
-				}
-
-#endif
-
-				if (!(rdpdr->hotplugThread =
-				          CreateThread(NULL, 0, drive_hotplug_thread_func, rdpdr, 0, NULL)))
-				{
-					WLog_ERR(TAG, "CreateThread failed!");
-#ifndef _WIN32
-					CloseHandle(rdpdr->stopEvent);
-					rdpdr->stopEvent = NULL;
-#endif
-					return ERROR_INTERNAL_ERROR;
-				}
-
-				continue;
-			}
-		}
-
-		if ((error = devman_load_device_service(rdpdr->devman, device, rdpdr->rdpcontext)))
-		{
-			WLog_ERR(TAG, "devman_load_device_service failed with error %" PRIu32 "!", error);
-			return error;
+			rc = winpr_RAND(&clientID, sizeof(clientID));
 		}
 	}
 
-	return error;
+	return clientID;
 }
 
 static UINT rdpdr_process_server_announce_request(rdpdrPlugin* rdpdr, wStream* s)
 {
-	if (Stream_GetRemainingLength(s) < 8)
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLengthWLog(rdpdr->log, s, 8))
 		return ERROR_INVALID_DATA;
 
-	Stream_Read_UINT16(s, rdpdr->versionMajor);
-	Stream_Read_UINT16(s, rdpdr->versionMinor);
-	Stream_Read_UINT32(s, rdpdr->clientID);
+	Stream_Read_UINT16(s, rdpdr->serverVersionMajor);
+	Stream_Read_UINT16(s, rdpdr->serverVersionMinor);
+
+	const UINT32 clientID = Stream_Get_UINT32(s);
+	rdpdr->clientID = generate(rdpdr, clientID);
+
 	rdpdr->sequenceId++;
+
+	rdpdr->clientVersionMajor = MIN(RDPDR_VERSION_MAJOR, rdpdr->serverVersionMajor);
+	rdpdr->clientVersionMinor = MIN(RDPDR_VERSION_MINOR_RDP10X, rdpdr->serverVersionMinor);
+	WLog_Print(rdpdr->log, WLOG_DEBUG,
+	           "[rdpdr] server announces version %" PRIu32 ".%" PRIu32 ", client uses %" PRIu32
+	           ".%" PRIu32,
+	           rdpdr->serverVersionMajor, rdpdr->serverVersionMinor, rdpdr->clientVersionMajor,
+	           rdpdr->clientVersionMinor);
 	return CHANNEL_RC_OK;
 }
 
@@ -1056,20 +1295,24 @@ static UINT rdpdr_process_server_announce_request(rdpdrPlugin* rdpdr, wStream* s
  */
 static UINT rdpdr_send_client_announce_reply(rdpdrPlugin* rdpdr)
 {
-	wStream* s;
-	s = Stream_New(NULL, 12);
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(rdpdr->state == RDPDR_CHANNEL_STATE_ANNOUNCE);
+	if (!rdpdr_state_advance(rdpdr, RDPDR_CHANNEL_STATE_ANNOUNCE_REPLY))
+		return ERROR_INVALID_STATE;
+
+	wStream* s = StreamPool_Take(rdpdr->pool, 12);
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "Stream_New failed!");
+		WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_New failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
 	Stream_Write_UINT16(s, RDPDR_CTYP_CORE);             /* Component (2 bytes) */
 	Stream_Write_UINT16(s, PAKID_CORE_CLIENTID_CONFIRM); /* PacketId (2 bytes) */
-	Stream_Write_UINT16(s, rdpdr->versionMajor);
-	Stream_Write_UINT16(s, rdpdr->versionMinor);
-	Stream_Write_UINT32(s, (UINT32)rdpdr->clientID);
+	Stream_Write_UINT16(s, rdpdr->clientVersionMajor);
+	Stream_Write_UINT16(s, rdpdr->clientVersionMinor);
+	Stream_Write_UINT32(s, rdpdr->clientID);
 	return rdpdr_send(rdpdr, s);
 }
 
@@ -1080,20 +1323,32 @@ static UINT rdpdr_send_client_announce_reply(rdpdrPlugin* rdpdr)
  */
 static UINT rdpdr_send_client_name_request(rdpdrPlugin* rdpdr)
 {
-	wStream* s;
-	WCHAR* computerNameW = NULL;
-	size_t computerNameLenW;
+	wStream* s = nullptr;
+	WCHAR* computerNameW = nullptr;
+	size_t computerNameLenW = 0;
 
-	if (!rdpdr->computerName[0])
-		gethostname(rdpdr->computerName, sizeof(rdpdr->computerName) - 1);
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(rdpdr->state == RDPDR_CHANNEL_STATE_ANNOUNCE_REPLY);
+	if (!rdpdr_state_advance(rdpdr, RDPDR_CHANNEL_STATE_NAME_REQUEST))
+		return ERROR_INVALID_STATE;
 
-	computerNameLenW = ConvertToUnicode(CP_UTF8, 0, rdpdr->computerName, -1, &computerNameW, 0) * 2;
-	s = Stream_New(NULL, 16 + computerNameLenW + 2);
+	const size_t len = strnlen(rdpdr->computerName, sizeof(rdpdr->computerName));
+	if (len == 0)
+		return ERROR_INTERNAL_ERROR;
+
+	WINPR_ASSERT(rdpdr->computerName);
+	computerNameW = ConvertUtf8NToWCharAlloc(rdpdr->computerName, len, &computerNameLenW);
+	computerNameLenW *= sizeof(WCHAR);
+
+	if (computerNameLenW > 0)
+		computerNameLenW += sizeof(WCHAR); // also write '\0'
+
+	s = StreamPool_Take(rdpdr->pool, 16U + computerNameLenW);
 
 	if (!s)
 	{
 		free(computerNameW);
-		WLog_ERR(TAG, "Stream_New failed!");
+		WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_New failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
@@ -1101,30 +1356,38 @@ static UINT rdpdr_send_client_name_request(rdpdrPlugin* rdpdr)
 	Stream_Write_UINT16(s, PAKID_CORE_CLIENT_NAME); /* PacketId (2 bytes) */
 	Stream_Write_UINT32(s, 1);                      /* unicodeFlag, 0 for ASCII and 1 for Unicode */
 	Stream_Write_UINT32(s, 0);                      /* codePage, must be set to zero */
-	Stream_Write_UINT32(s, computerNameLenW + 2);   /* computerNameLen, including null terminator */
+	Stream_Write_UINT32(s,
+	                    (UINT32)computerNameLenW); /* computerNameLen, including null terminator */
 	Stream_Write(s, computerNameW, computerNameLenW);
-	Stream_Write_UINT16(s, 0); /* null terminator */
 	free(computerNameW);
 	return rdpdr_send(rdpdr, s);
 }
 
 static UINT rdpdr_process_server_clientid_confirm(rdpdrPlugin* rdpdr, wStream* s)
 {
-	UINT16 versionMajor;
-	UINT16 versionMinor;
-	UINT32 clientID;
+	UINT16 versionMajor = 0;
+	UINT16 versionMinor = 0;
+	UINT32 clientID = 0;
 
-	if (Stream_GetRemainingLength(s) < 8)
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLengthWLog(rdpdr->log, s, 8))
 		return ERROR_INVALID_DATA;
 
 	Stream_Read_UINT16(s, versionMajor);
 	Stream_Read_UINT16(s, versionMinor);
 	Stream_Read_UINT32(s, clientID);
 
-	if (versionMajor != rdpdr->versionMajor || versionMinor != rdpdr->versionMinor)
+	if (versionMajor != rdpdr->clientVersionMajor || versionMinor != rdpdr->clientVersionMinor)
 	{
-		rdpdr->versionMajor = versionMajor;
-		rdpdr->versionMinor = versionMinor;
+		WLog_Print(rdpdr->log, WLOG_WARN,
+		           "[rdpdr] server announced version %" PRIu32 ".%" PRIu32 ", client uses %" PRIu32
+		           ".%" PRIu32 " but clientid confirm requests version %" PRIu32 ".%" PRIu32,
+		           rdpdr->serverVersionMajor, rdpdr->serverVersionMinor, rdpdr->clientVersionMajor,
+		           rdpdr->clientVersionMinor, versionMajor, versionMinor);
+		rdpdr->clientVersionMajor = versionMajor;
+		rdpdr->clientVersionMinor = versionMinor;
 	}
 
 	if (clientID != rdpdr->clientID)
@@ -1133,128 +1396,174 @@ static UINT rdpdr_process_server_clientid_confirm(rdpdrPlugin* rdpdr, wStream* s
 	return CHANNEL_RC_OK;
 }
 
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
+struct device_announce_arg
+{
+	rdpdrPlugin* rdpdr;
+	wStream* s;
+	BOOL userLoggedOn;
+	UINT32 count;
+};
+
+static BOOL device_announce(ULONG_PTR key, void* element, void* data)
+{
+	struct device_announce_arg* arg = data;
+	rdpdrPlugin* rdpdr = nullptr;
+	DEVICE* device = (DEVICE*)element;
+
+	WINPR_UNUSED(key);
+
+	WINPR_ASSERT(arg);
+	WINPR_ASSERT(device);
+	WINPR_ASSERT(arg->rdpdr);
+	WINPR_ASSERT(arg->s);
+
+	rdpdr = arg->rdpdr;
+
+	/**
+	 * 1. versionMinor 0x0005 doesn't send PAKID_CORE_USER_LOGGEDON
+	 *    so all devices should be sent regardless of user_loggedon
+	 * 2. smartcard devices should be always sent
+	 * 3. other devices are sent only after user_loggedon
+	 */
+
+	if ((rdpdr->clientVersionMinor == RDPDR_VERSION_MINOR_RDP51) ||
+	    (device->type == RDPDR_DTYP_SMARTCARD) || arg->userLoggedOn)
+	{
+		size_t data_len = (device->data == nullptr ? 0 : Stream_GetPosition(device->data));
+
+		if (!Stream_EnsureRemainingCapacity(arg->s, 20ull + data_len))
+		{
+			Stream_Release(arg->s);
+			WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_EnsureRemainingCapacity failed!");
+			return FALSE;
+		}
+
+		Stream_Write_UINT32(arg->s, device->type); /* deviceType */
+		Stream_Write_UINT32(arg->s, device->id);   /* deviceID */
+		strncpy(Stream_Pointer(arg->s), device->name, 8);
+
+		for (size_t i = 0; i < 8; i++)
+		{
+			BYTE c = 0;
+			Stream_Peek_UINT8(arg->s, c);
+
+			if (c > 0x7F)
+				Stream_Write_UINT8(arg->s, '_');
+			else
+				Stream_Seek_UINT8(arg->s);
+		}
+
+		WINPR_ASSERT(data_len <= UINT32_MAX);
+		Stream_Write_UINT32(arg->s, (UINT32)data_len);
+
+		if (data_len > 0)
+			Stream_Write(arg->s, Stream_Buffer(device->data), data_len);
+
+		arg->count++;
+		WLog_Print(rdpdr->log, WLOG_INFO,
+		           "registered [%9s] device #%" PRIu32 ": %5s (type=%2" PRIu32 " id=%2" PRIu32 ")",
+		           rdpdr_device_type_string(device->type), arg->count, device->name, device->type,
+		           device->id);
+	}
+	return TRUE;
+}
+
 static UINT rdpdr_send_device_list_announce_request(rdpdrPlugin* rdpdr, BOOL userLoggedOn)
 {
-	int i;
-	BYTE c;
-	size_t pos;
-	int index;
-	wStream* s;
-	UINT32 count;
-	size_t data_len;
-	size_t count_pos;
-	DEVICE* device;
-	int keyCount;
-	ULONG_PTR* pKeys = NULL;
-	s = Stream_New(NULL, 256);
+	size_t pos = 0;
+	wStream* s = nullptr;
+	size_t count_pos = 0;
+	struct device_announce_arg arg = WINPR_C_ARRAY_INIT;
+
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(rdpdr->devman);
+
+	if (userLoggedOn)
+	{
+		rdpdr->userLoggedOn = TRUE;
+	}
+
+	s = StreamPool_Take(rdpdr->pool, 256);
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "Stream_New failed!");
+		WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_New failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
 	Stream_Write_UINT16(s, RDPDR_CTYP_CORE);                /* Component (2 bytes) */
 	Stream_Write_UINT16(s, PAKID_CORE_DEVICELIST_ANNOUNCE); /* PacketId (2 bytes) */
 	count_pos = Stream_GetPosition(s);
-	count = 0;
 	Stream_Seek_UINT32(s); /* deviceCount */
-	pKeys = NULL;
-	keyCount = ListDictionary_GetKeys(rdpdr->devman->devices, &pKeys);
 
-	for (index = 0; index < keyCount; index++)
+	arg.rdpdr = rdpdr;
+	arg.userLoggedOn = userLoggedOn || rdpdr->userLoggedOn;
+	arg.s = s;
+	if (!device_foreach(rdpdr, TRUE, device_announce, &arg))
+		return ERROR_INVALID_DATA;
+
+	if (arg.count == 0)
 	{
-		device = (DEVICE*)ListDictionary_GetItemValue(rdpdr->devman->devices, (void*)pKeys[index]);
-
-		/**
-		 * 1. versionMinor 0x0005 doesn't send PAKID_CORE_USER_LOGGEDON
-		 *    so all devices should be sent regardless of user_loggedon
-		 * 2. smartcard devices should be always sent
-		 * 3. other devices are sent only after user_loggedon
-		 */
-
-		if ((rdpdr->versionMinor == 0x0005) || (device->type == RDPDR_DTYP_SMARTCARD) ||
-		    userLoggedOn)
-		{
-			data_len = (device->data == NULL ? 0 : Stream_GetPosition(device->data));
-
-			if (!Stream_EnsureRemainingCapacity(s, 20 + data_len))
-			{
-				free(pKeys);
-				Stream_Free(s, TRUE);
-				WLog_ERR(TAG, "Stream_EnsureRemainingCapacity failed!");
-				return ERROR_INVALID_DATA;
-			}
-
-			Stream_Write_UINT32(s, device->type); /* deviceType */
-			Stream_Write_UINT32(s, device->id);   /* deviceID */
-			strncpy((char*)Stream_Pointer(s), device->name, 8);
-
-			for (i = 0; i < 8; i++)
-			{
-				Stream_Peek_UINT8(s, c);
-
-				if (c > 0x7F)
-					Stream_Write_UINT8(s, '_');
-				else
-					Stream_Seek_UINT8(s);
-			}
-
-			Stream_Write_UINT32(s, data_len);
-
-			if (data_len > 0)
-				Stream_Write(s, Stream_Buffer(device->data), data_len);
-
-			count++;
-			WLog_INFO(TAG, "registered device #%" PRIu32 ": %s (type=%" PRIu32 " id=%" PRIu32 ")",
-			          count, device->name, device->type, device->id);
-		}
+		Stream_Release(s);
+		return CHANNEL_RC_OK;
 	}
-
-	free(pKeys);
 	pos = Stream_GetPosition(s);
-	Stream_SetPosition(s, count_pos);
-	Stream_Write_UINT32(s, count);
-	Stream_SetPosition(s, pos);
+	if (!Stream_SetPosition(s, count_pos))
+	{
+		Stream_Release(s);
+		return ERROR_INVALID_DATA;
+	}
+	Stream_Write_UINT32(s, arg.count);
+	if (!Stream_SetPosition(s, pos))
+	{
+		Stream_Release(s);
+		return ERROR_INVALID_DATA;
+	}
 	Stream_SealLength(s);
 	return rdpdr_send(rdpdr, s);
 }
 
+UINT rdpdr_try_send_device_list_announce_request(rdpdrPlugin* rdpdr)
+{
+	WINPR_ASSERT(rdpdr);
+	if (rdpdr->state != RDPDR_CHANNEL_STATE_READY)
+	{
+		WLog_Print(rdpdr->log, WLOG_DEBUG,
+		           "hotplug event received, but channel [RDPDR] is not ready (state %s), ignoring.",
+		           rdpdr_state_str(rdpdr->state));
+		return CHANNEL_RC_OK;
+	}
+	return rdpdr_send_device_list_announce_request(rdpdr, rdpdr->userLoggedOn);
+}
+
 static UINT dummy_irp_response(rdpdrPlugin* rdpdr, wStream* s)
 {
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(s);
 
-	UINT32 DeviceId;
-	UINT32 FileId;
-	UINT32 CompletionId;
-
-	wStream* output = Stream_New(NULL, 256); // RDPDR_DEVICE_IO_RESPONSE_LENGTH
+	wStream* output = StreamPool_Take(rdpdr->pool, 256); // RDPDR_DEVICE_IO_RESPONSE_LENGTH
 	if (!output)
 	{
-		WLog_ERR(TAG, "Stream_New failed!");
+		WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_New failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
-	Stream_SetPosition(s, 4); /* see "rdpdr_process_receive" */
+	if (!Stream_SetPosition(s, 4)) /* see "rdpdr_process_receive" */
+	{
+		Stream_Release(output);
+		return ERROR_INVALID_DATA;
+	}
 
-	Stream_Read_UINT32(s, DeviceId);     /* DeviceId (4 bytes) */
-	Stream_Read_UINT32(s, FileId);       /* FileId (4 bytes) */
-	Stream_Read_UINT32(s, CompletionId); /* CompletionId (4 bytes) */
+	const uint32_t DeviceId = Stream_Get_UINT32(s);     /* DeviceId (4 bytes) */
+	const uint32_t FileId = Stream_Get_UINT32(s);       /* FileId (4 bytes) */
+	const uint32_t CompletionId = Stream_Get_UINT32(s); /* CompletionId (4 bytes) */
 
-	Stream_Write_UINT16(output, RDPDR_CTYP_CORE);                /* Component (2 bytes) */
-	Stream_Write_UINT16(output, PAKID_CORE_DEVICE_IOCOMPLETION); /* PacketId (2 bytes) */
-	Stream_Write_UINT32(output, DeviceId);                       /* DeviceId (4 bytes) */
-	Stream_Write_UINT32(output, CompletionId);                   /* CompletionId (4 bytes) */
-	Stream_Write_UINT32(output, STATUS_UNSUCCESSFUL);            /* IoStatus (4 bytes) */
-
-	Stream_Zero(output, 256 - RDPDR_DEVICE_IO_RESPONSE_LENGTH);
-	// or usage
-	// Stream_Write_UINT32(output, 0); /* Length */
-	// Stream_Write_UINT8(output, 0);  /* Padding */
+	WLog_Print(rdpdr->log, WLOG_WARN,
+	           "Dummy response {DeviceId=%" PRIu32 ", FileId=%" PRIu32 ", CompletionId=%" PRIu32
+	           "}",
+	           DeviceId, FileId, CompletionId);
+	if (!rdpdr_write_iocompletion_header(output, DeviceId, CompletionId, STATUS_UNSUCCESSFUL))
+		return CHANNEL_RC_NO_MEMORY;
 
 	return rdpdr_send(rdpdr, output);
 }
@@ -1266,26 +1575,35 @@ static UINT dummy_irp_response(rdpdrPlugin* rdpdr, wStream* s)
  */
 static UINT rdpdr_process_irp(rdpdrPlugin* rdpdr, wStream* s)
 {
-	IRP* irp;
 	UINT error = CHANNEL_RC_OK;
-	irp = irp_new(rdpdr->devman, s, &error);
+
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(s);
+
+	IRP* irp = irp_new(rdpdr->devman, rdpdr->pool, s, rdpdr->log, &error);
 
 	if (!irp)
 	{
-		WLog_ERR(TAG, "irp_new failed with %" PRIu32 "!", error);
-
-		if (error == CHANNEL_RC_OK)
+		if ((error == CHANNEL_RC_OK) ||
+		    (error == ERROR_DEV_NOT_EXIST && rdpdr->ignoreInvalidDevices))
 		{
 			return dummy_irp_response(rdpdr, s);
 		}
 
+		WLog_Print(rdpdr->log, WLOG_ERROR, "irp_new failed with %" PRIu32 "!", error);
 		return error;
 	}
 
-	IFCALLRET(irp->device->IRPRequest, error, irp->device, irp);
+	if (irp->device->IRPRequest)
+		error = irp->device->IRPRequest(irp->device, irp);
+	else
+		error = irp->Discard(irp);
 
-	if (error)
-		WLog_ERR(TAG, "device->IRPRequest failed with error %" PRIu32 "", error);
+	if (error != CHANNEL_RC_OK)
+	{
+		WLog_Print(rdpdr->log, WLOG_ERROR, "device->IRPRequest failed with error %" PRIu32 "",
+		           error);
+	}
 
 	return error;
 }
@@ -1293,8 +1611,11 @@ static UINT rdpdr_process_irp(rdpdrPlugin* rdpdr, wStream* s)
 static UINT rdpdr_process_component(rdpdrPlugin* rdpdr, UINT16 component, UINT16 packetId,
                                     wStream* s)
 {
-	UINT32 type;
-	DEVICE* device;
+	UINT32 type = 0;
+	DEVICE* device = nullptr;
+
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(s);
 
 	switch (component)
 	{
@@ -1309,7 +1630,7 @@ static UINT rdpdr_process_component(rdpdrPlugin* rdpdr, UINT16 component, UINT16
 	device = devman_get_device_by_type(rdpdr->devman, type);
 
 	if (!device)
-		return ERROR_INVALID_PARAMETER;
+		return ERROR_DEV_NOT_EXIST;
 
 	return IFCALLRESULT(ERROR_INVALID_PARAMETER, device->CustomComponentRequest, device, component,
 	                    packetId, s);
@@ -1320,31 +1641,159 @@ static UINT rdpdr_process_component(rdpdrPlugin* rdpdr, UINT16 component, UINT16
  *
  * @return 0 on success, otherwise a Win32 error code
  */
+static BOOL device_init(ULONG_PTR key, void* element, void* data)
+{
+	wLog* log = data;
+	UINT error = CHANNEL_RC_OK;
+	DEVICE* device = element;
+
+	WINPR_UNUSED(key);
+	WINPR_UNUSED(data);
+
+	IFCALLRET(device->Init, error, device);
+
+	if (error != CHANNEL_RC_OK)
+	{
+		WLog_Print(log, WLOG_ERROR, "Device init failed with %s", WTSErrorToString(error));
+		return FALSE;
+	}
+	return TRUE;
+}
+
 static UINT rdpdr_process_init(rdpdrPlugin* rdpdr)
 {
-	int index;
-	int keyCount;
-	DEVICE* device;
-	ULONG_PTR* pKeys = NULL;
-	UINT error = CHANNEL_RC_OK;
-	pKeys = NULL;
-	keyCount = ListDictionary_GetKeys(rdpdr->devman->devices, &pKeys);
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(rdpdr->devman);
 
-	for (index = 0; index < keyCount; index++)
+	rdpdr->userLoggedOn = FALSE; /* reset possible received state */
+
+	/* windows servers tend to trail off if pending IRP are completed after a
+	 * PAKID_CORE_SERVER_ANNOUNCE message was received.
+	 * So, set rdpdr->clearing and discard all response messages triggered by
+	 * cancelling the pending requests.
+	 */
+	rdpdr->clearing = TRUE;
+	BOOL rc = device_foreach(rdpdr, TRUE, device_init, rdpdr->log);
+	rdpdr->clearing = FALSE;
+	if (!rc)
+		return ERROR_INTERNAL_ERROR;
+	return CHANNEL_RC_OK;
+}
+
+static BOOL state_match(enum RDPDR_CHANNEL_STATE state, size_t count, va_list ap)
+{
+	for (size_t x = 0; x < count; x++)
 	{
-		device = (DEVICE*)ListDictionary_GetItemValue(rdpdr->devman->devices, (void*)pKeys[index]);
-		IFCALLRET(device->Init, error, device);
+		enum RDPDR_CHANNEL_STATE cur = va_arg(ap, enum RDPDR_CHANNEL_STATE);
+		if (state == cur)
+			return TRUE;
+	}
+	return FALSE;
+}
 
-		if (error != CHANNEL_RC_OK)
+static const char* state_str(size_t count, va_list ap, char* buffer, size_t size)
+{
+	for (size_t x = 0; x < count; x++)
+	{
+		enum RDPDR_CHANNEL_STATE cur = va_arg(ap, enum RDPDR_CHANNEL_STATE);
+		const char* curstr = rdpdr_state_str(cur);
+		winpr_str_append(curstr, buffer, size, "|");
+	}
+	return buffer;
+}
+
+static BOOL rdpdr_state_check(rdpdrPlugin* rdpdr, UINT16 packetid, enum RDPDR_CHANNEL_STATE next,
+                              size_t count, ...)
+{
+	va_list ap = WINPR_C_ARRAY_INIT;
+	WINPR_ASSERT(rdpdr);
+
+	va_start(ap, count);
+	BOOL rc = state_match(rdpdr->state, count, ap);
+	va_end(ap);
+
+	if (!rc)
+	{
+		const char* strstate = rdpdr_state_str(rdpdr->state);
+		char buffer[256] = WINPR_C_ARRAY_INIT;
+
+		va_start(ap, count);
+		state_str(count, ap, buffer, sizeof(buffer));
+		va_end(ap);
+
+		WLog_Print(rdpdr->log, WLOG_ERROR,
+		           "channel [RDPDR] received %s, expected states [%s] but have state %s, aborting.",
+		           rdpdr_packetid_string(packetid), buffer, strstate);
+
+		if (!rdpdr_state_advance(rdpdr, RDPDR_CHANNEL_STATE_INITIAL))
+			return FALSE;
+		return FALSE;
+	}
+	return rdpdr_state_advance(rdpdr, next);
+}
+
+static BOOL rdpdr_check_channel_state(rdpdrPlugin* rdpdr, UINT16 packetid)
+{
+	WINPR_ASSERT(rdpdr);
+
+	switch (packetid)
+	{
+		case PAKID_CORE_SERVER_ANNOUNCE:
+			/* windows servers sometimes send this message.
+			 * it seems related to session login (e.g. first initialization for RDP/TLS style login,
+			 * then reinitialize the channel after login successful
+			 */
+			if (!rdpdr_state_advance(rdpdr, RDPDR_CHANNEL_STATE_INITIAL))
+				return FALSE;
+			return rdpdr_state_check(rdpdr, packetid, RDPDR_CHANNEL_STATE_ANNOUNCE, 1,
+			                         RDPDR_CHANNEL_STATE_INITIAL);
+		case PAKID_CORE_SERVER_CAPABILITY:
+			return rdpdr_state_check(
+			    rdpdr, packetid, RDPDR_CHANNEL_STATE_SERVER_CAPS, 6,
+			    RDPDR_CHANNEL_STATE_NAME_REQUEST, RDPDR_CHANNEL_STATE_SERVER_CAPS,
+			    RDPDR_CHANNEL_STATE_READY, RDPDR_CHANNEL_STATE_CLIENT_CAPS,
+			    RDPDR_CHANNEL_STATE_CLIENTID_CONFIRM, RDPDR_CHANNEL_STATE_USER_LOGGEDON);
+		case PAKID_CORE_CLIENTID_CONFIRM:
+			return rdpdr_state_check(rdpdr, packetid, RDPDR_CHANNEL_STATE_CLIENTID_CONFIRM, 5,
+			                         RDPDR_CHANNEL_STATE_NAME_REQUEST,
+			                         RDPDR_CHANNEL_STATE_SERVER_CAPS,
+			                         RDPDR_CHANNEL_STATE_CLIENT_CAPS, RDPDR_CHANNEL_STATE_READY,
+			                         RDPDR_CHANNEL_STATE_USER_LOGGEDON);
+		case PAKID_CORE_USER_LOGGEDON:
+			if (!rdpdr_check_extended_pdu_flag(rdpdr, RDPDR_USER_LOGGEDON_PDU))
+				return FALSE;
+
+			return rdpdr_state_check(
+			    rdpdr, packetid, RDPDR_CHANNEL_STATE_USER_LOGGEDON, 4,
+			    RDPDR_CHANNEL_STATE_NAME_REQUEST, RDPDR_CHANNEL_STATE_CLIENT_CAPS,
+			    RDPDR_CHANNEL_STATE_CLIENTID_CONFIRM, RDPDR_CHANNEL_STATE_READY);
+		default:
 		{
-			WLog_ERR(TAG, "Init failed!");
-			free(pKeys);
-			return error;
+			enum RDPDR_CHANNEL_STATE state = RDPDR_CHANNEL_STATE_READY;
+			return rdpdr_state_check(rdpdr, packetid, state, 1, state);
 		}
 	}
+}
 
-	free(pKeys);
-	return CHANNEL_RC_OK;
+static BOOL tryAdvance(rdpdrPlugin* rdpdr, BOOL announce)
+{
+	if (rdpdr->haveClientId && rdpdr->haveServerCaps)
+	{
+		if (announce)
+		{
+			const UINT error = rdpdr_send_device_list_announce_request(rdpdr, FALSE);
+			if (error)
+			{
+				WLog_Print(rdpdr->log, WLOG_ERROR,
+				           "rdpdr_send_device_list_announce_request failed with error %" PRIu32 "",
+				           error);
+				return FALSE;
+			}
+		}
+		if (!rdpdr_state_advance(rdpdr, RDPDR_CHANNEL_STATE_READY))
+			return FALSE;
+	}
+	return TRUE;
 }
 
 /**
@@ -1354,15 +1803,16 @@ static UINT rdpdr_process_init(rdpdrPlugin* rdpdr)
  */
 static UINT rdpdr_process_receive(rdpdrPlugin* rdpdr, wStream* s)
 {
-	UINT16 component;
-	UINT16 packetId;
-	UINT32 deviceId;
-	UINT32 status;
+	UINT16 component = 0;
+	UINT16 packetId = 0;
+	UINT32 deviceId = 0;
+	UINT32 status = 0;
 	UINT error = ERROR_INVALID_DATA;
 
 	if (!rdpdr || !s)
 		return CHANNEL_RC_NULL_DATA;
 
+	rdpdr_dump_received_packet(rdpdr->log, WLOG_TRACE, s, "[rdpdr-channel] receive");
 	if (Stream_GetRemainingLength(s) >= 4)
 	{
 		Stream_Read_UINT16(s, component); /* Component (2 bytes) */
@@ -1370,27 +1820,33 @@ static UINT rdpdr_process_receive(rdpdrPlugin* rdpdr, wStream* s)
 
 		if (component == RDPDR_CTYP_CORE)
 		{
+			if (!rdpdr_check_channel_state(rdpdr, packetId))
+				return CHANNEL_RC_OK;
+
 			switch (packetId)
 			{
 				case PAKID_CORE_SERVER_ANNOUNCE:
+					rdpdr->haveClientId = FALSE;
+					rdpdr->haveServerCaps = FALSE;
 					if ((error = rdpdr_process_server_announce_request(rdpdr, s)))
 					{
 					}
 					else if ((error = rdpdr_send_client_announce_reply(rdpdr)))
 					{
-						WLog_ERR(TAG,
-						         "rdpdr_send_client_announce_reply failed with error %" PRIu32 "",
-						         error);
+						WLog_Print(rdpdr->log, WLOG_ERROR,
+						           "rdpdr_send_client_announce_reply failed with error %" PRIu32 "",
+						           error);
 					}
 					else if ((error = rdpdr_send_client_name_request(rdpdr)))
 					{
-						WLog_ERR(TAG,
-						         "rdpdr_send_client_name_request failed with error %" PRIu32 "",
-						         error);
+						WLog_Print(rdpdr->log, WLOG_ERROR,
+						           "rdpdr_send_client_name_request failed with error %" PRIu32 "",
+						           error);
 					}
 					else if ((error = rdpdr_process_init(rdpdr)))
 					{
-						WLog_ERR(TAG, "rdpdr_process_init failed with error %" PRIu32 "", error);
+						WLog_Print(rdpdr->log, WLOG_ERROR,
+						           "rdpdr_process_init failed with error %" PRIu32 "", error);
 					}
 
 					break;
@@ -1401,9 +1857,15 @@ static UINT rdpdr_process_receive(rdpdrPlugin* rdpdr, wStream* s)
 					}
 					else if ((error = rdpdr_send_capability_response(rdpdr)))
 					{
-						WLog_ERR(TAG,
-						         "rdpdr_send_capability_response failed with error %" PRIu32 "",
-						         error);
+						WLog_Print(rdpdr->log, WLOG_ERROR,
+						           "rdpdr_send_capability_response failed with error %" PRIu32 "",
+						           error);
+					}
+					else
+					{
+						rdpdr->haveServerCaps = TRUE;
+						if (!tryAdvance(rdpdr, TRUE))
+							error = ERROR_INTERNAL_ERROR;
 					}
 
 					break;
@@ -1412,23 +1874,37 @@ static UINT rdpdr_process_receive(rdpdrPlugin* rdpdr, wStream* s)
 					if ((error = rdpdr_process_server_clientid_confirm(rdpdr, s)))
 					{
 					}
-					else if ((error = rdpdr_send_device_list_announce_request(rdpdr, FALSE)))
+					else
 					{
-						WLog_ERR(
-						    TAG,
-						    "rdpdr_send_device_list_announce_request failed with error %" PRIu32 "",
-						    error);
+						rdpdr->haveClientId = TRUE;
+						if (!tryAdvance(rdpdr, TRUE))
+							error = ERROR_INTERNAL_ERROR;
 					}
-
 					break;
 
 				case PAKID_CORE_USER_LOGGEDON:
-					if ((error = rdpdr_send_device_list_announce_request(rdpdr, TRUE)))
+					if (!rdpdr->haveServerCaps)
 					{
-						WLog_ERR(
-						    TAG,
+						/* Windows re-announces the channel after logon and may send
+						 * USER_LOGGEDON before the new SERVER_CAPABILITY arrives.
+						 * Not fatal: skip the device announce here, tryAdvance()
+						 * sends it once the capability exchange completes. */
+						WLog_Print(rdpdr->log, WLOG_WARN,
+						           "%s in state %s, ignoring. [serverCaps=%d, clientId=%d]",
+						           rdpdr_packetid_string(packetId), rdpdr_state_str(rdpdr->state),
+						           rdpdr->haveServerCaps, rdpdr->haveClientId);
+						error = CHANNEL_RC_OK;
+					}
+					else if ((error = rdpdr_send_device_list_announce_request(rdpdr, TRUE)))
+					{
+						WLog_Print(
+						    rdpdr->log, WLOG_ERROR,
 						    "rdpdr_send_device_list_announce_request failed with error %" PRIu32 "",
 						    error);
+					}
+					else if (!tryAdvance(rdpdr, FALSE))
+					{
+						error = ERROR_INTERNAL_ERROR;
 					}
 
 					break;
@@ -1440,6 +1916,9 @@ static UINT rdpdr_process_receive(rdpdrPlugin* rdpdr, wStream* s)
 					{
 						Stream_Read_UINT32(s, deviceId);
 						Stream_Read_UINT32(s, status);
+
+						if (status != 0)
+							devman_unregister_device(rdpdr->devman, (void*)((size_t)deviceId));
 						error = CHANNEL_RC_OK;
 					}
 
@@ -1448,16 +1927,18 @@ static UINT rdpdr_process_receive(rdpdrPlugin* rdpdr, wStream* s)
 				case PAKID_CORE_DEVICE_IOREQUEST:
 					if ((error = rdpdr_process_irp(rdpdr, s)))
 					{
-						WLog_ERR(TAG, "rdpdr_process_irp failed with error %" PRIu32 "", error);
+						WLog_Print(rdpdr->log, WLOG_ERROR,
+						           "rdpdr_process_irp failed with error %" PRIu32 "", error);
 						return error;
 					}
 					else
-						s = NULL;
+						s = nullptr;
 
 					break;
 
 				default:
-					WLog_ERR(TAG, "RDPDR_CTYP_CORE unknown PacketId: 0x%04" PRIX16 "", packetId);
+					WLog_Print(rdpdr->log, WLOG_ERROR,
+					           "RDPDR_CTYP_CORE unknown PacketId: 0x%04" PRIX16 "", packetId);
 					error = ERROR_INVALID_DATA;
 					break;
 			}
@@ -1468,14 +1949,24 @@ static UINT rdpdr_process_receive(rdpdrPlugin* rdpdr, wStream* s)
 
 			if (error != CHANNEL_RC_OK)
 			{
-				WLog_ERR(TAG,
-				         "Unknown message: Component: 0x%04" PRIX16 " PacketId: 0x%04" PRIX16 "",
-				         component, packetId);
+				DWORD level = WLOG_ERROR;
+				if (rdpdr->ignoreInvalidDevices)
+				{
+					if (error == ERROR_DEV_NOT_EXIST)
+					{
+						level = WLOG_WARN;
+						error = CHANNEL_RC_OK;
+					}
+				}
+				WLog_Print(rdpdr->log, level,
+				           "Unknown message: Component: %s [0x%04" PRIX16
+				           "] PacketId: %s [0x%04" PRIX16 "]",
+				           rdpdr_component_string(component), component,
+				           rdpdr_packetid_string(packetId), packetId);
 			}
 		}
 	}
 
-	Stream_Free(s, TRUE);
 	return error;
 }
 
@@ -1486,32 +1977,40 @@ static UINT rdpdr_process_receive(rdpdrPlugin* rdpdr, wStream* s)
  */
 UINT rdpdr_send(rdpdrPlugin* rdpdr, wStream* s)
 {
-	UINT status;
-	rdpdrPlugin* plugin = (rdpdrPlugin*)rdpdr;
+	rdpdrPlugin* plugin = rdpdr;
 
-	if (!rdpdr || !s)
+	if (rdpdr->clearing)
 	{
-		Stream_Free(s, TRUE);
+		WLog_ERR(TAG, "trying to send message while reinitializing channel, aborting");
+		Stream_Release(s);
+		return ERROR_INTERNAL_ERROR;
+	}
+	if (!s)
+	{
+		Stream_Release(s);
 		return CHANNEL_RC_NULL_DATA;
 	}
 
 	if (!plugin)
 	{
-		Stream_Free(s, TRUE);
-		status = CHANNEL_RC_BAD_INIT_HANDLE;
+		Stream_Release(s);
+		return CHANNEL_RC_BAD_INIT_HANDLE;
 	}
-	else
+
+	const size_t pos = Stream_GetPosition(s);
+	UINT status = ERROR_INTERNAL_ERROR;
+	if (pos <= UINT32_MAX)
 	{
+		rdpdr_dump_send_packet(rdpdr->log, WLOG_TRACE, s, "[rdpdr-channel] send");
 		status = plugin->channelEntryPoints.pVirtualChannelWriteEx(
-		    plugin->InitHandle, plugin->OpenHandle, Stream_Buffer(s), (UINT32)Stream_GetPosition(s),
-		    s);
+		    plugin->InitHandle, plugin->OpenHandle, Stream_Buffer(s), (UINT32)pos, s);
 	}
 
 	if (status != CHANNEL_RC_OK)
 	{
-		Stream_Free(s, TRUE);
-		WLog_ERR(TAG, "pVirtualChannelWriteEx failed with %s [%08" PRIX32 "]",
-		         WTSErrorToString(status), status);
+		Stream_Release(s);
+		WLog_Print(rdpdr->log, WLOG_ERROR, "pVirtualChannelWriteEx failed with %s [%08" PRIX32 "]",
+		           WTSErrorToString(status), status);
 	}
 
 	return status;
@@ -1526,7 +2025,8 @@ static UINT rdpdr_virtual_channel_event_data_received(rdpdrPlugin* rdpdr, void* 
                                                       UINT32 dataLength, UINT32 totalLength,
                                                       UINT32 dataFlags)
 {
-	wStream* data_in;
+	WINPR_ASSERT(rdpdr);
+	WINPR_ASSERT(pData || (dataLength == 0));
 
 	if ((dataFlags & CHANNEL_FLAG_SUSPEND) || (dataFlags & CHANNEL_FLAG_RESUME))
 	{
@@ -1541,44 +2041,76 @@ static UINT rdpdr_virtual_channel_event_data_received(rdpdrPlugin* rdpdr, void* 
 
 	if (dataFlags & CHANNEL_FLAG_FIRST)
 	{
-		if (rdpdr->data_in != NULL)
-			Stream_Free(rdpdr->data_in, TRUE);
+		if (rdpdr->firstFlagReceived)
+			return ERROR_INVALID_DATA;
+		rdpdr->firstFlagReceived = TRUE;
 
-		rdpdr->data_in = Stream_New(NULL, totalLength);
+		if (rdpdr->data_in != nullptr)
+			Stream_Release(rdpdr->data_in);
+
+		rdpdr->data_in = StreamPool_Take(rdpdr->pool, dataLength);
 
 		if (!rdpdr->data_in)
 		{
-			WLog_ERR(TAG, "Stream_New failed!");
+			WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_New failed!");
 			return CHANNEL_RC_NO_MEMORY;
 		}
+		rdpdr->totalLength = totalLength;
 	}
 
-	data_in = rdpdr->data_in;
+	if (!rdpdr->data_in)
+	{
+		WLog_Print(rdpdr->log, WLOG_ERROR,
+		           "Invalid state, no CHANNEL_FLAG_FIRST received, aborting.");
+		return ERROR_INVALID_DATA;
+	}
 
+	wStream* data_in = rdpdr->data_in;
 	if (!Stream_EnsureRemainingCapacity(data_in, dataLength))
 	{
-		WLog_ERR(TAG, "Stream_EnsureRemainingCapacity failed!");
+		WLog_Print(rdpdr->log, WLOG_ERROR, "Stream_EnsureRemainingCapacity failed!");
 		return ERROR_INVALID_DATA;
 	}
 
 	Stream_Write(data_in, pData, dataLength);
 
+	if ((Stream_GetPosition(data_in) > totalLength) || (rdpdr->totalLength != totalLength))
+		return ERROR_INVALID_DATA;
+
 	if (dataFlags & CHANNEL_FLAG_LAST)
 	{
-		if (Stream_Capacity(data_in) != Stream_GetPosition(data_in))
+		if (!rdpdr->firstFlagReceived)
+			return ERROR_INVALID_DATA;
+		rdpdr->firstFlagReceived = FALSE;
+
+		const size_t pos = Stream_GetPosition(data_in);
+		if (pos != totalLength)
 		{
-			WLog_ERR(TAG, "rdpdr_virtual_channel_event_data_received: read error");
+			WLog_Print(rdpdr->log, WLOG_ERROR,
+			           "rdpdr_virtual_channel_event_data_received: read error");
 			return ERROR_INTERNAL_ERROR;
 		}
 
-		rdpdr->data_in = NULL;
 		Stream_SealLength(data_in);
-		Stream_SetPosition(data_in, 0);
+		Stream_ResetPosition(data_in);
+		rdpdr->totalLength = 0;
 
-		if (!MessageQueue_Post(rdpdr->queue, NULL, 0, (void*)data_in, NULL))
+		if (rdpdr->async)
 		{
-			WLog_ERR(TAG, "MessageQueue_Post failed!");
-			return ERROR_INTERNAL_ERROR;
+			if (!MessageQueue_Post(rdpdr->queue, nullptr, 0, (void*)data_in, nullptr))
+			{
+				WLog_Print(rdpdr->log, WLOG_ERROR, "MessageQueue_Post failed!");
+				return ERROR_INTERNAL_ERROR;
+			}
+			rdpdr->data_in = nullptr;
+		}
+		else
+		{
+			UINT error = rdpdr_process_receive(rdpdr, data_in);
+			Stream_Release(data_in);
+			rdpdr->data_in = nullptr;
+			if (error)
+				return error;
 		}
 	}
 
@@ -1593,19 +2125,21 @@ static VOID VCAPITYPE rdpdr_virtual_channel_open_event_ex(LPVOID lpUserParam, DW
 	UINT error = CHANNEL_RC_OK;
 	rdpdrPlugin* rdpdr = (rdpdrPlugin*)lpUserParam;
 
+	WINPR_ASSERT(rdpdr);
 	switch (event)
 	{
 		case CHANNEL_EVENT_DATA_RECEIVED:
 			if (!rdpdr || !pData || (rdpdr->OpenHandle != openHandle))
 			{
-				WLog_ERR(TAG, "error no match");
+				WLog_Print(rdpdr->log, WLOG_ERROR, "error no match");
 				return;
 			}
 			if ((error = rdpdr_virtual_channel_event_data_received(rdpdr, pData, dataLength,
 			                                                       totalLength, dataFlags)))
-				WLog_ERR(TAG,
-				         "rdpdr_virtual_channel_event_data_received failed with error %" PRIu32 "!",
-				         error);
+				WLog_Print(rdpdr->log, WLOG_ERROR,
+				           "rdpdr_virtual_channel_event_data_received failed with error %" PRIu32
+				           "!",
+				           error);
 
 			break;
 
@@ -1613,27 +2147,25 @@ static VOID VCAPITYPE rdpdr_virtual_channel_open_event_ex(LPVOID lpUserParam, DW
 		case CHANNEL_EVENT_WRITE_COMPLETE:
 		{
 			wStream* s = (wStream*)pData;
-			Stream_Free(s, TRUE);
+			Stream_Release(s);
 		}
 		break;
 
 		case CHANNEL_EVENT_USER:
+			break;
+		default:
 			break;
 	}
 
 	if (error && rdpdr && rdpdr->rdpcontext)
 		setChannelError(rdpdr->rdpcontext, error,
 		                "rdpdr_virtual_channel_open_event_ex reported an error");
-
-	return;
 }
 
 static DWORD WINAPI rdpdr_virtual_channel_client_thread(LPVOID arg)
 {
-	wStream* data;
-	wMessage message;
 	rdpdrPlugin* rdpdr = (rdpdrPlugin*)arg;
-	UINT error;
+	UINT error = 0;
 
 	if (!rdpdr)
 	{
@@ -1643,7 +2175,8 @@ static DWORD WINAPI rdpdr_virtual_channel_client_thread(LPVOID arg)
 
 	if ((error = rdpdr_process_connect(rdpdr)))
 	{
-		WLog_ERR(TAG, "rdpdr_process_connect failed with error %" PRIu32 "!", error);
+		WLog_Print(rdpdr->log, WLOG_ERROR, "rdpdr_process_connect failed with error %" PRIu32 "!",
+		           error);
 
 		if (rdpdr->rdpcontext)
 			setChannelError(rdpdr->rdpcontext, error,
@@ -1655,6 +2188,9 @@ static DWORD WINAPI rdpdr_virtual_channel_client_thread(LPVOID arg)
 
 	while (1)
 	{
+		wMessage message = WINPR_C_ARRAY_INIT;
+		WINPR_ASSERT(rdpdr);
+
 		if (!MessageQueue_Wait(rdpdr->queue))
 			break;
 
@@ -1665,31 +2201,46 @@ static DWORD WINAPI rdpdr_virtual_channel_client_thread(LPVOID arg)
 
 			if (message.id == 0)
 			{
-				data = (wStream*)message.wParam;
+				wStream* data = (wStream*)message.wParam;
 
-				if ((error = rdpdr_process_receive(rdpdr, data)))
+				error = rdpdr_process_receive(rdpdr, data);
+
+				Stream_Release(data);
+				if (error)
 				{
-					WLog_ERR(TAG, "rdpdr_process_receive failed with error %" PRIu32 "!", error);
+					WLog_Print(rdpdr->log, WLOG_ERROR,
+					           "rdpdr_process_receive failed with error %" PRIu32 "!", error);
 
 					if (rdpdr->rdpcontext)
 						setChannelError(rdpdr->rdpcontext, error,
 						                "rdpdr_virtual_channel_client_thread reported an error");
 
-					ExitThread((DWORD)error);
-					return error;
+					goto fail;
 				}
 			}
 		}
 	}
 
-	ExitThread(0);
-	return 0;
+fail:
+	if ((error = drive_hotplug_thread_terminate(rdpdr)))
+		WLog_Print(rdpdr->log, WLOG_ERROR,
+		           "drive_hotplug_thread_terminate failed with error %" PRIu32 "!", error);
+
+	ExitThread(error);
+	return error;
 }
 
 static void queue_free(void* obj)
 {
-	wStream* s = obj;
-	Stream_Free(s, TRUE);
+	wStream* s = nullptr;
+	wMessage* msg = (wMessage*)obj;
+
+	if (!msg || (msg->id != 0))
+		return;
+
+	s = (wStream*)msg->wParam;
+	WINPR_ASSERT(s);
+	Stream_Release(s);
 }
 
 /**
@@ -1700,40 +2251,46 @@ static void queue_free(void* obj)
 static UINT rdpdr_virtual_channel_event_connected(rdpdrPlugin* rdpdr, LPVOID pData,
                                                   UINT32 dataLength)
 {
-	wObject* obj;
-	UINT32 status;
-	status = rdpdr->channelEntryPoints.pVirtualChannelOpenEx(rdpdr->InitHandle, &rdpdr->OpenHandle,
-	                                                         rdpdr->channelDef.name,
-	                                                         rdpdr_virtual_channel_open_event_ex);
+	wObject* obj = nullptr;
 
-	if (status != CHANNEL_RC_OK)
+	WINPR_ASSERT(rdpdr);
+	WINPR_UNUSED(pData);
+	WINPR_UNUSED(dataLength);
+
+	if (rdpdr->async)
 	{
-		WLog_ERR(TAG, "pVirtualChannelOpenEx failed with %s [%08" PRIX32 "]",
-		         WTSErrorToString(status), status);
-		return status;
+		rdpdr->queue = MessageQueue_New(nullptr);
+
+		if (!rdpdr->queue)
+		{
+			WLog_Print(rdpdr->log, WLOG_ERROR, "MessageQueue_New failed!");
+			return CHANNEL_RC_NO_MEMORY;
+		}
+
+		obj = MessageQueue_Object(rdpdr->queue);
+		obj->fnObjectFree = queue_free;
+
+		if (!(rdpdr->thread = CreateThread(nullptr, 0, rdpdr_virtual_channel_client_thread,
+		                                   (void*)rdpdr, 0, nullptr)))
+		{
+			WLog_Print(rdpdr->log, WLOG_ERROR, "CreateThread failed!");
+			return ERROR_INTERNAL_ERROR;
+		}
+	}
+	else
+	{
+		UINT error = rdpdr_process_connect(rdpdr);
+		if (error)
+		{
+			WLog_Print(rdpdr->log, WLOG_ERROR,
+			           "rdpdr_process_connect failed with error %" PRIu32 "!", error);
+			return error;
+		}
 	}
 
-	rdpdr->queue = MessageQueue_New(NULL);
-
-	if (!rdpdr->queue)
-	{
-		WLog_ERR(TAG, "MessageQueue_New failed!");
-		return CHANNEL_RC_NO_MEMORY;
-	}
-
-	obj = MessageQueue_Object(rdpdr->queue);
-	if (!obj)
-		return ERROR_INTERNAL_ERROR;
-	obj->fnObjectFree = queue_free;
-
-	if (!(rdpdr->thread =
-	          CreateThread(NULL, 0, rdpdr_virtual_channel_client_thread, (void*)rdpdr, 0, NULL)))
-	{
-		WLog_ERR(TAG, "CreateThread failed!");
-		return ERROR_INTERNAL_ERROR;
-	}
-
-	return CHANNEL_RC_OK;
+	return rdpdr->channelEntryPoints.pVirtualChannelOpenEx(rdpdr->InitHandle, &rdpdr->OpenHandle,
+	                                                       rdpdr->channelDef.name,
+	                                                       rdpdr_virtual_channel_open_event_ex);
 }
 
 /**
@@ -1743,50 +2300,52 @@ static UINT rdpdr_virtual_channel_event_connected(rdpdrPlugin* rdpdr, LPVOID pDa
  */
 static UINT rdpdr_virtual_channel_event_disconnected(rdpdrPlugin* rdpdr)
 {
-	UINT error;
+	UINT error = 0;
+
+	WINPR_ASSERT(rdpdr);
 
 	if (rdpdr->OpenHandle == 0)
 		return CHANNEL_RC_OK;
 
-	if (MessageQueue_PostQuit(rdpdr->queue, 0) &&
-	    (WaitForSingleObject(rdpdr->thread, INFINITE) == WAIT_FAILED))
+	if (rdpdr->queue && rdpdr->thread)
 	{
-		error = GetLastError();
-		WLog_ERR(TAG, "WaitForSingleObject failed with error %" PRIu32 "!", error);
-		return error;
+		if (MessageQueue_PostQuit(rdpdr->queue, 0) &&
+		    (WaitForSingleObject(rdpdr->thread, INFINITE) == WAIT_FAILED))
+		{
+			error = GetLastError();
+			WLog_Print(rdpdr->log, WLOG_ERROR, "WaitForSingleObject failed with error %" PRIu32 "!",
+			           error);
+			return error;
+		}
 	}
 
+	if (rdpdr->thread)
+		(void)CloseHandle(rdpdr->thread);
 	MessageQueue_Free(rdpdr->queue);
-	CloseHandle(rdpdr->thread);
-	rdpdr->queue = NULL;
-	rdpdr->thread = NULL;
+	rdpdr->queue = nullptr;
+	rdpdr->thread = nullptr;
 
-	if ((error = drive_hotplug_thread_terminate(rdpdr)))
-	{
-		WLog_ERR(TAG, "drive_hotplug_thread_terminate failed with error %" PRIu32 "!", error);
-		return error;
-	}
-
+	WINPR_ASSERT(rdpdr->channelEntryPoints.pVirtualChannelCloseEx);
 	error = rdpdr->channelEntryPoints.pVirtualChannelCloseEx(rdpdr->InitHandle, rdpdr->OpenHandle);
 
 	if (CHANNEL_RC_OK != error)
 	{
-		WLog_ERR(TAG, "pVirtualChannelCloseEx failed with %s [%08" PRIX32 "]",
-		         WTSErrorToString(error), error);
+		WLog_Print(rdpdr->log, WLOG_ERROR, "pVirtualChannelCloseEx failed with %s [%08" PRIX32 "]",
+		           WTSErrorToString(error), error);
 	}
 
 	rdpdr->OpenHandle = 0;
 
 	if (rdpdr->data_in)
 	{
-		Stream_Free(rdpdr->data_in, TRUE);
-		rdpdr->data_in = NULL;
+		Stream_Release(rdpdr->data_in);
+		rdpdr->data_in = nullptr;
 	}
 
 	if (rdpdr->devman)
 	{
 		devman_free(rdpdr->devman);
-		rdpdr->devman = NULL;
+		rdpdr->devman = nullptr;
 	}
 
 	return error;
@@ -1794,8 +2353,73 @@ static UINT rdpdr_virtual_channel_event_disconnected(rdpdrPlugin* rdpdr)
 
 static void rdpdr_virtual_channel_event_terminated(rdpdrPlugin* rdpdr)
 {
-	rdpdr->InitHandle = 0;
+	WINPR_ASSERT(rdpdr);
+#if !defined(_WIN32)
+	if (rdpdr->stopEvent)
+	{
+		(void)CloseHandle(rdpdr->stopEvent);
+		rdpdr->stopEvent = nullptr;
+	}
+#endif
+	rdpdr->InitHandle = nullptr;
+	StreamPool_Free(rdpdr->pool);
 	free(rdpdr);
+}
+
+static UINT rdpdr_register_device(RdpdrClientContext* context, const RDPDR_DEVICE* device,
+                                  uint32_t* pid)
+{
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(device);
+	WINPR_ASSERT(pid);
+
+	rdpdrPlugin* rdpdr = context->handle;
+	WINPR_ASSERT(rdpdr);
+
+	RDPDR_DEVICE* copy = freerdp_device_clone(device);
+	if (!copy)
+		return ERROR_INVALID_DATA;
+	UINT rc = devman_load_device_service(rdpdr->devman, copy, rdpdr->rdpcontext);
+	*pid = copy->Id;
+	freerdp_device_free(copy);
+	if (rc == CHANNEL_RC_OK)
+		rc = rdpdr_try_send_device_list_announce_request(rdpdr);
+	return rc;
+}
+
+static UINT rdpdr_unregister_device(RdpdrClientContext* context, size_t count, const uint32_t ids[])
+{
+	WINPR_ASSERT(context);
+
+	rdpdrPlugin* rdpdr = context->handle;
+	WINPR_ASSERT(rdpdr);
+
+	for (size_t x = 0; x < count; x++)
+	{
+		const uintptr_t id = ids[x];
+		devman_unregister_device(rdpdr->devman, (void*)id);
+	}
+	return rdpdr_send_device_list_remove_request(rdpdr, WINPR_ASSERTING_INT_CAST(uint32_t, count),
+	                                             ids);
+}
+
+static UINT rdpdr_virtual_channel_event_initialized(rdpdrPlugin* rdpdr,
+                                                    WINPR_ATTR_UNUSED LPVOID pData,
+                                                    WINPR_ATTR_UNUSED UINT32 dataLength)
+{
+	WINPR_ASSERT(rdpdr);
+#if !defined(_WIN32)
+	WINPR_ASSERT(!rdpdr->stopEvent);
+	rdpdr->stopEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+	if (!rdpdr->stopEvent)
+		return ERROR_INTERNAL_ERROR;
+#endif
+
+	rdpdr->context.handle = rdpdr;
+	rdpdr->context.RdpdrHotplugDevice = handle_hotplug;
+	rdpdr->context.RdpdrRegisterDevice = rdpdr_register_device;
+	rdpdr->context.RdpdrUnregisterDevice = rdpdr_unregister_device;
+	return CHANNEL_RC_OK;
 }
 
 static VOID VCAPITYPE rdpdr_virtual_channel_init_event_ex(LPVOID lpUserParam, LPVOID pInitHandle,
@@ -1810,39 +2434,44 @@ static VOID VCAPITYPE rdpdr_virtual_channel_init_event_ex(LPVOID lpUserParam, LP
 		return;
 	}
 
+	WINPR_ASSERT(pData || (dataLength == 0));
+
 	switch (event)
 	{
 		case CHANNEL_EVENT_INITIALIZED:
+			error = rdpdr_virtual_channel_event_initialized(rdpdr, pData, dataLength);
 			break;
 
 		case CHANNEL_EVENT_CONNECTED:
 			if ((error = rdpdr_virtual_channel_event_connected(rdpdr, pData, dataLength)))
-				WLog_ERR(TAG,
-				         "rdpdr_virtual_channel_event_connected failed with error %" PRIu32 "!",
-				         error);
+				WLog_Print(rdpdr->log, WLOG_ERROR,
+				           "rdpdr_virtual_channel_event_connected failed with error %" PRIu32 "!",
+				           error);
 
 			break;
 
 		case CHANNEL_EVENT_DISCONNECTED:
 			if ((error = rdpdr_virtual_channel_event_disconnected(rdpdr)))
-				WLog_ERR(TAG,
-				         "rdpdr_virtual_channel_event_disconnected failed with error %" PRIu32 "!",
-				         error);
+				WLog_Print(rdpdr->log, WLOG_ERROR,
+				           "rdpdr_virtual_channel_event_disconnected failed with error %" PRIu32
+				           "!",
+				           error);
 
 			break;
 
 		case CHANNEL_EVENT_TERMINATED:
 			rdpdr_virtual_channel_event_terminated(rdpdr);
+			rdpdr = nullptr;
 			break;
 
 		case CHANNEL_EVENT_ATTACHED:
 		case CHANNEL_EVENT_DETACHED:
 		default:
-			WLog_ERR(TAG, "unknown event %" PRIu32 "!", event);
+			WLog_Print(rdpdr->log, WLOG_ERROR, "unknown event %" PRIu32 "!", event);
 			break;
 	}
 
-	if (error && rdpdr->rdpcontext)
+	if (error && rdpdr && rdpdr->rdpcontext)
 		setChannelError(rdpdr->rdpcontext, error,
 		                "rdpdr_virtual_channel_init_event_ex reported an error");
 }
@@ -1850,41 +2479,67 @@ static VOID VCAPITYPE rdpdr_virtual_channel_init_event_ex(LPVOID lpUserParam, LP
 /* rdpdr is always built-in */
 #define VirtualChannelEntryEx rdpdr_VirtualChannelEntryEx
 
-BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS pEntryPoints, PVOID pInitHandle)
+FREERDP_ENTRY_POINT(BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS_EX pEntryPoints,
+                                                         PVOID pInitHandle))
 {
-	UINT rc;
-	rdpdrPlugin* rdpdr;
-	CHANNEL_ENTRY_POINTS_FREERDP_EX* pEntryPointsEx;
-	rdpdr = (rdpdrPlugin*)calloc(1, sizeof(rdpdrPlugin));
+	WINPR_ASSERT(pEntryPoints);
+	WINPR_ASSERT(pInitHandle);
+
+	rdpdrPlugin* rdpdr = (rdpdrPlugin*)calloc(1, sizeof(rdpdrPlugin));
 
 	if (!rdpdr)
 	{
 		WLog_ERR(TAG, "calloc failed!");
 		return FALSE;
 	}
+	rdpdr->log = WLog_Get(TAG);
+
+	rdpdr->clientExtendedPDU =
+	    RDPDR_DEVICE_REMOVE_PDUS | RDPDR_CLIENT_DISPLAY_NAME_PDU | RDPDR_USER_LOGGEDON_PDU;
+	rdpdr->clientIOCode1 =
+	    RDPDR_IRP_MJ_CREATE | RDPDR_IRP_MJ_CLEANUP | RDPDR_IRP_MJ_CLOSE | RDPDR_IRP_MJ_READ |
+	    RDPDR_IRP_MJ_WRITE | RDPDR_IRP_MJ_FLUSH_BUFFERS | RDPDR_IRP_MJ_SHUTDOWN |
+	    RDPDR_IRP_MJ_DEVICE_CONTROL | RDPDR_IRP_MJ_QUERY_VOLUME_INFORMATION |
+	    RDPDR_IRP_MJ_SET_VOLUME_INFORMATION | RDPDR_IRP_MJ_QUERY_INFORMATION |
+	    RDPDR_IRP_MJ_SET_INFORMATION | RDPDR_IRP_MJ_DIRECTORY_CONTROL | RDPDR_IRP_MJ_LOCK_CONTROL |
+	    RDPDR_IRP_MJ_QUERY_SECURITY | RDPDR_IRP_MJ_SET_SECURITY;
+
+	rdpdr->clientExtraFlags1 = ENABLE_ASYNCIO;
+
+	rdpdr->pool = StreamPool_New(TRUE, 1024);
+	if (!rdpdr->pool)
+	{
+		free(rdpdr);
+		return FALSE;
+	}
 
 	rdpdr->channelDef.options =
 	    CHANNEL_OPTION_INITIALIZED | CHANNEL_OPTION_ENCRYPT_RDP | CHANNEL_OPTION_COMPRESS_RDP;
-	sprintf_s(rdpdr->channelDef.name, ARRAYSIZE(rdpdr->channelDef.name), "rdpdr");
+	(void)sprintf_s(rdpdr->channelDef.name, ARRAYSIZE(rdpdr->channelDef.name),
+	                RDPDR_SVC_CHANNEL_NAME);
 	rdpdr->sequenceId = 0;
-	pEntryPointsEx = (CHANNEL_ENTRY_POINTS_FREERDP_EX*)pEntryPoints;
+	CHANNEL_ENTRY_POINTS_FREERDP_EX* pEntryPointsEx =
+	    (CHANNEL_ENTRY_POINTS_FREERDP_EX*)pEntryPoints;
 
 	if ((pEntryPointsEx->cbSize >= sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX)) &&
 	    (pEntryPointsEx->MagicNumber == FREERDP_CHANNEL_MAGIC_NUMBER))
 	{
 		rdpdr->rdpcontext = pEntryPointsEx->context;
+		if (!freerdp_settings_get_bool(rdpdr->rdpcontext->settings,
+		                               FreeRDP_SynchronousStaticChannels))
+			rdpdr->async = TRUE;
 	}
 
 	CopyMemory(&(rdpdr->channelEntryPoints), pEntryPoints, sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX));
 	rdpdr->InitHandle = pInitHandle;
-	rc = rdpdr->channelEntryPoints.pVirtualChannelInitEx(
-	    rdpdr, NULL, pInitHandle, &rdpdr->channelDef, 1, VIRTUAL_CHANNEL_VERSION_WIN2000,
+	const UINT rc = rdpdr->channelEntryPoints.pVirtualChannelInitEx(
+	    rdpdr, &rdpdr->context, pInitHandle, &rdpdr->channelDef, 1, VIRTUAL_CHANNEL_VERSION_WIN2000,
 	    rdpdr_virtual_channel_init_event_ex);
 
 	if (CHANNEL_RC_OK != rc)
 	{
-		WLog_ERR(TAG, "pVirtualChannelInitEx failed with %s [%08" PRIX32 "]", WTSErrorToString(rc),
-		         rc);
+		WLog_Print(rdpdr->log, WLOG_ERROR, "pVirtualChannelInitEx failed with %s [%08" PRIX32 "]",
+		           WTSErrorToString(rc), rc);
 		free(rdpdr);
 		return FALSE;
 	}

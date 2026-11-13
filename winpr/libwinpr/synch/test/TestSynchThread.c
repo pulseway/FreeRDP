@@ -5,16 +5,21 @@
 
 static DWORD WINAPI test_thread(LPVOID arg)
 {
-	Sleep(1000);
+	WINPR_UNUSED(arg);
+	Sleep(100);
 	ExitThread(0);
 	return 0;
 }
 
 int TestSynchThread(int argc, char* argv[])
 {
-	DWORD rc;
-	HANDLE thread;
-	thread = CreateThread(NULL, 0, test_thread, NULL, 0, NULL);
+	DWORD rc = 0;
+	HANDLE thread = nullptr;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
+	thread = CreateThread(nullptr, 0, test_thread, nullptr, 0, nullptr);
 
 	if (!thread)
 	{
@@ -49,13 +54,24 @@ int TestSynchThread(int argc, char* argv[])
 		return -5;
 	}
 
+	/* check that WaitForSingleObject works multiple times on a terminated thread */
+	for (int i = 0; i < 4; i++)
+	{
+		rc = WaitForSingleObject(thread, 0);
+		if (WAIT_OBJECT_0 != rc)
+		{
+			printf("Timed WaitForSingleObject on dead thread failed with %" PRIu32 "\n", rc);
+			return -6;
+		}
+	}
+
 	if (!CloseHandle(thread))
 	{
 		printf("CloseHandle failed!");
 		return -1;
 	}
 
-	thread = CreateThread(NULL, 0, test_thread, NULL, 0, NULL);
+	thread = CreateThread(nullptr, 0, test_thread, nullptr, 0, nullptr);
 
 	if (!thread)
 	{
@@ -64,7 +80,7 @@ int TestSynchThread(int argc, char* argv[])
 	}
 
 	/* TryJoin should now fail. */
-	rc = WaitForSingleObject(thread, 50);
+	rc = WaitForSingleObject(thread, 10);
 
 	if (WAIT_TIMEOUT != rc)
 	{
@@ -97,7 +113,7 @@ int TestSynchThread(int argc, char* argv[])
 	}
 
 	/* Thread detach test */
-	thread = CreateThread(NULL, 0, test_thread, NULL, 0, NULL);
+	thread = CreateThread(nullptr, 0, test_thread, nullptr, 0, nullptr);
 
 	if (!thread)
 	{

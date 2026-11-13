@@ -20,28 +20,25 @@
 #ifndef FREERDP_LIB_CORE_GATEWAY_RTS_SIGNATURE_H
 #define FREERDP_LIB_CORE_GATEWAY_RTS_SIGNATURE_H
 
-typedef struct rts_pdu_signature RtsPduSignature;
-typedef struct _RTS_PDU_SIGNATURE_ENTRY RTS_PDU_SIGNATURE_ENTRY;
-
 #include "rts.h"
 
 #include <winpr/wtypes.h>
 #include <freerdp/api.h>
 
-struct rts_pdu_signature
+typedef struct
 {
 	UINT16 Flags;
 	UINT16 NumberOfCommands;
 	UINT32 CommandTypes[8];
-};
+} RtsPduSignature;
 
-struct _RTS_PDU_SIGNATURE_ENTRY
+typedef struct
 {
 	UINT32 SignatureId;
 	BOOL SignatureClient;
 	const RtsPduSignature* Signature;
 	const char* PduName;
-};
+} RTS_PDU_SIGNATURE_ENTRY;
 
 /* RTS PDU Signature IDs */
 
@@ -178,12 +175,28 @@ FREERDP_LOCAL extern const RtsPduSignature RTS_PDU_PING_SIGNATURE;
 FREERDP_LOCAL extern const RtsPduSignature RTS_PDU_FLOW_CONTROL_ACK_SIGNATURE;
 FREERDP_LOCAL extern const RtsPduSignature RTS_PDU_FLOW_CONTROL_ACK_WITH_DESTINATION_SIGNATURE;
 
-FREERDP_LOCAL BOOL rts_match_pdu_signature(const RtsPduSignature* signature,
-                                           const rpcconn_rts_hdr_t* rts);
-FREERDP_LOCAL BOOL rts_extract_pdu_signature(RtsPduSignature* signature,
-                                             const rpcconn_rts_hdr_t* rts);
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL rts_match_pdu_signature(const RtsPduSignature* signature, wStream* s,
+                                           const rpcconn_hdr_t* header);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL rts_match_pdu_signature_ex(const RtsPduSignature* signature, wStream* s,
+                                              const rpcconn_hdr_t* header,
+                                              RtsPduSignature* found_signature, BOOL silent);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL rts_extract_pdu_signature(RtsPduSignature* signature, wStream* s,
+                                             const rpcconn_hdr_t* header);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL rts_extract_pdu_signature_ex(RtsPduSignature* signature, wStream* s,
+                                                const rpcconn_hdr_t* header, BOOL silent);
+
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL UINT32 rts_identify_pdu_signature(const RtsPduSignature* signature,
                                                 const RTS_PDU_SIGNATURE_ENTRY** entry);
-FREERDP_LOCAL BOOL rts_print_pdu_signature(const RtsPduSignature* signature);
+
+FREERDP_LOCAL BOOL rts_print_pdu_signature(wLog* log, DWORD level,
+                                           const RtsPduSignature* signature);
 
 #endif /* FREERDP_LIB_CORE_GATEWAY_RTS_SIGNATURE_H */

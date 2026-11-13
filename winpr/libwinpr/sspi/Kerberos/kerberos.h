@@ -18,8 +18,8 @@
  * limitations under the License.
  */
 
-#ifndef FREERDP_SSPI_KERBEROS_PRIVATE_H
-#define FREERDP_SSPI_KERBEROS_PRIVATE_H
+#ifndef WINPR_SSPI_KERBEROS_PRIVATE_H
+#define WINPR_SSPI_KERBEROS_PRIVATE_H
 
 #include <winpr/sspi.h>
 #include <winpr/windows.h>
@@ -27,11 +27,13 @@
 #include "../sspi.h"
 #include "../../log.h"
 
-#ifdef WITH_GSSAPI
-#include <krb5.h>
-#include <gssapi.h>
-#endif
+typedef struct s_KRB_CONTEXT KRB_CONTEXT;
 
-typedef struct _KRB_CONTEXT KRB_CONTEXT;
+extern const SecPkgInfoA KERBEROS_SecPkgInfoA;
+extern const SecPkgInfoW KERBEROS_SecPkgInfoW;
+extern const SecurityFunctionTableA KERBEROS_SecurityFunctionTableA;
+extern const SecurityFunctionTableW KERBEROS_SecurityFunctionTableW;
 
-#endif /* FREERDP_SSPI_KERBEROS_PRIVATE_H */
+BOOL KERBEROS_init(void);
+
+#endif /* WINPR_SSPI_KERBEROS_PRIVATE_H */

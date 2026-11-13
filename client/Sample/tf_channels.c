@@ -18,10 +18,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
+#include <winpr/assert.h>
 #include <freerdp/gdi/gfx.h>
 
 #include <freerdp/client/rdpei.h>
@@ -33,83 +32,42 @@
 #include "tf_channels.h"
 #include "tf_freerdp.h"
 
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT
-tf_encomsp_participant_created(EncomspClientContext* context,
-                               const ENCOMSP_PARTICIPANT_CREATED_PDU* participantCreated)
-{
-	WINPR_UNUSED(context);
-	WINPR_UNUSED(participantCreated);
-	return CHANNEL_RC_OK;
-}
-
-static void tf_encomsp_init(tfContext* tf, EncomspClientContext* encomsp)
-{
-	tf->encomsp = encomsp;
-	encomsp->custom = (void*)tf;
-	encomsp->ParticipantCreated = tf_encomsp_participant_created;
-}
-
-static void tf_encomsp_uninit(tfContext* tf, EncomspClientContext* encomsp)
-{
-	if (encomsp)
-	{
-		encomsp->custom = NULL;
-		encomsp->ParticipantCreated = NULL;
-	}
-
-	if (tf)
-		tf->encomsp = NULL;
-}
-
-void tf_OnChannelConnectedEventHandler(void* context, ChannelConnectedEventArgs* e)
+void tf_OnChannelConnectedEventHandler(void* context, const ChannelConnectedEventArgs* e)
 {
 	tfContext* tf = (tfContext*)context;
 
-	if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0)
-	{
-		tf->rdpei = (RdpeiClientContext*)e->pInterface;
-	}
-	else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
-	{
-		gdi_graphics_pipeline_init(tf->context.gdi, (RdpgfxClientContext*)e->pInterface);
-	}
-	else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
+	WINPR_ASSERT(tf);
+	WINPR_ASSERT(e);
+
+	if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
 	{
 	}
 	else if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
 	{
+		CliprdrClientContext* clip = (CliprdrClientContext*)e->pInterface;
+		WINPR_ASSERT(clip);
+		clip->custom = context;
 	}
-	else if (strcmp(e->name, ENCOMSP_SVC_CHANNEL_NAME) == 0)
-	{
-		tf_encomsp_init(tf, (EncomspClientContext*)e->pInterface);
-	}
+	else
+		freerdp_client_OnChannelConnectedEventHandler(&tf->common, e);
 }
 
-void tf_OnChannelDisconnectedEventHandler(void* context, ChannelDisconnectedEventArgs* e)
+void tf_OnChannelDisconnectedEventHandler(void* context, const ChannelDisconnectedEventArgs* e)
 {
 	tfContext* tf = (tfContext*)context;
 
-	if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0)
-	{
-		tf->rdpei = NULL;
-	}
-	else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
-	{
-		gdi_graphics_pipeline_uninit(tf->context.gdi, (RdpgfxClientContext*)e->pInterface);
-	}
-	else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
+	WINPR_ASSERT(tf);
+	WINPR_ASSERT(e);
+
+	if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
 	{
 	}
 	else if (strcmp(e->name, CLIPRDR_SVC_CHANNEL_NAME) == 0)
 	{
+		CliprdrClientContext* clip = (CliprdrClientContext*)e->pInterface;
+		WINPR_ASSERT(clip);
+		clip->custom = nullptr;
 	}
-	else if (strcmp(e->name, ENCOMSP_SVC_CHANNEL_NAME) == 0)
-	{
-		tf_encomsp_uninit(tf, (EncomspClientContext*)e->pInterface);
-	}
+	else
+		freerdp_client_OnChannelDisconnectedEventHandler(&tf->common, e);
 }

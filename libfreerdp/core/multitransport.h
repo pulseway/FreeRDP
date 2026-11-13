@@ -23,20 +23,66 @@
 typedef struct rdp_multitransport rdpMultitransport;
 
 #include "rdp.h"
+#include "state.h"
 
 #include <freerdp/freerdp.h>
 #include <freerdp/api.h>
 
 #include <winpr/stream.h>
 
-struct rdp_multitransport
+typedef enum
 {
-	UINT32 placeholder;
-};
+	INITIATE_REQUEST_PROTOCOL_UDPFECR = 0x01,
+	INITIATE_REQUEST_PROTOCOL_UDPFECL = 0x02
+} MultitransportRequestProtocol;
 
-FREERDP_LOCAL int rdp_recv_multitransport_packet(rdpRdp* rdp, wStream* s);
+typedef state_run_t (*MultiTransportRequestCb)(rdpMultitransport* multi, UINT32 reqId,
+                                               UINT16 reqProto, const BYTE* cookie);
+typedef state_run_t (*MultiTransportResponseCb)(rdpMultitransport* multi, UINT32 reqId,
+                                                UINT32 hrResponse);
 
-FREERDP_LOCAL rdpMultitransport* multitransport_new(void);
-FREERDP_LOCAL void multitransport_free(rdpMultitransport* multitransport);
+#define RDPUDP_COOKIE_LEN 16
+#define RDPUDP_COOKIE_HASHLEN 32
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL state_run_t multitransport_recv_request(rdpMultitransport* multi, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL state_run_t multitransport_server_request(rdpMultitransport* multi, UINT16 reqProto);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL state_run_t multitransport_recv_response(rdpMultitransport* multi, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL multitransport_client_send_response(rdpMultitransport* multi, UINT32 reqId,
+                                                       HRESULT hr);
+
+/** Event that is set while tunnel events wait for multitransport_check(). */
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL HANDLE multitransport_get_event_handle(rdpMultitransport* multi);
+
+/** Handles tunnel events on the thread running the main loop. */
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL multitransport_check(rdpMultitransport* multi);
+
+/** Sends an auto-detect response, a whole RDP_TUNNEL_SUBHEADER of type
+ * TYPE_ID_AUTODETECT_RESPONSE, over the reliable UDP tunnel. */
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL multitransport_send_autodetect_response(rdpMultitransport* multi,
+                                                           const BYTE* data, size_t length);
+
+/** TRUE when the connection was ended because its UDP tunnel broke down. Cleared by
+ * multitransport_reset(). */
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL multitransport_ended_connection(const rdpMultitransport* multi);
+
+/** Tears down any tunnel, e.g. when the main connection goes away. */
+FREERDP_LOCAL void multitransport_reset(rdpMultitransport* multi);
+
+FREERDP_LOCAL void multitransport_free(rdpMultitransport* multi);
+
+WINPR_ATTR_MALLOC(multitransport_free, 1)
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL rdpMultitransport* multitransport_new(rdpRdp* rdp, UINT16 protocol);
 
 #endif /* FREERDP_LIB_CORE_MULTITRANSPORT_H */

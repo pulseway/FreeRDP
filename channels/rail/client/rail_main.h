@@ -36,7 +36,7 @@
 
 #include "../rail_common.h"
 
-struct rail_plugin
+typedef struct
 {
 	CHANNEL_DEF channelDef;
 	CHANNEL_ENTRY_POINTS_FREERDP_EX channelEntryPoints;
@@ -51,11 +51,12 @@ struct rail_plugin
 	DWORD channelBuildNumber;
 	DWORD channelFlags;
 	RAIL_CLIENT_STATUS_ORDER clientStatus;
-	BOOL sendHandshake;
-};
-typedef struct rail_plugin railPlugin;
+} railPlugin;
 
-RailClientContext* rail_get_client_interface(railPlugin* rail);
-UINT rail_send_channel_data(railPlugin* rail, wStream* s);
+WINPR_ATTR_NODISCARD FREERDP_LOCAL RailClientContext* rail_get_client_interface(railPlugin* rail);
+
+WINPR_ATTR_NODISCARD FREERDP_LOCAL UINT rail_send_channel_data(railPlugin* rail, wStream* s);
+
+WINPR_ATTR_NODISCARD FREERDP_LOCAL UINT rail_send_client_status(RailClientContext* context);
 
 #endif /* FREERDP_CHANNEL_RAIL_CLIENT_MAIN_H */

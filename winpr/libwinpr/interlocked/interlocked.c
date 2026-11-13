@@ -17,10 +17,11 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
+#include <winpr/assert.h>
+#include <winpr/wlog.h>
+#include <winpr/platform.h>
 #include <winpr/synch.h>
 #include <winpr/handle.h>
 
@@ -33,8 +34,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#if !defined(WITHOUT_WINPR_3x_DEPRECATED)
 VOID InitializeSListHead(WINPR_PSLIST_HEADER ListHead)
 {
+	WINPR_ASSERT(ListHead);
 #ifdef _WIN64
 	ListHead->s.Alignment = 0;
 	ListHead->s.Region = 0;
@@ -47,9 +50,11 @@ VOID InitializeSListHead(WINPR_PSLIST_HEADER ListHead)
 WINPR_PSLIST_ENTRY InterlockedPushEntrySList(WINPR_PSLIST_HEADER ListHead,
                                              WINPR_PSLIST_ENTRY ListEntry)
 {
-	WINPR_SLIST_HEADER old;
-	WINPR_SLIST_HEADER newHeader;
+	WINPR_SLIST_HEADER old = WINPR_C_ARRAY_INIT;
+	WINPR_SLIST_HEADER newHeader = WINPR_C_ARRAY_INIT;
 
+	WINPR_ASSERT(ListHead);
+	WINPR_ASSERT(ListEntry);
 #ifdef _WIN64
 	newHeader.HeaderX64.NextEntry = (((ULONG_PTR)ListEntry) >> 4);
 
@@ -62,11 +67,10 @@ WINPR_PSLIST_ENTRY InterlockedPushEntrySList(WINPR_PSLIST_HEADER ListHead,
 		newHeader.HeaderX64.Depth = old.HeaderX64.Depth + 1;
 		newHeader.HeaderX64.Sequence = old.HeaderX64.Sequence + 1;
 
-		if (InterlockedCompareExchange64((LONGLONG*)ListHead, newHeader.s.Alignment,
-		                                 old.s.Alignment))
+		if (InterlockedCompareExchange64((LONGLONG*)ListHead, newHeader).Alignment, old).Alignment))
 		{
-			InterlockedCompareExchange64(&((LONGLONG*)ListHead)[1], newHeader.s.Region,
-			                             old.s.Region);
+			InterlockedCompareExchange64(&((LONGLONG*)ListHead)[1], newHeader).Region,
+										 old).Region);
 			break;
 		}
 	}
@@ -82,11 +86,11 @@ WINPR_PSLIST_ENTRY InterlockedPushEntrySList(WINPR_PSLIST_HEADER ListHead,
 		newHeader.s.Depth = old.s.Depth + 1;
 		newHeader.s.Sequence = old.s.Sequence + 1;
 		if (old.Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 		if (newHeader.Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 		if (ListHead->Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 	} while (InterlockedCompareExchange64((LONGLONG*)&ListHead->Alignment,
 	                                      (LONGLONG)newHeader.Alignment,
 	                                      (LONGLONG)old.Alignment) != (LONGLONG)old.Alignment);
@@ -95,22 +99,31 @@ WINPR_PSLIST_ENTRY InterlockedPushEntrySList(WINPR_PSLIST_HEADER ListHead,
 #endif
 }
 
-WINPR_PSLIST_ENTRY InterlockedPushListSListEx(WINPR_PSLIST_HEADER ListHead, WINPR_PSLIST_ENTRY List,
-                                              WINPR_PSLIST_ENTRY ListEnd, ULONG Count)
+WINPR_PSLIST_ENTRY InterlockedPushListSListEx(WINPR_ATTR_UNUSED WINPR_PSLIST_HEADER ListHead,
+                                              WINPR_ATTR_UNUSED WINPR_PSLIST_ENTRY List,
+                                              WINPR_ATTR_UNUSED WINPR_PSLIST_ENTRY ListEnd,
+                                              WINPR_ATTR_UNUSED ULONG Count)
 {
+	WINPR_ASSERT(ListHead);
+	WINPR_ASSERT(List);
+	WINPR_ASSERT(ListEnd);
+
+	WLog_ERR("TODO", "TODO: implement");
 #ifdef _WIN64
 
 #else
 
 #endif
-	return NULL;
+	return nullptr;
 }
 
 WINPR_PSLIST_ENTRY InterlockedPopEntrySList(WINPR_PSLIST_HEADER ListHead)
 {
-	WINPR_SLIST_HEADER old;
-	WINPR_SLIST_HEADER newHeader;
-	WINPR_PSLIST_ENTRY entry;
+	WINPR_SLIST_HEADER old = WINPR_C_ARRAY_INIT;
+	WINPR_SLIST_HEADER newHeader = WINPR_C_ARRAY_INIT;
+	WINPR_PSLIST_ENTRY entry = nullptr;
+
+	WINPR_ASSERT(ListHead);
 
 #ifdef _WIN64
 	while (1)
@@ -120,17 +133,16 @@ WINPR_PSLIST_ENTRY InterlockedPopEntrySList(WINPR_PSLIST_HEADER ListHead)
 		entry = (PSLIST_ENTRY)(((ULONG_PTR)old.HeaderX64.NextEntry) << 4);
 
 		if (!entry)
-			return NULL;
+			return nullptr;
 
 		newHeader.HeaderX64.NextEntry = ((ULONG_PTR)entry->Next) >> 4;
 		newHeader.HeaderX64.Depth = old.HeaderX64.Depth - 1;
 		newHeader.HeaderX64.Sequence = old.HeaderX64.Sequence - 1;
 
-		if (InterlockedCompareExchange64((LONGLONG*)ListHead, newHeader.s.Alignment,
-		                                 old.s.Alignment))
+		if (InterlockedCompareExchange64((LONGLONG*)ListHead, newHeader).Alignment, old).Alignment))
 		{
-			InterlockedCompareExchange64(&((LONGLONG*)ListHead)[1], newHeader.s.Region,
-			                             old.s.Region);
+			InterlockedCompareExchange64(&((LONGLONG*)ListHead)[1], newHeader).Region,
+										 old).Region);
 			break;
 		}
 	}
@@ -142,18 +154,18 @@ WINPR_PSLIST_ENTRY InterlockedPopEntrySList(WINPR_PSLIST_HEADER ListHead)
 		entry = old.s.Next.Next;
 
 		if (!entry)
-			return NULL;
+			return nullptr;
 
 		newHeader.s.Next.Next = entry->Next;
 		newHeader.s.Depth = old.s.Depth - 1;
 		newHeader.s.Sequence = old.s.Sequence + 1;
 
 		if (old.Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 		if (newHeader.Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 		if (ListHead->Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 	} while (InterlockedCompareExchange64((LONGLONG*)&ListHead->Alignment,
 	                                      (LONGLONG)newHeader.Alignment,
 	                                      (LONGLONG)old.Alignment) != (LONGLONG)old.Alignment);
@@ -163,15 +175,16 @@ WINPR_PSLIST_ENTRY InterlockedPopEntrySList(WINPR_PSLIST_HEADER ListHead)
 
 WINPR_PSLIST_ENTRY InterlockedFlushSList(WINPR_PSLIST_HEADER ListHead)
 {
-	WINPR_SLIST_HEADER old;
-	WINPR_SLIST_HEADER newHeader;
+	WINPR_SLIST_HEADER old = WINPR_C_ARRAY_INIT;
+	WINPR_SLIST_HEADER newHeader = WINPR_C_ARRAY_INIT;
 
+	WINPR_ASSERT(ListHead);
 	if (!QueryDepthSList(ListHead))
-		return NULL;
+		return nullptr;
 
 #ifdef _WIN64
-	newHeader.s.Alignment = 0;
-	newHeader.s.Region = 0;
+	newHeader).Alignment = 0;
+	newHeader).Region = 0;
 	newHeader.HeaderX64.HeaderType = 1;
 
 	while (1)
@@ -179,11 +192,10 @@ WINPR_PSLIST_ENTRY InterlockedFlushSList(WINPR_PSLIST_HEADER ListHead)
 		old = *ListHead;
 		newHeader.HeaderX64.Sequence = old.HeaderX64.Sequence + 1;
 
-		if (InterlockedCompareExchange64((LONGLONG*)ListHead, newHeader.s.Alignment,
-		                                 old.s.Alignment))
+		if (InterlockedCompareExchange64((LONGLONG*)ListHead, newHeader).Alignment, old).Alignment))
 		{
-			InterlockedCompareExchange64(&((LONGLONG*)ListHead)[1], newHeader.s.Region,
-			                             old.s.Region);
+			InterlockedCompareExchange64(&((LONGLONG*)ListHead)[1], newHeader).Region,
+										 old).Region);
 			break;
 		}
 	}
@@ -198,11 +210,11 @@ WINPR_PSLIST_ENTRY InterlockedFlushSList(WINPR_PSLIST_HEADER ListHead)
 		newHeader.s.Sequence = old.s.Sequence + 1;
 
 		if (old.Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 		if (newHeader.Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 		if (ListHead->Alignment > INT64_MAX)
-			return NULL;
+			return nullptr;
 	} while (InterlockedCompareExchange64((LONGLONG*)&ListHead->Alignment,
 	                                      (LONGLONG)newHeader.Alignment,
 	                                      (LONGLONG)old.Alignment) != (LONGLONG)old.Alignment);
@@ -213,6 +225,8 @@ WINPR_PSLIST_ENTRY InterlockedFlushSList(WINPR_PSLIST_HEADER ListHead)
 
 USHORT QueryDepthSList(WINPR_PSLIST_HEADER ListHead)
 {
+	WINPR_ASSERT(ListHead);
+
 #ifdef _WIN64
 	return ListHead->HeaderX64.Depth;
 #else
@@ -220,10 +234,17 @@ USHORT QueryDepthSList(WINPR_PSLIST_HEADER ListHead)
 #endif
 }
 
+#endif
+
 LONG InterlockedIncrement(LONG volatile* Addend)
 {
-#ifdef __GNUC__
+	WINPR_ASSERT(Addend);
+
+#if defined(__GNUC__) || defined(__clang__)
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_ATOMIC_SEQ_CST
 	return __sync_add_and_fetch(Addend, 1);
+	WINPR_PRAGMA_DIAG_POP
 #else
 	return 0;
 #endif
@@ -231,8 +252,13 @@ LONG InterlockedIncrement(LONG volatile* Addend)
 
 LONG InterlockedDecrement(LONG volatile* Addend)
 {
-#ifdef __GNUC__
+	WINPR_ASSERT(Addend);
+
+#if defined(__GNUC__) || defined(__clang__)
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_ATOMIC_SEQ_CST
 	return __sync_sub_and_fetch(Addend, 1);
+	WINPR_PRAGMA_DIAG_POP
 #else
 	return 0;
 #endif
@@ -240,8 +266,13 @@ LONG InterlockedDecrement(LONG volatile* Addend)
 
 LONG InterlockedExchange(LONG volatile* Target, LONG Value)
 {
-#ifdef __GNUC__
+	WINPR_ASSERT(Target);
+
+#if defined(__GNUC__) || defined(__clang__)
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_ATOMIC_SEQ_CST
 	return __sync_val_compare_and_swap(Target, *Target, Value);
+	WINPR_PRAGMA_DIAG_POP
 #else
 	return 0;
 #endif
@@ -249,8 +280,13 @@ LONG InterlockedExchange(LONG volatile* Target, LONG Value)
 
 LONG InterlockedExchangeAdd(LONG volatile* Addend, LONG Value)
 {
-#ifdef __GNUC__
+	WINPR_ASSERT(Addend);
+
+#if defined(__GNUC__) || defined(__clang__)
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_ATOMIC_SEQ_CST
 	return __sync_fetch_and_add(Addend, Value);
+	WINPR_PRAGMA_DIAG_POP
 #else
 	return 0;
 #endif
@@ -258,8 +294,13 @@ LONG InterlockedExchangeAdd(LONG volatile* Addend, LONG Value)
 
 LONG InterlockedCompareExchange(LONG volatile* Destination, LONG Exchange, LONG Comperand)
 {
-#ifdef __GNUC__
+	WINPR_ASSERT(Destination);
+
+#if defined(__GNUC__) || defined(__clang__)
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_ATOMIC_SEQ_CST
 	return __sync_val_compare_and_swap(Destination, Comperand, Exchange);
+	WINPR_PRAGMA_DIAG_POP
 #else
 	return 0;
 #endif
@@ -268,8 +309,13 @@ LONG InterlockedCompareExchange(LONG volatile* Destination, LONG Exchange, LONG 
 PVOID InterlockedCompareExchangePointer(PVOID volatile* Destination, PVOID Exchange,
                                         PVOID Comperand)
 {
-#ifdef __GNUC__
+	WINPR_ASSERT(Destination);
+
+#if defined(__GNUC__) || defined(__clang__)
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_ATOMIC_SEQ_CST
 	return __sync_val_compare_and_swap(Destination, Comperand, Exchange);
+	WINPR_PRAGMA_DIAG_POP
 #else
 	return 0;
 #endif
@@ -283,19 +329,20 @@ PVOID InterlockedCompareExchangePointer(PVOID volatile* Destination, PVOID Excha
 
 #elif defined(_WIN32) && defined(WINPR_INTERLOCKED_COMPARE_EXCHANGE64)
 
-static volatile HANDLE mutex = NULL;
+static volatile HANDLE mutex = nullptr;
 
 BOOL static_mutex_lock(volatile HANDLE* static_mutex)
 {
-	if (*static_mutex == NULL)
+	if (*static_mutex == nullptr)
 	{
 		HANDLE handle;
 
-		if (!(handle = CreateMutex(NULL, FALSE, NULL)))
+		if (!(handle = CreateMutex(nullptr, FALSE, nullptr)))
 			return FALSE;
 
-		if (InterlockedCompareExchangePointer((PVOID*)static_mutex, (PVOID)handle, NULL) != NULL)
-			CloseHandle(handle);
+		if (InterlockedCompareExchangePointer((PVOID*)static_mutex, (PVOID)handle, nullptr) !=
+		    nullptr)
+			(void)CloseHandle(handle);
 	}
 
 	return (WaitForSingleObject(*static_mutex, INFINITE) == WAIT_OBJECT_0);
@@ -313,9 +360,10 @@ LONGLONG InterlockedCompareExchange64(LONGLONG volatile* Destination, LONGLONG E
 		*Destination = Exchange;
 
 	if (locked)
-		ReleaseMutex(mutex);
+		(void)ReleaseMutex(mutex);
 	else
-		fprintf(stderr, "WARNING: InterlockedCompareExchange64 operation might have failed\n");
+		(void)fprintf(stderr,
+		              "WARNING: InterlockedCompareExchange64 operation might have failed\n");
 
 	return previousValue;
 }
@@ -349,8 +397,13 @@ LONGLONG InterlockedCompareExchange64(LONGLONG volatile* Destination, LONGLONG E
 LONGLONG InterlockedCompareExchange64(LONGLONG volatile* Destination, LONGLONG Exchange,
                                       LONGLONG Comperand)
 {
-#ifdef __GNUC__
+	WINPR_ASSERT(Destination);
+
+#if defined(__GNUC__) || defined(__clang__)
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_ATOMIC_SEQ_CST
 	return __sync_val_compare_and_swap(Destination, Comperand, Exchange);
+	WINPR_PRAGMA_DIAG_POP
 #else
 	return 0;
 #endif
@@ -358,6 +411,7 @@ LONGLONG InterlockedCompareExchange64(LONGLONG volatile* Destination, LONGLONG E
 
 #endif
 
+#if !defined(WITHOUT_WINPR_3x_DEPRECATED)
 /* Doubly-Linked List */
 
 /**
@@ -370,21 +424,25 @@ LONGLONG InterlockedCompareExchange64(LONGLONG volatile* Destination, LONGLONG E
 
 VOID InitializeListHead(WINPR_PLIST_ENTRY ListHead)
 {
+	WINPR_ASSERT(ListHead);
 	ListHead->Flink = ListHead->Blink = ListHead;
 }
 
 BOOL IsListEmpty(const WINPR_LIST_ENTRY* ListHead)
 {
+	WINPR_ASSERT(ListHead);
 	return (BOOL)(ListHead->Flink == ListHead);
 }
 
 BOOL RemoveEntryList(WINPR_PLIST_ENTRY Entry)
 {
-	WINPR_PLIST_ENTRY OldFlink;
-	WINPR_PLIST_ENTRY OldBlink;
+	WINPR_ASSERT(Entry);
+	WINPR_PLIST_ENTRY OldFlink = Entry->Flink;
+	WINPR_ASSERT(OldFlink);
 
-	OldFlink = Entry->Flink;
-	OldBlink = Entry->Blink;
+	WINPR_PLIST_ENTRY OldBlink = Entry->Blink;
+	WINPR_ASSERT(OldBlink);
+
 	OldFlink->Blink = OldBlink;
 	OldBlink->Flink = OldFlink;
 
@@ -393,9 +451,12 @@ BOOL RemoveEntryList(WINPR_PLIST_ENTRY Entry)
 
 VOID InsertHeadList(WINPR_PLIST_ENTRY ListHead, WINPR_PLIST_ENTRY Entry)
 {
-	WINPR_PLIST_ENTRY OldFlink;
+	WINPR_ASSERT(ListHead);
+	WINPR_ASSERT(Entry);
 
-	OldFlink = ListHead->Flink;
+	WINPR_PLIST_ENTRY OldFlink = ListHead->Flink;
+	WINPR_ASSERT(OldFlink);
+
 	Entry->Flink = OldFlink;
 	Entry->Blink = ListHead;
 	OldFlink->Blink = Entry;
@@ -404,11 +465,14 @@ VOID InsertHeadList(WINPR_PLIST_ENTRY ListHead, WINPR_PLIST_ENTRY Entry)
 
 WINPR_PLIST_ENTRY RemoveHeadList(WINPR_PLIST_ENTRY ListHead)
 {
-	WINPR_PLIST_ENTRY Flink;
-	WINPR_PLIST_ENTRY Entry;
+	WINPR_ASSERT(ListHead);
 
-	Entry = ListHead->Flink;
-	Flink = Entry->Flink;
+	WINPR_PLIST_ENTRY Entry = ListHead->Flink;
+	WINPR_ASSERT(Entry);
+
+	WINPR_PLIST_ENTRY Flink = Entry->Flink;
+	WINPR_ASSERT(Flink);
+
 	ListHead->Flink = Flink;
 	Flink->Blink = ListHead;
 
@@ -417,9 +481,12 @@ WINPR_PLIST_ENTRY RemoveHeadList(WINPR_PLIST_ENTRY ListHead)
 
 VOID InsertTailList(WINPR_PLIST_ENTRY ListHead, WINPR_PLIST_ENTRY Entry)
 {
-	WINPR_PLIST_ENTRY OldBlink;
+	WINPR_ASSERT(ListHead);
+	WINPR_ASSERT(Entry);
 
-	OldBlink = ListHead->Blink;
+	WINPR_PLIST_ENTRY OldBlink = ListHead->Blink;
+	WINPR_ASSERT(OldBlink);
+
 	Entry->Flink = ListHead;
 	Entry->Blink = OldBlink;
 	OldBlink->Flink = Entry;
@@ -428,11 +495,14 @@ VOID InsertTailList(WINPR_PLIST_ENTRY ListHead, WINPR_PLIST_ENTRY Entry)
 
 WINPR_PLIST_ENTRY RemoveTailList(WINPR_PLIST_ENTRY ListHead)
 {
-	WINPR_PLIST_ENTRY Blink;
-	WINPR_PLIST_ENTRY Entry;
+	WINPR_ASSERT(ListHead);
 
-	Entry = ListHead->Blink;
-	Blink = Entry->Blink;
+	WINPR_PLIST_ENTRY Entry = ListHead->Blink;
+	WINPR_ASSERT(Entry);
+
+	WINPR_PLIST_ENTRY Blink = Entry->Blink;
+	WINPR_ASSERT(Blink);
+
 	ListHead->Blink = Blink;
 	Blink->Flink = ListHead;
 
@@ -441,6 +511,9 @@ WINPR_PLIST_ENTRY RemoveTailList(WINPR_PLIST_ENTRY ListHead)
 
 VOID AppendTailList(WINPR_PLIST_ENTRY ListHead, WINPR_PLIST_ENTRY ListToAppend)
 {
+	WINPR_ASSERT(ListHead);
+	WINPR_ASSERT(ListToAppend);
+
 	WINPR_PLIST_ENTRY ListEnd = ListHead->Blink;
 
 	ListHead->Blink->Flink = ListToAppend;
@@ -451,18 +524,21 @@ VOID AppendTailList(WINPR_PLIST_ENTRY ListHead, WINPR_PLIST_ENTRY ListToAppend)
 
 VOID PushEntryList(WINPR_PSINGLE_LIST_ENTRY ListHead, WINPR_PSINGLE_LIST_ENTRY Entry)
 {
+	WINPR_ASSERT(ListHead);
+	WINPR_ASSERT(Entry);
+
 	Entry->Next = ListHead->Next;
 	ListHead->Next = Entry;
 }
 
 WINPR_PSINGLE_LIST_ENTRY PopEntryList(WINPR_PSINGLE_LIST_ENTRY ListHead)
 {
-	WINPR_PSINGLE_LIST_ENTRY FirstEntry;
+	WINPR_ASSERT(ListHead);
+	WINPR_PSINGLE_LIST_ENTRY FirstEntry = ListHead->Next;
 
-	FirstEntry = ListHead->Next;
-
-	if (FirstEntry != NULL)
+	if (FirstEntry != nullptr)
 		ListHead->Next = FirstEntry->Next;
 
 	return FirstEntry;
 }
+#endif

@@ -26,12 +26,15 @@
 
 #include <winpr/collections.h>
 
+#ifdef WITH_PROGRESS_BAR
+#include <shobjidl.h>
+#endif
+
 #include <freerdp/api.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
 #include <freerdp/gdi/dc.h>
 #include <freerdp/gdi/region.h>
-#include <freerdp/cache/cache.h>
 #include <freerdp/codec/color.h>
 
 #include <freerdp/client/rail.h>
@@ -39,8 +42,6 @@
 #include <freerdp/codec/rfx.h>
 #include <freerdp/codec/nsc.h>
 #include <freerdp/client/file.h>
-
-typedef struct wf_context wfContext;
 
 #include "wf_channels.h"
 #include "wf_floatbar.h"
@@ -54,28 +55,26 @@ extern "C"
 
 // System menu constants
 #define SYSCOMMAND_ID_SMARTSIZING 1000
+#define SYSCOMMAND_ID_REQUEST_CONTROL 1001
 
-	struct wf_bitmap
+	typedef struct
 	{
 		rdpBitmap _bitmap;
 		HDC hdc;
 		HBITMAP bitmap;
 		HBITMAP org_bitmap;
 		BYTE* pdata;
-	};
-	typedef struct wf_bitmap wfBitmap;
+	} wfBitmap;
 
-	struct wf_pointer
+	typedef struct
 	{
 		rdpPointer pointer;
 		HCURSOR cursor;
-	};
-	typedef struct wf_pointer wfPointer;
+	} wfPointer;
 
 	struct wf_context
 	{
-		rdpContext context;
-		DEFINE_RDP_CLIENT_COMMON();
+		rdpClientContext common;
 
 		int offset_x;
 		int offset_y;
@@ -97,7 +96,11 @@ extern "C"
 		LPCTSTR wndClassName;
 		HCURSOR hDefaultCursor;
 
+		UINT systemMenuInsertPosition;
+
 		HWND hwnd;
+		BOOL is_shown;
+		ITaskbarList3* taskBarList;
 		POINT diff;
 
 		wfBitmap* primary;
@@ -134,6 +137,10 @@ extern "C"
 		RailClientContext* rail;
 		wHashTable* railWindows;
 		BOOL isConsole;
+
+		DispClientContext* disp;
+		UINT64 lastSentDate;
+		BOOL wasMaximized;
 	};
 
 	/**

@@ -27,47 +27,16 @@
 #include <winpr/wlog.h>
 #include <winpr/collections.h>
 
+#include <freerdp/client/channels.h>
 #include <freerdp/client/rdpgfx.h>
 #include <freerdp/channels/log.h>
 #include <freerdp/codec/zgfx.h>
+#include <freerdp/cache/persistent.h>
 #include <freerdp/freerdp.h>
 
-struct _RDPGFX_CHANNEL_CALLBACK
+typedef struct
 {
-	IWTSVirtualChannelCallback iface;
-
-	IWTSPlugin* plugin;
-	IWTSVirtualChannelManager* channel_mgr;
-	IWTSVirtualChannel* channel;
-};
-typedef struct _RDPGFX_CHANNEL_CALLBACK RDPGFX_CHANNEL_CALLBACK;
-
-struct _RDPGFX_LISTENER_CALLBACK
-{
-	IWTSListenerCallback iface;
-
-	IWTSPlugin* plugin;
-	IWTSVirtualChannelManager* channel_mgr;
-	RDPGFX_CHANNEL_CALLBACK* channel_callback;
-};
-typedef struct _RDPGFX_LISTENER_CALLBACK RDPGFX_LISTENER_CALLBACK;
-
-struct _RDPGFX_PLUGIN
-{
-	IWTSPlugin iface;
-
-	IWTSListener* listener;
-	RDPGFX_LISTENER_CALLBACK* listener_callback;
-
-	rdpSettings* settings;
-
-	BOOL ThinClient;
-	BOOL SmallCache;
-	BOOL Progressive;
-	BOOL ProgressiveV2;
-	BOOL H264;
-	BOOL AVC444;
-	UINT32 capsFilter;
+	GENERIC_DYNVC_PLUGIN base;
 
 	ZGFX_CONTEXT* zgfx;
 	UINT32 UnacknowledgedFrames;
@@ -80,13 +49,15 @@ struct _RDPGFX_PLUGIN
 
 	UINT16 MaxCacheSlots;
 	void* CacheSlots[25600];
+	rdpPersistentCache* persistent;
+
 	rdpContext* rdpcontext;
 
-	wLog* log;
 	RDPGFX_CAPSET ConnectionCaps;
-	BOOL SendQoeAck;
-	BOOL initialized;
-};
-typedef struct _RDPGFX_PLUGIN RDPGFX_PLUGIN;
+	RdpgfxClientContext* context;
+	BOOL allowedCodecs[RDPGFX_CODECID_MAX + 1];
+} RDPGFX_PLUGIN;
+
+FREERDP_LOCAL UINT logSurfaceCommand(RDPGFX_PLUGIN* gfx, const RDPGFX_SURFACE_COMMAND* cmd);
 
 #endif /* FREERDP_CHANNEL_RDPGFX_CLIENT_MAIN_H */

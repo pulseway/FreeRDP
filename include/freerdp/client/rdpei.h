@@ -24,55 +24,87 @@
 
 #include <freerdp/channels/rdpei.h>
 
-/**
- * Client Interface
- */
-
-typedef struct _rdpei_client_context RdpeiClientContext;
-
-typedef UINT32 (*pcRdpeiGetVersion)(RdpeiClientContext* context);
-typedef UINT32 (*pcRdpeiGetFeatures)(RdpeiClientContext* context);
-typedef UINT (*pcRdpeiAddContact)(RdpeiClientContext* context,
-                                  const RDPINPUT_CONTACT_DATA* contact);
-
-typedef UINT (*pcRdpeiTouchBegin)(RdpeiClientContext* context, INT32 externalId, INT32 x, INT32 y,
-                                  INT32* contactId);
-typedef UINT (*pcRdpeiTouchUpdate)(RdpeiClientContext* context, INT32 externalId, INT32 x, INT32 y,
-                                   INT32* contactId);
-typedef UINT (*pcRdpeiTouchEnd)(RdpeiClientContext* context, INT32 externalId, INT32 x, INT32 y,
-                                INT32* contactId);
-
-typedef UINT (*pcRdpeiAddPen)(RdpeiClientContext* context, INT32 externalId,
-                              const RDPINPUT_PEN_CONTACT* contact);
-
-typedef UINT (*pcRdpeiPen)(RdpeiClientContext* context, INT32 externalId, UINT32 fieldFlags,
-                           INT32 x, INT32 y, ...);
-
-typedef UINT (*pcRdpeiSuspendTouch)(RdpeiClientContext* context);
-typedef UINT (*pcRdpeiResumeTouch)(RdpeiClientContext* context);
-
-struct _rdpei_client_context
+#ifdef __cplusplus
+extern "C"
 {
-	void* handle;
-	void* custom;
+#endif
 
-	pcRdpeiGetVersion GetVersion;
-	pcRdpeiGetFeatures GetFeatures;
+	/**
+	 * Client Interface
+	 */
 
-	pcRdpeiAddContact AddContact;
+	typedef struct s_rdpei_client_context RdpeiClientContext;
 
-	pcRdpeiTouchBegin TouchBegin;
-	pcRdpeiTouchUpdate TouchUpdate;
-	pcRdpeiTouchEnd TouchEnd;
+	typedef UINT32 (*pcRdpeiGetVersion)(RdpeiClientContext* context);
+	typedef UINT32 (*pcRdpeiGetFeatures)(RdpeiClientContext* context);
 
-	pcRdpeiAddPen AddPen;
+	typedef UINT (*pcRdpeiAddContact)(RdpeiClientContext* context,
+	                                  const RDPINPUT_CONTACT_DATA* contact);
 
-	pcRdpeiPen PenBegin;
-	pcRdpeiPen PenUpdate;
-	pcRdpeiPen PenEnd;
+	typedef UINT (*pcRdpeiTouchEvent)(RdpeiClientContext* context, INT32 externalId, INT32 x,
+	                                  INT32 y, INT32* contactId);
+	typedef UINT (*pcRdpeiTouchRawEvent)(RdpeiClientContext* context, INT32 externalId, INT32 x,
+	                                     INT32 y, INT32* contactId, UINT32 contactFlags,
+	                                     UINT32 fieldFlags, ...);
+	typedef UINT (*pcRdpeiTouchRawEventVA)(RdpeiClientContext* context, INT32 externalId, INT32 x,
+	                                       INT32 y, INT32* contactId, UINT32 contactFlags,
+	                                       UINT32 fieldFlags, va_list args);
 
-	pcRdpeiSuspendTouch SuspendTouch;
-	pcRdpeiResumeTouch ResumeTouch;
-};
+	typedef UINT (*pcRdpeiAddPen)(RdpeiClientContext* context, INT32 externalId,
+	                              const RDPINPUT_PEN_CONTACT* contact);
+
+	typedef UINT (*pcRdpeiPen)(RdpeiClientContext* context, INT32 externalId, UINT32 fieldFlags,
+	                           INT32 x, INT32 y, ...);
+
+	typedef UINT (*pcRdpeiPenRawEvent)(RdpeiClientContext* context, INT32 externalId,
+	                                   UINT32 contactFlags, UINT32 fieldFlags, INT32 x, INT32 y,
+	                                   ...);
+	typedef UINT (*pcRdpeiPenRawEventVA)(RdpeiClientContext* context, INT32 externalId,
+	                                     UINT32 contactFlags, UINT32 fieldFlags, INT32 x, INT32 y,
+	                                     va_list args);
+
+	typedef UINT (*pcRdpeiSuspendTouch)(RdpeiClientContext* context);
+	typedef UINT (*pcRdpeiResumeTouch)(RdpeiClientContext* context);
+
+	struct s_rdpei_client_context
+	{
+		void* handle;
+		void* custom;
+
+		WINPR_ATTR_NODISCARD pcRdpeiGetVersion GetVersion;
+		WINPR_ATTR_NODISCARD pcRdpeiGetFeatures GetFeatures;
+
+		WINPR_ATTR_NODISCARD pcRdpeiAddContact AddContact;
+
+		WINPR_ATTR_NODISCARD pcRdpeiTouchEvent TouchBegin;
+		WINPR_ATTR_NODISCARD pcRdpeiTouchEvent TouchUpdate;
+		WINPR_ATTR_NODISCARD pcRdpeiTouchEvent TouchEnd;
+
+		WINPR_ATTR_NODISCARD pcRdpeiAddPen AddPen;
+
+		WINPR_ATTR_NODISCARD pcRdpeiPen PenBegin;
+		WINPR_ATTR_NODISCARD pcRdpeiPen PenUpdate;
+		WINPR_ATTR_NODISCARD pcRdpeiPen PenEnd;
+		WINPR_ATTR_NODISCARD pcRdpeiPen PenHoverBegin;
+		WINPR_ATTR_NODISCARD pcRdpeiPen PenHoverUpdate;
+		WINPR_ATTR_NODISCARD pcRdpeiPen PenHoverCancel;
+
+		WINPR_ATTR_NODISCARD pcRdpeiSuspendTouch SuspendTouch;
+		WINPR_ATTR_NODISCARD pcRdpeiResumeTouch ResumeTouch;
+
+		WINPR_ATTR_NODISCARD pcRdpeiTouchEvent TouchCancel;
+		WINPR_ATTR_NODISCARD pcRdpeiTouchRawEvent TouchRawEvent;
+		WINPR_ATTR_NODISCARD pcRdpeiTouchRawEventVA TouchRawEventVA;
+
+		WINPR_ATTR_NODISCARD pcRdpeiPen PenCancel;
+		WINPR_ATTR_NODISCARD pcRdpeiPenRawEvent PenRawEvent;
+		WINPR_ATTR_NODISCARD pcRdpeiPenRawEventVA PenRawEventVA;
+
+		UINT32 clientFeaturesMask;
+	};
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_CHANNEL_RDPEI_CLIENT_RDPEI_H */

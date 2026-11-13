@@ -32,47 +32,106 @@
 #define MAX(x, y) (((x) > (y)) ? (x) : (y))
 #endif
 
-struct _PALETTE_ENTRY
+#ifdef __cplusplus
+extern "C"
 {
-	BYTE red;
-	BYTE green;
-	BYTE blue;
-};
-typedef struct _PALETTE_ENTRY PALETTE_ENTRY;
+#endif
 
-struct rdp_palette
-{
-	UINT32 count;
-	PALETTE_ENTRY entries[256];
-};
-typedef struct rdp_palette rdpPalette;
+	typedef enum
+	{
+		CONNECTION_STATE_INITIAL,
+		CONNECTION_STATE_NEGO,
+		CONNECTION_STATE_NLA,
+		CONNECTION_STATE_AAD,
+		CONNECTION_STATE_MCS_CREATE_REQUEST,
+		CONNECTION_STATE_MCS_CREATE_RESPONSE,
+		CONNECTION_STATE_MCS_ERECT_DOMAIN,
+		CONNECTION_STATE_MCS_ATTACH_USER,
+		CONNECTION_STATE_MCS_ATTACH_USER_CONFIRM,
+		CONNECTION_STATE_MCS_CHANNEL_JOIN_REQUEST,
+		CONNECTION_STATE_MCS_CHANNEL_JOIN_RESPONSE,
+		CONNECTION_STATE_RDP_SECURITY_COMMENCEMENT,
+		CONNECTION_STATE_SECURE_SETTINGS_EXCHANGE,
+		CONNECTION_STATE_CONNECT_TIME_AUTO_DETECT_REQUEST,
+		CONNECTION_STATE_CONNECT_TIME_AUTO_DETECT_RESPONSE,
+		CONNECTION_STATE_LICENSING,
+		CONNECTION_STATE_MULTITRANSPORT_BOOTSTRAPPING_REQUEST,
+		CONNECTION_STATE_MULTITRANSPORT_BOOTSTRAPPING_RESPONSE,
+		CONNECTION_STATE_CAPABILITIES_EXCHANGE_DEMAND_ACTIVE,
+		CONNECTION_STATE_CAPABILITIES_EXCHANGE_MONITOR_LAYOUT,
+		CONNECTION_STATE_CAPABILITIES_EXCHANGE_CONFIRM_ACTIVE,
+		CONNECTION_STATE_FINALIZATION_SYNC,
+		CONNECTION_STATE_FINALIZATION_COOPERATE,
+		CONNECTION_STATE_FINALIZATION_REQUEST_CONTROL,
+		CONNECTION_STATE_FINALIZATION_PERSISTENT_KEY_LIST,
+		CONNECTION_STATE_FINALIZATION_FONT_LIST,
+		CONNECTION_STATE_FINALIZATION_CLIENT_SYNC,
+		CONNECTION_STATE_FINALIZATION_CLIENT_COOPERATE,
+		CONNECTION_STATE_FINALIZATION_CLIENT_GRANTED_CONTROL,
+		CONNECTION_STATE_FINALIZATION_CLIENT_FONT_MAP,
+		CONNECTION_STATE_ACTIVE
+	} CONNECTION_STATE;
 
-#include <freerdp/settings.h>
+	typedef struct rdp_channels rdpChannels;
+	typedef struct rdp_freerdp freerdp;
+	typedef struct rdp_context rdpContext;
+	typedef struct rdp_freerdp_peer freerdp_peer;
+	typedef struct rdp_transport rdpTransport; /* Opaque */
 
-struct _RDP_PLUGIN_DATA
-{
-	DWORD size;
-	void* data[4];
-};
-typedef struct _RDP_PLUGIN_DATA RDP_PLUGIN_DATA;
+	typedef struct
+	{
+		BYTE red;
+		BYTE green;
+		BYTE blue;
+	} PALETTE_ENTRY;
 
-struct _RDP_RECT
-{
-	INT16 x;
-	INT16 y;
-	INT16 width;
-	INT16 height;
-};
-typedef struct _RDP_RECT RDP_RECT;
+	typedef struct
+	{
+		UINT32 count;
+		PALETTE_ENTRY entries[256];
+	} rdpPalette;
 
-struct _RECTANGLE_16
-{
-	UINT16 left;
-	UINT16 top;
-	UINT16 right;
-	UINT16 bottom;
-};
-typedef struct _RECTANGLE_16 RECTANGLE_16;
+	typedef struct
+	{
+		DWORD size;
+		void* data[4];
+	} RDP_PLUGIN_DATA;
+
+	typedef struct
+	{
+		INT16 x;
+		INT16 y;
+		INT16 width;
+		INT16 height;
+	} RDP_RECT;
+
+	typedef struct
+	{
+		UINT16 left;
+		UINT16 top;
+		UINT16 right;
+		UINT16 bottom;
+	} RECTANGLE_16;
+
+	typedef struct
+	{
+		UINT32 left;
+		UINT32 top;
+		UINT32 width;
+		UINT32 height;
+	} RECTANGLE_32;
+
+	/** @brief type of RDP transport */
+	typedef enum
+	{
+		RDP_TRANSPORT_TCP = 0,
+		RDP_TRANSPORT_UDP_R,
+		RDP_TRANSPORT_UDP_L
+	} RDP_TRANSPORT_TYPE;
+
+#ifdef __cplusplus
+}
+#endif
 
 /* Plugin events */
 

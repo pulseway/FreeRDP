@@ -20,21 +20,20 @@
 #ifndef FREERDP_CLIENT_WAYLAND_FREERDP_H
 #define FREERDP_CLIENT_WAYLAND_FREERDP_H
 
-#include <freerdp/client/encomsp.h>
 #include <freerdp/client/rdpei.h>
 #include <freerdp/gdi/gfx.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/log.h>
+#include <freerdp/locale/keyboard.h>
 #include <winpr/wtypes.h>
 #include <uwac/uwac.h>
 
-typedef struct wlf_context wlfContext;
 typedef struct wlf_clipboard wfClipboard;
-typedef struct _wlfDispContext wlfDispContext;
+typedef struct s_wlfDispContext wlfDispContext;
 
-struct wlf_context
+typedef struct
 {
-	rdpContext context;
+	rdpClientContext common;
 
 	UwacDisplay* display;
 	HANDLE displayHandle;
@@ -46,15 +45,13 @@ struct wlf_context
 	BOOL focusing;
 
 	/* Channels */
-	RdpeiClientContext* rdpei;
-	RdpgfxClientContext* gfx;
-	EncomspClientContext* encomsp;
 	wfClipboard* clipboard;
 	wlfDispContext* disp;
 	wLog* log;
 	CRITICAL_SECTION critical;
 	wArrayList* events;
-};
+	FREERDP_REMAP_TABLE* remap_table;
+} wlfContext;
 
 BOOL wlf_scale_coordinates(rdpContext* context, UINT32* px, UINT32* py, BOOL fromLocalToRDP);
 BOOL wlf_copy_image(const void* src, size_t srcStride, size_t srcWidth, size_t srcHeight, void* dst,

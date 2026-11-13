@@ -17,23 +17,15 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include "wlog.h"
 #include <winpr/image.h>
 
-#include "wlog/ImageMessage.h"
+#include "ImageMessage.h"
 
-BOOL WLog_ImageMessage_Write(char* filename, void* data, int width, int height, int bpp)
+BOOL WLog_ImageMessage_Write(char* filename, void* data, size_t width, size_t height, size_t bpp)
 {
-	int status;
-
-	status = winpr_bitmap_write(filename, data, width, height, bpp);
-
-	if (status < 0)
-		return FALSE;
-
-	return TRUE;
+	const int status = winpr_bitmap_write(filename, data, width, height, bpp);
+	return (status >= 0);
 }

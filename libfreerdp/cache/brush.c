@@ -17,30 +17,27 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <winpr/crt.h>
+#include <winpr/assert.h>
 
 #include <freerdp/log.h>
 #include <freerdp/update.h>
 #include <freerdp/freerdp.h>
 #include <winpr/stream.h>
 
-#include <freerdp/cache/brush.h>
-
 #include "brush.h"
+#include "cache.h"
 
 #define TAG FREERDP_TAG("cache.brush")
 
-struct _BRUSH_ENTRY
+typedef struct
 {
 	UINT32 bpp;
 	void* entry;
-};
-typedef struct _BRUSH_ENTRY BRUSH_ENTRY;
+} BRUSH_ENTRY;
 
 struct rdp_brush_cache
 {
@@ -56,18 +53,23 @@ struct rdp_brush_cache
 	BRUSH_ENTRY* monoEntries; /* 19 */
 	UINT32 paddingB[32 - 20]; /* 20 */
 
-	/* internal */
-
-	rdpSettings* settings;
+	rdpContext* context;
 };
 
 static BOOL update_gdi_patblt(rdpContext* context, PATBLT_ORDER* patblt)
 {
-	BYTE style;
 	BOOL ret = TRUE;
-	rdpBrush* brush = &patblt->brush;
+
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(patblt);
+
 	const rdpCache* cache = context->cache;
-	style = brush->style;
+	WINPR_ASSERT(cache);
+
+	rdpBrush* brush = &patblt->brush;
+	WINPR_ASSERT(brush->style <= UINT8_MAX);
+	const BYTE style = (BYTE)brush->style;
+	BYTE* data = brush->data;
 
 	if (brush->style & CACHED_BRUSH)
 	{
@@ -75,24 +77,37 @@ static BOOL update_gdi_patblt(rdpContext* context, PATBLT_ORDER* patblt)
 		brush->style = 0x03;
 	}
 
+	WINPR_ASSERT(cache->brush);
 	IFCALLRET(cache->brush->PatBlt, ret, context, patblt);
 	brush->style = style;
+	brush->data = data;
 	return ret;
 }
 
 static BOOL update_gdi_polygon_sc(rdpContext* context, const POLYGON_SC_ORDER* polygon_sc)
 {
-	rdpCache* cache = context->cache;
+	rdpCache* cache = nullptr;
+	WINPR_ASSERT(context);
+	cache = context->cache;
+	WINPR_ASSERT(cache);
+	WINPR_ASSERT(cache->brush);
 	return IFCALLRESULT(TRUE, cache->brush->PolygonSC, context, polygon_sc);
 }
 
 static BOOL update_gdi_polygon_cb(rdpContext* context, POLYGON_CB_ORDER* polygon_cb)
 {
-	BYTE style;
-	rdpBrush* brush = &polygon_cb->brush;
-	rdpCache* cache = context->cache;
 	BOOL ret = TRUE;
-	style = brush->style;
+
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(polygon_cb);
+
+	rdpCache* cache = context->cache;
+	WINPR_ASSERT(cache);
+
+	rdpBrush* brush = &polygon_cb->brush;
+	WINPR_ASSERT(brush->style <= UINT8_MAX);
+	const BYTE style = (UINT8)brush->style;
+	BYTE* data = brush->data;
 
 	if (brush->style & CACHED_BRUSH)
 	{
@@ -100,16 +115,25 @@ static BOOL update_gdi_polygon_cb(rdpContext* context, POLYGON_CB_ORDER* polygon
 		brush->style = 0x03;
 	}
 
+	WINPR_ASSERT(cache->brush);
 	IFCALLRET(cache->brush->PolygonCB, ret, context, polygon_cb);
 	brush->style = style;
+	brush->data = data;
 	return ret;
 }
 
 static BOOL update_gdi_cache_brush(rdpContext* context, const CACHE_BRUSH_ORDER* cacheBrush)
 {
-	UINT32 length;
-	void* data = NULL;
-	rdpCache* cache = context->cache;
+	UINT32 length = 0;
+	void* data = nullptr;
+	rdpCache* cache = nullptr;
+
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(cacheBrush);
+
+	cache = context->cache;
+	WINPR_ASSERT(cache);
+
 	length = cacheBrush->bpp * 64 / 8;
 	data = malloc(length);
 
@@ -123,20 +147,20 @@ static BOOL update_gdi_cache_brush(rdpContext* context, const CACHE_BRUSH_ORDER*
 
 void* brush_cache_get(rdpBrushCache* brushCache, UINT32 index, UINT32* bpp)
 {
-	void* entry;
+	void* entry = nullptr;
 
 	if (!brushCache)
-		return NULL;
+		return nullptr;
 
 	if (!bpp)
-		return NULL;
+		return nullptr;
 
 	if (*bpp == 1)
 	{
 		if (index >= brushCache->maxMonoEntries)
 		{
 			WLog_ERR(TAG, "invalid brush (%" PRIu32 " bpp) index: 0x%08" PRIX32 "", *bpp, index);
-			return NULL;
+			return nullptr;
 		}
 
 		*bpp = brushCache->monoEntries[index].bpp;
@@ -147,17 +171,17 @@ void* brush_cache_get(rdpBrushCache* brushCache, UINT32 index, UINT32* bpp)
 		if (index >= brushCache->maxEntries)
 		{
 			WLog_ERR(TAG, "invalid brush (%" PRIu32 " bpp) index: 0x%08" PRIX32 "", *bpp, index);
-			return NULL;
+			return nullptr;
 		}
 
 		*bpp = brushCache->entries[index].bpp;
 		entry = brushCache->entries[index].entry;
 	}
 
-	if (entry == NULL)
+	if (entry == nullptr)
 	{
 		WLog_ERR(TAG, "invalid brush (%" PRIu32 " bpp) at index: 0x%08" PRIX32 "", *bpp, index);
-		return NULL;
+		return nullptr;
 	}
 
 	return entry;
@@ -165,6 +189,8 @@ void* brush_cache_get(rdpBrushCache* brushCache, UINT32 index, UINT32* bpp)
 
 void brush_cache_put(rdpBrushCache* brushCache, UINT32 index, void* entry, UINT32 bpp)
 {
+	WINPR_ASSERT(brushCache);
+
 	if (bpp == 1)
 	{
 		if (index >= brushCache->maxMonoEntries)
@@ -174,6 +200,7 @@ void brush_cache_put(rdpBrushCache* brushCache, UINT32 index, void* entry, UINT3
 			return;
 		}
 
+		WINPR_ASSERT(brushCache->monoEntries);
 		free(brushCache->monoEntries[index].entry);
 		brushCache->monoEntries[index].bpp = bpp;
 		brushCache->monoEntries[index].entry = entry;
@@ -187,6 +214,7 @@ void brush_cache_put(rdpBrushCache* brushCache, UINT32 index, void* entry, UINT3
 			return;
 		}
 
+		WINPR_ASSERT(brushCache->entries);
 		free(brushCache->entries[index].entry);
 		brushCache->entries[index].bpp = bpp;
 		brushCache->entries[index].entry = entry;
@@ -195,54 +223,67 @@ void brush_cache_put(rdpBrushCache* brushCache, UINT32 index, void* entry, UINT3
 
 void brush_cache_register_callbacks(rdpUpdate* update)
 {
-	rdpCache* cache = update->context->cache;
-	cache->brush->PatBlt = update->primary->PatBlt;
-	cache->brush->PolygonSC = update->primary->PolygonSC;
-	cache->brush->PolygonCB = update->primary->PolygonCB;
-	update->primary->PatBlt = update_gdi_patblt;
-	update->primary->PolygonSC = update_gdi_polygon_sc;
-	update->primary->PolygonCB = update_gdi_polygon_cb;
-	update->secondary->CacheBrush = update_gdi_cache_brush;
+	WINPR_ASSERT(update);
+	WINPR_ASSERT(update->context);
+	WINPR_ASSERT(update->primary);
+	WINPR_ASSERT(update->secondary);
+
+	if (!freerdp_settings_get_bool(update->context->settings, FreeRDP_DeactivateClientDecoding))
+	{
+		rdpCache* cache = update->context->cache;
+		WINPR_ASSERT(cache);
+		WINPR_ASSERT(cache->brush);
+
+		cache->brush->PatBlt = update->primary->PatBlt;
+		cache->brush->PolygonSC = update->primary->PolygonSC;
+		cache->brush->PolygonCB = update->primary->PolygonCB;
+		update->primary->PatBlt = update_gdi_patblt;
+		update->primary->PolygonSC = update_gdi_polygon_sc;
+		update->primary->PolygonCB = update_gdi_polygon_cb;
+		update->secondary->CacheBrush = update_gdi_cache_brush;
+	}
 }
 
-rdpBrushCache* brush_cache_new(rdpSettings* settings)
+rdpBrushCache* brush_cache_new(rdpContext* context)
 {
-	rdpBrushCache* brushCache;
+	rdpBrushCache* brushCache = nullptr;
+
+	WINPR_ASSERT(context);
+
 	brushCache = (rdpBrushCache*)calloc(1, sizeof(rdpBrushCache));
 
 	if (!brushCache)
-		return NULL;
+		return nullptr;
 
-	brushCache->settings = settings;
+	brushCache->context = context;
 	brushCache->maxEntries = 64;
 	brushCache->maxMonoEntries = 64;
 	brushCache->entries = (BRUSH_ENTRY*)calloc(brushCache->maxEntries, sizeof(BRUSH_ENTRY));
 
 	if (!brushCache->entries)
-		goto error_entries;
+		goto fail;
 
 	brushCache->monoEntries = (BRUSH_ENTRY*)calloc(brushCache->maxMonoEntries, sizeof(BRUSH_ENTRY));
 
 	if (!brushCache->monoEntries)
-		goto error_mono;
+		goto fail;
 
 	return brushCache;
-error_mono:
-	free(brushCache->entries);
-error_entries:
-	free(brushCache);
-	return NULL;
+fail:
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_MISMATCHED_DEALLOC
+	brush_cache_free(brushCache);
+	WINPR_PRAGMA_DIAG_POP
+	return nullptr;
 }
 
 void brush_cache_free(rdpBrushCache* brushCache)
 {
-	int i;
-
 	if (brushCache)
 	{
 		if (brushCache->entries)
 		{
-			for (i = 0; i < (int)brushCache->maxEntries; i++)
+			for (size_t i = 0; i < brushCache->maxEntries; i++)
 				free(brushCache->entries[i].entry);
 
 			free(brushCache->entries);
@@ -250,7 +291,7 @@ void brush_cache_free(rdpBrushCache* brushCache)
 
 		if (brushCache->monoEntries)
 		{
-			for (i = 0; i < (int)brushCache->maxMonoEntries; i++)
+			for (size_t i = 0; i < brushCache->maxMonoEntries; i++)
 				free(brushCache->monoEntries[i].entry);
 
 			free(brushCache->monoEntries);
@@ -262,12 +303,17 @@ void brush_cache_free(rdpBrushCache* brushCache)
 
 void free_cache_brush_order(rdpContext* context, CACHE_BRUSH_ORDER* order)
 {
+	WINPR_UNUSED(context);
 	free(order);
 }
 
 CACHE_BRUSH_ORDER* copy_cache_brush_order(rdpContext* context, const CACHE_BRUSH_ORDER* order)
 {
-	CACHE_BRUSH_ORDER* dst = calloc(1, sizeof(CACHE_BRUSH_ORDER));
+	CACHE_BRUSH_ORDER* dst = nullptr;
+
+	WINPR_ASSERT(context);
+
+	dst = calloc(1, sizeof(CACHE_BRUSH_ORDER));
 
 	if (!dst || !order)
 		goto fail;
@@ -276,5 +322,5 @@ CACHE_BRUSH_ORDER* copy_cache_brush_order(rdpContext* context, const CACHE_BRUSH
 	return dst;
 fail:
 	free_cache_brush_order(context, dst);
-	return NULL;
+	return nullptr;
 }

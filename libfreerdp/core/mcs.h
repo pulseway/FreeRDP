@@ -31,9 +31,7 @@ typedef struct rdp_mcs rdpMcs;
 #include <freerdp/types.h>
 
 #include <winpr/stream.h>
-
-#define MCS_BASE_CHANNEL_ID 1001
-#define MCS_GLOBAL_CHANNEL_ID 1003
+#include <winpr/wtsapi.h>
 
 enum MCS_Result
 {
@@ -56,8 +54,9 @@ enum MCS_Result
 	MCS_Result_enum_length = 16
 };
 
-enum DomainMCSPDU
+typedef enum
 {
+	DomainMCSPDU_invalid = -1,
 	DomainMCSPDU_PlumbDomainIndication = 0,
 	DomainMCSPDU_ErectDomainRequest = 1,
 	DomainMCSPDU_MergeChannelsRequest = 2,
@@ -102,7 +101,7 @@ enum DomainMCSPDU
 	DomainMCSPDU_TokenTestRequest = 41,
 	DomainMCSPDU_TokenTestConfirm = 42,
 	DomainMCSPDU_enum_length = 43
-};
+} DomainMCSPDU;
 
 typedef struct
 {
@@ -118,9 +117,9 @@ typedef struct
 
 struct rdp_mcs_channel
 {
-	char Name[8];
+	char Name[CHANNEL_NAME_LEN + 1];
 	UINT32 options;
-	int ChannelId;
+	UINT16 ChannelId;
 	BOOL joined;
 	void* handle;
 };
@@ -128,12 +127,14 @@ typedef struct rdp_mcs_channel rdpMcsChannel;
 
 struct rdp_mcs
 {
-	rdpTransport* transport;
-	rdpSettings* settings;
+	rdpContext* context;
 
 	UINT16 userId;
 	UINT16 baseChannelId;
+	UINT16 IOChannelId;
 	UINT16 messageChannelId;
+
+	UINT32 flags;
 
 	DomainParameters domainParameters;
 	DomainParameters targetParameters;
@@ -147,6 +148,7 @@ struct rdp_mcs
 	UINT32 channelCount;
 	UINT32 channelMaxCount;
 	rdpMcsChannel* channels;
+	wLog* log;
 };
 
 #define MCS_SEND_DATA_HEADER_MAX_LENGTH 8
@@ -154,29 +156,69 @@ struct rdp_mcs
 #define MCS_TYPE_CONNECT_INITIAL 0x65
 #define MCS_TYPE_CONNECT_RESPONSE 0x66
 
-FREERDP_LOCAL BOOL mcs_recv_connect_initial(rdpMcs* mcs, wStream* s);
-FREERDP_LOCAL BOOL mcs_send_connect_initial(rdpMcs* mcs);
-FREERDP_LOCAL BOOL mcs_recv_connect_response(rdpMcs* mcs, wStream* s);
-FREERDP_LOCAL BOOL mcs_send_connect_response(rdpMcs* mcs);
-FREERDP_LOCAL BOOL mcs_recv_erect_domain_request(rdpMcs* mcs, wStream* s);
-FREERDP_LOCAL BOOL mcs_send_erect_domain_request(rdpMcs* mcs);
-FREERDP_LOCAL BOOL mcs_recv_attach_user_request(rdpMcs* mcs, wStream* s);
-FREERDP_LOCAL BOOL mcs_send_attach_user_request(rdpMcs* mcs);
-FREERDP_LOCAL BOOL mcs_recv_attach_user_confirm(rdpMcs* mcs, wStream* s);
-FREERDP_LOCAL BOOL mcs_send_attach_user_confirm(rdpMcs* mcs);
-FREERDP_LOCAL BOOL mcs_recv_channel_join_request(rdpMcs* mcs, wStream* s, UINT16* channelId);
-FREERDP_LOCAL BOOL mcs_send_channel_join_request(rdpMcs* mcs, UINT16 channelId);
-FREERDP_LOCAL BOOL mcs_recv_channel_join_confirm(rdpMcs* mcs, wStream* s, UINT16* channelId);
-FREERDP_LOCAL BOOL mcs_send_channel_join_confirm(rdpMcs* mcs, UINT16 channelId);
-FREERDP_LOCAL BOOL mcs_recv_disconnect_provider_ultimatum(rdpMcs* mcs, wStream* s, int* reason);
-FREERDP_LOCAL BOOL mcs_send_disconnect_provider_ultimatum(rdpMcs* mcs);
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL const char* mcs_domain_pdu_string(DomainMCSPDU pdu);
 
-FREERDP_LOCAL void mcs_write_domain_mcspdu_header(wStream* s, enum DomainMCSPDU domainMCSPDU,
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_server_apply_to_settings(const rdpMcs* mcs, rdpSettings* settings);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_recv_connect_initial(rdpMcs* mcs, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_recv_connect_response(rdpMcs* mcs, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_send_connect_response(rdpMcs* mcs);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_recv_erect_domain_request(rdpMcs* mcs, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_send_erect_domain_request(rdpMcs* mcs);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_recv_attach_user_request(rdpMcs* mcs, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_send_attach_user_request(rdpMcs* mcs);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_recv_attach_user_confirm(rdpMcs* mcs, wStream* s);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_send_attach_user_confirm(rdpMcs* mcs);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_recv_channel_join_request(rdpMcs* mcs, const rdpSettings* settings,
+                                                 wStream* s, UINT16* channelId);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_send_channel_join_request(rdpMcs* mcs, UINT16 channelId);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_recv_channel_join_confirm(rdpMcs* mcs, wStream* s, UINT16* channelId);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_send_channel_join_confirm(rdpMcs* mcs, UINT16 channelId);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_recv_disconnect_provider_ultimatum(rdpMcs* mcs, wStream* s, int* reason);
+
+FREERDP_LOCAL BOOL mcs_send_disconnect_provider_ultimatum(rdpMcs* mcs,
+                                                          enum Disconnect_Ultimatum reason);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL mcs_write_domain_mcspdu_header(wStream* s, DomainMCSPDU domainMCSPDU,
                                                   UINT16 length, BYTE options);
 
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL BOOL mcs_client_begin(rdpMcs* mcs);
 
-FREERDP_LOCAL rdpMcs* mcs_new(rdpTransport* transport);
 FREERDP_LOCAL void mcs_free(rdpMcs* mcs);
+
+WINPR_ATTR_MALLOC(mcs_free, 1)
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL rdpMcs* mcs_new(rdpContext* context);
 
 #endif /* FREERDP_LIB_CORE_MCS_H */

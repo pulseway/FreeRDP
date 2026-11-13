@@ -26,21 +26,43 @@
 
 #include "rpc.h"
 
-FREERDP_LOCAL RpcClientCall* rpc_client_call_find_by_id(RpcClient* client, UINT32 CallId);
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL RpcClientCall* rpc_client_call_find_by_id(wLog* log, RpcClient* client,
+                                                        UINT32 CallId);
 
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL rpc_client_call_add(wLog* log, RpcClient* client, RpcClientCall* call);
+
+FREERDP_LOCAL void rpc_client_call_advance(wLog* log, RpcClient* client, UINT32 CallId,
+                                           RPC_CLIENT_CALL_STATE expected, BOOL success);
+
+FREERDP_LOCAL void rpc_client_call_discard(wLog* log, RpcClient* client, UINT32 CallId);
+
+FREERDP_LOCAL void rpc_client_call_free(RpcClientCall* clientCall);
+
+WINPR_ATTR_MALLOC(rpc_client_call_free, 1)
 FREERDP_LOCAL RpcClientCall* rpc_client_call_new(UINT32 CallId, UINT32 OpNum);
-FREERDP_LOCAL void rpc_client_call_free(RpcClientCall* client_call);
 
-FREERDP_LOCAL int rpc_in_channel_send_pdu(RpcInChannel* inChannel, BYTE* buffer, UINT32 length);
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL int rpc_in_channel_send_pdu(RpcInChannel* inChannel, const BYTE* buffer,
+                                          size_t length);
 
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL int rpc_client_in_channel_recv(rdpRpc* rpc);
+
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL int rpc_client_out_channel_recv(rdpRpc* rpc);
 
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL int rpc_client_receive_pipe_read(RpcClient* client, BYTE* buffer, size_t length);
 
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL BOOL rpc_client_write_call(rdpRpc* rpc, wStream* s, UINT16 opnum);
 
-FREERDP_LOCAL RpcClient* rpc_client_new(rdpContext* context, UINT32 max_recv_frag);
 FREERDP_LOCAL void rpc_client_free(RpcClient* client);
+
+WINPR_ATTR_MALLOC(rpc_client_free, 1)
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL RpcClient* rpc_client_new(rdpContext* context, UINT32 max_recv_frag);
 
 #endif /* FREERDP_LIB_CORE_GATEWAY_RPC_CLIENT_H */

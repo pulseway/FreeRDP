@@ -23,8 +23,8 @@
 #include <wayland-util.h>
 #include <string.h>
 #include <uwac/uwac-tools.h>
+#include <winpr/wtypes.h>
 
-/** @brief */
 struct uwac_touch_automata
 {
 	struct wl_array tp;
@@ -43,7 +43,7 @@ void UwacTouchAutomataReset(UwacTouchAutomata* automata)
 bool UwacTouchAutomataInjectEvent(UwacTouchAutomata* automata, UwacEvent* event)
 {
 
-	UwacTouchPoint* tp;
+	UwacTouchPoint* tp = nullptr;
 
 	switch (event->type)
 	{

@@ -35,7 +35,7 @@
 #else
 
 /* Shell clipboard formats */
-struct _FILEDESCRIPTORW
+typedef struct
 {
 	DWORD dwFlags;
 	CLSID clsid;
@@ -48,11 +48,10 @@ struct _FILEDESCRIPTORW
 	DWORD nFileSizeHigh;
 	DWORD nFileSizeLow;
 	WCHAR cFileName[260];
-};
-typedef struct _FILEDESCRIPTORW FILEDESCRIPTORW;
+} FILEDESCRIPTORW;
 
 /* Legacy definition, some types do not match the windows equivalent. */
-struct _FILEDESCRIPTOR
+typedef struct
 {
 	DWORD dwFlags;
 	BYTE clsid[16];
@@ -65,8 +64,7 @@ struct _FILEDESCRIPTOR
 	DWORD nFileSizeHigh;
 	DWORD nFileSizeLow;
 	WCHAR cFileName[260];
-};
-typedef struct _FILEDESCRIPTOR FILEDESCRIPTOR;
+} FILEDESCRIPTOR;
 
 /* FILEDESCRIPTOR.dwFlags */
 typedef enum
@@ -80,27 +78,21 @@ typedef enum
 	FD_FILESIZE = 0x00000040,
 	FD_PROGRESSUI = 0x00004000,
 	FD_LINKUI = 0x00008000,
-	FD_UNICODE = 0x80000000
 } FD_FLAGS;
+#define FD_UNICODE 0x80000000
 
 /* Deprecated, here for compatibility */
 #define FD_SHOWPROGRESSUI FD_PROGRESSUI
-
-/* FILEDESCRIPTOR.dwFileAttributes */
-#define FILE_ATTRIBUTE_READONLY 0x00000001
-#define FILE_ATTRIBUTE_HIDDEN 0x00000002
-#define FILE_ATTRIBUTE_SYSTEM 0x00000004
-#define FILE_ATTRIBUTE_DIRECTORY 0x00000010
-#define FILE_ATTRIBUTE_ARCHIVE 0x00000020
-#define FILE_ATTRIBUTE_NORMAL 0x00000080
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetUserProfileDirectoryA(HANDLE hToken, LPSTR lpProfileDir, LPDWORD lpcchSize);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetUserProfileDirectoryW(HANDLE hToken, LPWSTR lpProfileDir, LPDWORD lpcchSize);
 
 #ifdef __cplusplus

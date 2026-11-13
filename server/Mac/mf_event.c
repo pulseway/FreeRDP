@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -32,21 +30,21 @@
 #include <freerdp/log.h>
 #define TAG SERVER_TAG("mac")
 
-int mf_is_event_set(mfEventQueue* event_queue)
+WINPR_ATTR_NODISCARD
+static int mf_is_event_set(mfEventQueue* event_queue)
 {
 	fd_set rfds;
 	int num_set;
-	struct timeval time;
+	struct timeval time = WINPR_C_ARRAY_INIT;
 
 	FD_ZERO(&rfds);
 	FD_SET(event_queue->pipe_fd[0], &rfds);
-	memset(&time, 0, sizeof(time));
 	num_set = select(event_queue->pipe_fd[0] + 1, &rfds, 0, 0, &time);
 
 	return (num_set == 1);
 }
 
-void mf_signal_event(mfEventQueue* event_queue)
+static void mf_signal_event(mfEventQueue* event_queue)
 {
 	int length;
 
@@ -56,7 +54,7 @@ void mf_signal_event(mfEventQueue* event_queue)
 		WLog_ERR(TAG, "mf_signal_event: error");
 }
 
-void mf_set_event(mfEventQueue* event_queue)
+static void mf_set_event(mfEventQueue* event_queue)
 {
 	int length;
 
@@ -66,7 +64,7 @@ void mf_set_event(mfEventQueue* event_queue)
 		WLog_ERR(TAG, "mf_set_event: error");
 }
 
-void mf_clear_events(mfEventQueue* event_queue)
+static void mf_clear_events(mfEventQueue* event_queue)
 {
 	int length;
 
@@ -79,7 +77,7 @@ void mf_clear_events(mfEventQueue* event_queue)
 	}
 }
 
-void mf_clear_event(mfEventQueue* event_queue)
+static void mf_clear_event(mfEventQueue* event_queue)
 {
 	int length;
 
@@ -114,7 +112,7 @@ mfEvent* mf_event_peek(mfEventQueue* event_queue)
 	pthread_mutex_lock(&(event_queue->mutex));
 
 	if (event_queue->count < 1)
-		event = NULL;
+		event = nullptr;
 	else
 		event = event_queue->events[0];
 
@@ -130,7 +128,7 @@ mfEvent* mf_event_pop(mfEventQueue* event_queue)
 	pthread_mutex_lock(&(event_queue->mutex));
 
 	if (event_queue->count < 1)
-		return NULL;
+		return nullptr;
 
 	/* remove event signal */
 	mf_clear_event(event_queue);
@@ -149,7 +147,7 @@ mfEventRegion* mf_event_region_new(int x, int y, int width, int height)
 {
 	mfEventRegion* event_region = malloc(sizeof(mfEventRegion));
 
-	if (event_region != NULL)
+	if (event_region != nullptr)
 	{
 		event_region->x = x;
 		event_region->y = y;
@@ -169,7 +167,7 @@ mfEvent* mf_event_new(int type)
 {
 	mfEvent* event = malloc(sizeof(mfEvent));
 	if (!event)
-		return NULL;
+		return nullptr;
 	event->type = type;
 	return event;
 }
@@ -183,7 +181,7 @@ mfEventQueue* mf_event_queue_new()
 {
 	mfEventQueue* event_queue = malloc(sizeof(mfEventQueue));
 
-	if (event_queue != NULL)
+	if (event_queue != nullptr)
 	{
 		event_queue->pipe_fd[0] = -1;
 		event_queue->pipe_fd[1] = -1;
@@ -195,10 +193,10 @@ mfEventQueue* mf_event_queue_new()
 		if (pipe(event_queue->pipe_fd) < 0)
 		{
 			free(event_queue);
-			return NULL;
+			return nullptr;
 		}
 
-		pthread_mutex_init(&(event_queue->mutex), NULL);
+		pthread_mutex_init(&(event_queue->mutex), nullptr);
 	}
 
 	return event_queue;

@@ -21,36 +21,39 @@
 
 #include <winpr/registry.h>
 
-typedef struct _reg Reg;
-typedef struct _reg_key RegKey;
-typedef struct _reg_val RegVal;
+typedef struct s_reg Reg;
+typedef struct s_reg_key RegKey;
+typedef struct s_reg_val RegVal;
 
-struct _reg
+struct s_reg
 {
 	FILE* fp;
 	char* line;
 	char* next_line;
-	int line_length;
+	size_t line_length;
 	char* buffer;
 	char* filename;
 	BOOL read_only;
 	RegKey* root_key;
+	char* saveptr;
 };
 
-struct _reg_val
+struct s_reg_val
 {
 	char* name;
 	DWORD type;
 	RegVal* prev;
 	RegVal* next;
 
-	union reg_data {
+	union reg_data
+	{
 		DWORD dword;
+		UINT64 qword;
 		char* string;
 	} data;
 };
 
-struct _reg_key
+struct s_reg_key
 {
 	char* name;
 	DWORD type;
@@ -64,5 +67,7 @@ struct _reg_key
 
 Reg* reg_open(BOOL read_only);
 void reg_close(Reg* reg);
+
+const char* reg_type_string(DWORD type);
 
 #endif

@@ -18,9 +18,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,57 +38,204 @@
  * will need to fix that later on cleanly
  */
 
+#if defined(CHANNEL_AUDIN_SERVER)
 #include <freerdp/server/audin.h>
+#endif
+#if defined(CHANNEL_RDPSND_SERVER)
 #include <freerdp/server/rdpsnd.h>
+#endif
+#if defined(CHANNEL_CLIPRDR_SERVER)
 #include <freerdp/server/cliprdr.h>
+#endif
+#if defined(CHANNEL_ECHO_SERVER)
 #include <freerdp/server/echo.h>
+#endif
+#if defined(CHANNEL_RDPDR_SERVER)
 #include <freerdp/server/rdpdr.h>
+#endif
+#if defined(CHANNEL_RDPEI_SERVER)
 #include <freerdp/server/rdpei.h>
+#endif
+#if defined(CHANNEL_DRDYNVC_SERVER)
 #include <freerdp/server/drdynvc.h>
+#endif
+#if defined(CHANNEL_REMDESK_SERVER)
 #include <freerdp/server/remdesk.h>
+#endif
+#if defined(CHANNEL_ENCOMSP_SERVER)
 #include <freerdp/server/encomsp.h>
+#endif
+#if defined(CHANNEL_RAIL_SERVER)
 #include <freerdp/server/rail.h>
+#endif
+#if defined(CHANNEL_TELEMETRY_SERVER)
+#include <freerdp/server/telemetry.h>
+#endif
+#if defined(CHANNEL_RDPGFX_SERVER)
 #include <freerdp/server/rdpgfx.h>
+#endif
+#if defined(CHANNEL_DISP_SERVER)
 #include <freerdp/server/disp.h>
+#endif
+
+#if defined(CHANNEL_RDPEMSC_SERVER)
+#include <freerdp/server/rdpemsc.h>
+#endif /* CHANNEL_RDPEMSC_SERVER */
+
+#if defined(CHANNEL_RDPECAM_SERVER)
+#include <freerdp/server/rdpecam-enumerator.h>
+#include <freerdp/server/rdpecam.h>
+#endif
+
+#if defined(CHANNEL_LOCATION_SERVER)
+#include <freerdp/server/location.h>
+#endif /* CHANNEL_LOCATION_SERVER */
+
+#ifdef WITH_CHANNEL_GFXREDIR
+#include <freerdp/server/gfxredir.h>
+#endif /* WITH_CHANNEL_GFXREDIR */
+
+#if defined(CHANNEL_AINPUT_SERVER)
+#include <freerdp/server/ainput.h>
+#endif
+
+extern void freerdp_channels_dummy(void);
 
 void freerdp_channels_dummy(void)
 {
-	audin_server_context* audin;
-	RdpsndServerContext* rdpsnd;
-	CliprdrServerContext* cliprdr;
-	echo_server_context* echo;
-	RdpdrServerContext* rdpdr;
-	DrdynvcServerContext* drdynvc;
-	RdpeiServerContext* rdpei;
-	RemdeskServerContext* remdesk;
-	EncomspServerContext* encomsp;
-	RailServerContext* rail;
-	RdpgfxServerContext* rdpgfx;
-	DispServerContext* disp;
-	audin = audin_server_context_new(NULL);
+#if defined(CHANNEL_AUDIN_SERVER)
+	audin_server_context* audin = nullptr;
+#endif
+#if defined(CHANNEL_RDPSND_SERVER)
+	RdpsndServerContext* rdpsnd = nullptr;
+#endif
+#if defined(CHANNEL_CLIPRDR_SERVER)
+	CliprdrServerContext* cliprdr = nullptr;
+#endif
+#if defined(CHANNEL_ECHO_SERVER)
+	echo_server_context* echo = nullptr;
+#endif
+#if defined(CHANNEL_RDPDR_SERVER)
+	RdpdrServerContext* rdpdr = nullptr;
+#endif
+#if defined(CHANNEL_DRDYNVC_SERVER)
+	DrdynvcServerContext* drdynvc = nullptr;
+#endif
+#if defined(CHANNEL_RDPEI_SERVER)
+	RdpeiServerContext* rdpei = nullptr;
+#endif
+#if defined(CHANNEL_REMDESK_SERVER)
+	RemdeskServerContext* remdesk = nullptr;
+#endif
+#if defined(CHANNEL_ENCOMSP_SERVER)
+	EncomspServerContext* encomsp = nullptr;
+#endif
+#if defined(CHANNEL_RAIL_SERVER)
+	RailServerContext* rail = nullptr;
+#endif
+#if defined(CHANNEL_TELEMETRY_SERVER)
+	TelemetryServerContext* telemetry = nullptr;
+#endif
+#if defined(CHANNEL_RDPGFX_SERVER)
+	RdpgfxServerContext* rdpgfx = nullptr;
+#endif
+#if defined(CHANNEL_DISP_SERVER)
+	DispServerContext* disp = nullptr;
+#endif
+#if defined(CHANNEL_RDPEMSC_SERVER)
+	MouseCursorServerContext* mouse_cursor = nullptr;
+#endif /* CHANNEL_RDPEMSC_SERVER */
+#if defined(CHANNEL_RDPECAM_SERVER)
+	CamDevEnumServerContext* camera_enumerator = nullptr;
+	CameraDeviceServerContext* camera_device = nullptr;
+#endif
+#if defined(CHANNEL_LOCATION_SERVER)
+	LocationServerContext* location = nullptr;
+#endif /* CHANNEL_LOCATION_SERVER */
+#ifdef WITH_CHANNEL_GFXREDIR
+	GfxRedirServerContext* gfxredir;
+#endif // WITH_CHANNEL_GFXREDIR
+#if defined(CHANNEL_AUDIN_SERVER)
+	audin = audin_server_context_new(nullptr);
+#endif
+#if defined(CHANNEL_AUDIN_SERVER)
 	audin_server_context_free(audin);
-	rdpsnd = rdpsnd_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_RDPSND_SERVER)
+	rdpsnd = rdpsnd_server_context_new(nullptr);
 	rdpsnd_server_context_free(rdpsnd);
-	cliprdr = cliprdr_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_CLIPRDR_SERVER)
+	cliprdr = cliprdr_server_context_new(nullptr);
 	cliprdr_server_context_free(cliprdr);
-	echo = echo_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_ECHO_SERVER)
+	echo = echo_server_context_new(nullptr);
 	echo_server_context_free(echo);
-	rdpdr = rdpdr_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_RDPDR_SERVER)
+	rdpdr = rdpdr_server_context_new(nullptr);
 	rdpdr_server_context_free(rdpdr);
-	drdynvc = drdynvc_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_DRDYNVC_SERVER)
+	drdynvc = drdynvc_server_context_new(nullptr);
 	drdynvc_server_context_free(drdynvc);
-	rdpei = rdpei_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_RDPEI_SERVER)
+	rdpei = rdpei_server_context_new(nullptr);
 	rdpei_server_context_free(rdpei);
-	remdesk = remdesk_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_REMDESK_SERVER)
+	remdesk = remdesk_server_context_new(nullptr);
 	remdesk_server_context_free(remdesk);
-	encomsp = encomsp_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_ENCOMSP_SERVER)
+	encomsp = encomsp_server_context_new(nullptr);
 	encomsp_server_context_free(encomsp);
-	rail = rail_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_RAIL_SERVER)
+	rail = rail_server_context_new(nullptr);
 	rail_server_context_free(rail);
-	rdpgfx = rdpgfx_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_TELEMETRY_SERVER)
+	telemetry = telemetry_server_context_new(nullptr);
+	telemetry_server_context_free(telemetry);
+#endif
+#if defined(CHANNEL_RDPGFX_SERVER)
+	rdpgfx = rdpgfx_server_context_new(nullptr);
 	rdpgfx_server_context_free(rdpgfx);
-	disp = disp_server_context_new(NULL);
+#endif
+#if defined(CHANNEL_DISP_SERVER)
+	disp = disp_server_context_new(nullptr);
 	disp_server_context_free(disp);
+#endif
+#if defined(CHANNEL_RDPEMSC_SERVER)
+	mouse_cursor = mouse_cursor_server_context_new(nullptr);
+	mouse_cursor_server_context_free(mouse_cursor);
+#endif /* CHANNEL_RDPEMSC_SERVER */
+
+#if defined(CHANNEL_RDPECAM_SERVER)
+	camera_enumerator = cam_dev_enum_server_context_new(nullptr);
+	cam_dev_enum_server_context_free(camera_enumerator);
+	camera_device = camera_device_server_context_new(nullptr);
+	camera_device_server_context_free(camera_device);
+#endif
+
+#if defined(CHANNEL_LOCATION_SERVER)
+	location = location_server_context_new(nullptr);
+	location_server_context_free(location);
+#endif /* CHANNEL_LOCATION_SERVER */
+
+#ifdef WITH_CHANNEL_GFXREDIR
+	gfxredir = gfxredir_server_context_new(nullptr);
+	gfxredir_server_context_free(gfxredir);
+#endif // WITH_CHANNEL_GFXREDIR
+#if defined(CHANNEL_AINPUT_SERVER)
+	{
+		ainput_server_context* ainput = ainput_server_context_new(nullptr);
+		ainput_server_context_free(ainput);
+	}
+#endif
 }
 
 /**

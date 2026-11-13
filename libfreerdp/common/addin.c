@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +34,7 @@
 #include <freerdp/log.h>
 #define TAG FREERDP_TAG("addin")
 
-static INLINE BOOL is_path_required(LPCSTR path, size_t len)
+static inline BOOL is_path_required(LPCSTR path, size_t len)
 {
 	if (!path || (len <= 1))
 		return FALSE;
@@ -49,40 +47,30 @@ static INLINE BOOL is_path_required(LPCSTR path, size_t len)
 
 LPSTR freerdp_get_library_install_path(void)
 {
-	LPSTR pszPath;
-	size_t cchPath;
-	size_t cchLibraryPath;
-	size_t cchInstallPrefix;
-	BOOL needLibPath, needInstallPath;
 	LPCSTR pszLibraryPath = FREERDP_LIBRARY_PATH;
 	LPCSTR pszInstallPrefix = FREERDP_INSTALL_PREFIX;
-	cchLibraryPath = strlen(pszLibraryPath) + 1;
-	cchInstallPrefix = strlen(pszInstallPrefix) + 1;
-	cchPath = cchInstallPrefix + cchLibraryPath;
-	needInstallPath = is_path_required(pszInstallPrefix, cchInstallPrefix);
-	needLibPath = is_path_required(pszLibraryPath, cchLibraryPath);
+	const size_t cchLibraryPath = strlen(pszLibraryPath) + 1;
+	const size_t cchInstallPrefix = strlen(pszInstallPrefix) + 1;
+	const size_t cchPath = cchInstallPrefix + cchLibraryPath;
+	const BOOL needInstallPath = is_path_required(pszInstallPrefix, cchInstallPrefix);
+	const BOOL needLibPath = is_path_required(pszLibraryPath, cchLibraryPath);
 
 	if (!needInstallPath && !needLibPath)
-		return NULL;
+		return nullptr;
 
-	pszPath = (LPSTR)malloc(cchPath + 1);
+	char* pszPath = (LPSTR)calloc(cchPath + 1, sizeof(char));
 
 	if (!pszPath)
-		return NULL;
+		return nullptr;
 
 	if (needInstallPath)
-	{
 		CopyMemory(pszPath, pszInstallPrefix, cchInstallPrefix);
-		pszPath[cchInstallPrefix] = '\0';
-	}
 
 	if (needLibPath)
 	{
-		if (FAILED(NativePathCchAppendA(pszPath, cchPath + 1, pszLibraryPath)))
-		{
-			free(pszPath);
-			return NULL;
-		}
+		char* result = GetCombinedPath(pszPath, pszLibraryPath);
+		free(pszPath);
+		pszPath = result;
 	}
 
 	return pszPath;
@@ -90,69 +78,75 @@ LPSTR freerdp_get_library_install_path(void)
 
 LPSTR freerdp_get_dynamic_addin_install_path(void)
 {
-	LPSTR pszPath;
-	size_t cchPath;
-	size_t cchAddinPath;
-	size_t cchInstallPrefix;
-	BOOL needLibPath, needInstallPath;
+#if defined(WITH_ADD_PLUGIN_TO_RPATH)
+	return nullptr;
+#else
 	LPCSTR pszAddinPath = FREERDP_ADDIN_PATH;
 	LPCSTR pszInstallPrefix = FREERDP_INSTALL_PREFIX;
-	cchAddinPath = strlen(pszAddinPath) + 1;
-	cchInstallPrefix = strlen(pszInstallPrefix) + 1;
-	cchPath = cchInstallPrefix + cchAddinPath;
-	needInstallPath = is_path_required(pszInstallPrefix, cchInstallPrefix);
-	needLibPath = is_path_required(pszAddinPath, cchAddinPath);
+	const size_t cchAddinPath = strlen(pszAddinPath) + 1;
+	const size_t cchInstallPrefix = strlen(pszInstallPrefix) + 1;
+	const size_t cchPath = cchInstallPrefix + cchAddinPath;
+	const BOOL needInstallPath = is_path_required(pszInstallPrefix, cchInstallPrefix);
+	const BOOL needLibPath = is_path_required(pszAddinPath, cchAddinPath);
+
+	WLog_DBG(TAG,
+	         "freerdp_get_dynamic_addin_install_path <- pszInstallPrefix: %s, pszAddinPath: %s",
+	         pszInstallPrefix, pszAddinPath);
 
 	if (!needInstallPath && !needLibPath)
-		return NULL;
+		return nullptr;
 
-	pszPath = (LPSTR)calloc(cchPath + 1, sizeof(CHAR));
+	char* pszPath = calloc(cchPath + 1, sizeof(CHAR));
 
 	if (!pszPath)
-		return NULL;
+		return nullptr;
 
 	if (needInstallPath)
-	{
 		CopyMemory(pszPath, pszInstallPrefix, cchInstallPrefix);
-		pszPath[cchInstallPrefix] = '\0';
-	}
 
 	if (needLibPath)
 	{
-		if (FAILED(NativePathCchAppendA(pszPath, cchPath + 1, pszAddinPath)))
-		{
-			free(pszPath);
-			return NULL;
-		}
+		char* result = GetCombinedPath(pszPath, pszAddinPath);
+		free(pszPath);
+		pszPath = result;
+		if (!pszPath)
+			return nullptr;
 	}
 
+	WLog_DBG(TAG, "freerdp_get_dynamic_addin_install_path -> pszPath: %s", pszPath);
+
 	return pszPath;
+#endif
 }
 
 PVIRTUALCHANNELENTRY freerdp_load_dynamic_addin(LPCSTR pszFileName, LPCSTR pszPath,
                                                 LPCSTR pszEntryName)
 {
 	LPSTR pszAddinInstallPath = freerdp_get_dynamic_addin_install_path();
-	PVIRTUALCHANNELENTRY entry = NULL;
+	PVIRTUALCHANNELENTRY entry = nullptr;
 	BOOL bHasExt = TRUE;
-	PCSTR pszExt;
+	PCSTR pszExt = nullptr;
 	size_t cchExt = 0;
-	HINSTANCE library = NULL;
-	size_t cchFileName;
-	size_t cchFilePath;
-	LPSTR pszAddinFile = NULL;
-	LPSTR pszFilePath = NULL;
-	LPSTR pszRelativeFilePath = NULL;
-	size_t cchAddinFile;
-	size_t cchAddinInstallPath;
+	HINSTANCE library = nullptr;
+	size_t cchFileName = 0;
+	size_t cchFilePath = 0;
+	LPSTR pszAddinFile = nullptr;
+	LPSTR pszFilePath = nullptr;
+	LPSTR pszRelativeFilePath = nullptr;
+	size_t cchAddinFile = 0;
+	size_t cchAddinInstallPath = 0;
 
 	if (!pszFileName || !pszEntryName)
 		goto fail;
 
+	WLog_DBG(TAG, "freerdp_load_dynamic_addin <- pszFileName: %s, pszPath: %s, pszEntryName: %s",
+	         pszFileName, pszPath, pszEntryName);
+
 	cchFileName = strlen(pszFileName);
 
 	/* Get file name with prefix and extension */
-	if (FAILED(PathCchFindExtensionA(pszFileName, cchFileName + 1, &pszExt)))
+	pszExt = strrchr(pszFileName, '.');
+	if (!pszExt)
 	{
 		pszExt = PathGetSharedLibraryExtensionA(PATH_SHARED_LIB_EXT_WITH_DOT);
 		cchExt = strlen(pszExt);
@@ -174,8 +168,8 @@ PVIRTUALCHANNELENTRY freerdp_load_dynamic_addin(LPCSTR pszFileName, LPCSTR pszPa
 		if (!pszAddinFile)
 			goto fail;
 
-		sprintf_s(pszAddinFile, cchAddinFile, FREERDP_SHARED_LIBRARY_PREFIX "%s%s", pszFileName,
-		          pszExt);
+		(void)sprintf_s(pszAddinFile, cchAddinFile, FREERDP_SHARED_LIBRARY_PREFIX "%s%s",
+		                pszFileName, pszExt);
 	}
 
 	cchAddinFile = strlen(pszAddinFile);
@@ -189,8 +183,12 @@ PVIRTUALCHANNELENTRY freerdp_load_dynamic_addin(LPCSTR pszFileName, LPCSTR pszPa
 		if (!pszRelativeFilePath)
 			goto fail;
 
-		sprintf_s(pszRelativeFilePath, relPathLen, "%s", pszPath);
-		NativePathCchAppendA(pszRelativeFilePath, relPathLen, pszAddinFile);
+		(void)sprintf_s(pszRelativeFilePath, relPathLen, "%s", pszPath);
+		char* result = GetCombinedPath(pszRelativeFilePath, pszAddinFile);
+		free(pszRelativeFilePath);
+		pszRelativeFilePath = result;
+		if (!pszRelativeFilePath)
+			goto fail;
 	}
 	else
 		pszRelativeFilePath = _strdup(pszAddinFile);
@@ -210,17 +208,22 @@ PVIRTUALCHANNELENTRY freerdp_load_dynamic_addin(LPCSTR pszFileName, LPCSTR pszPa
 
 		CopyMemory(pszFilePath, pszAddinInstallPath, cchAddinInstallPath);
 		pszFilePath[cchAddinInstallPath] = '\0';
-		NativePathCchAppendA((LPSTR)pszFilePath, cchFilePath + 1, pszRelativeFilePath);
+
+		char* result = GetCombinedPath(pszFilePath, pszRelativeFilePath);
+		free(pszFilePath);
+		pszFilePath = result;
+		if (!pszFilePath)
+			goto fail;
 	}
 	else
 		pszFilePath = _strdup(pszRelativeFilePath);
 
-	library = LoadLibraryA(pszFilePath);
+	library = LoadLibraryX(pszFilePath);
 
 	if (!library)
 		goto fail;
 
-	entry = (PVIRTUALCHANNELENTRY)GetProcAddress(library, pszEntryName);
+	entry = GetProcAddressAs(library, pszEntryName, PVIRTUALCHANNELENTRY);
 fail:
 	free(pszRelativeFilePath);
 	free(pszAddinFile);
@@ -236,67 +239,82 @@ fail:
 PVIRTUALCHANNELENTRY freerdp_load_dynamic_channel_addin_entry(LPCSTR pszName, LPCSTR pszSubsystem,
                                                               LPCSTR pszType, DWORD dwFlags)
 {
-	PVIRTUALCHANNELENTRY entry;
-	LPSTR pszFileName;
+	PVIRTUALCHANNELENTRY entry = nullptr;
+	LPSTR pszFileName = nullptr;
 	const size_t cchBaseFileName = sizeof(FREERDP_SHARED_LIBRARY_PREFIX) + 32;
-	LPCSTR pszExtension;
-	LPCSTR pszPrefix = FREERDP_SHARED_LIBRARY_PREFIX;
 	size_t nameLen = 0;
 	size_t subsystemLen = 0;
 	size_t typeLen = 0;
-	size_t extensionLen = 0;
-	pszExtension = PathGetSharedLibraryExtensionA(0);
+	size_t cchFileName = 0;
+
 	if (pszName)
 		nameLen = strnlen(pszName, MAX_PATH);
 	if (pszSubsystem)
 		subsystemLen = strnlen(pszSubsystem, MAX_PATH);
 	if (pszType)
 		typeLen = strnlen(pszType, MAX_PATH);
-	if (pszExtension)
-		extensionLen = strnlen(pszExtension, MAX_PATH);
 
 	if (pszName && pszSubsystem && pszType)
 	{
-		const size_t cchFileName =
-		    cchBaseFileName + nameLen + subsystemLen + typeLen + extensionLen;
+		cchFileName = cchBaseFileName + nameLen + subsystemLen + typeLen;
 		pszFileName = (LPSTR)malloc(cchFileName);
 
 		if (!pszFileName)
-			return NULL;
+			return nullptr;
 
-		sprintf_s(pszFileName, cchFileName, "%s%s-client-%s-%s.%s", pszPrefix, pszName,
-		          pszSubsystem, pszType, pszExtension);
+		(void)sprintf_s(pszFileName, cchFileName, "%s-client-%s-%s", pszName, pszSubsystem,
+		                pszType);
 	}
 	else if (pszName && pszSubsystem)
 	{
-		const size_t cchFileName = cchBaseFileName + nameLen + subsystemLen + extensionLen;
+		cchFileName = cchBaseFileName + nameLen + subsystemLen;
 		pszFileName = (LPSTR)malloc(cchFileName);
 
 		if (!pszFileName)
-			return NULL;
+			return nullptr;
 
-		sprintf_s(pszFileName, cchFileName, "%s%s-client-%s.%s", pszPrefix, pszName, pszSubsystem,
-		          pszExtension);
+		(void)sprintf_s(pszFileName, cchFileName, "%s-client-%s", pszName, pszSubsystem);
 	}
 	else if (pszName)
 	{
-		const size_t cchFileName = cchBaseFileName + nameLen + extensionLen;
+		cchFileName = cchBaseFileName + nameLen;
 		pszFileName = (LPSTR)malloc(cchFileName);
 
 		if (!pszFileName)
-			return NULL;
+			return nullptr;
 
-		sprintf_s(pszFileName, cchFileName, "%s%s-client.%s", pszPrefix, pszName, pszExtension);
+		(void)sprintf_s(pszFileName, cchFileName, "%s-client", pszName);
 	}
 	else
 	{
-		return NULL;
+		return nullptr;
+	}
+
+	{
+		LPCSTR pszExtension = PathGetSharedLibraryExtensionA(0);
+		const char pszPrefix[] = FREERDP_SHARED_LIBRARY_PREFIX;
+		int rc = 0;
+
+		cchFileName += strnlen(pszPrefix, ARRAYSIZE(pszPrefix));
+		if (pszExtension)
+			cchFileName += strnlen(pszExtension, MAX_PATH) + 1;
+		LPSTR tmp = calloc(cchFileName, sizeof(CHAR));
+		if (tmp)
+			rc = sprintf_s(tmp, cchFileName, "%s%s.%s", pszPrefix, pszFileName, pszExtension);
+
+		free(pszFileName);
+		pszFileName = tmp;
+		if (!pszFileName || (rc < 0))
+		{
+			free(pszFileName);
+			return nullptr;
+		}
 	}
 
 	if (pszSubsystem)
 	{
-		LPSTR pszEntryName;
-		size_t cchEntryName;
+		LPSTR pszEntryName = nullptr;
+		size_t cchEntryName = 0;
 		/* subsystem add-in */
 		cchEntryName = 64 + nameLen;
 		pszEntryName = (LPSTR)malloc(cchEntryName + 1);
@@ -304,11 +322,12 @@ PVIRTUALCHANNELENTRY freerdp_load_dynamic_channel_addin_entry(LPCSTR pszName, LP
 		if (!pszEntryName)
 		{
 			free(pszFileName);
-			return NULL;
+			return nullptr;
 		}
 
-		sprintf_s(pszEntryName, cchEntryName + 1, "freerdp_%s_client_subsystem_entry", pszName);
-		entry = freerdp_load_dynamic_addin(pszFileName, NULL, pszEntryName);
+		(void)sprintf_s(pszEntryName, cchEntryName + 1, "freerdp_%s_client_subsystem_entry",
+		                pszName);
+		entry = freerdp_load_dynamic_addin(pszFileName, nullptr, pszEntryName);
 		free(pszEntryName);
 		free(pszFileName);
 		return entry;
@@ -319,33 +338,39 @@ PVIRTUALCHANNELENTRY freerdp_load_dynamic_channel_addin_entry(LPCSTR pszName, LP
 	if (dwFlags & FREERDP_ADDIN_CHANNEL_STATIC)
 	{
 		if (dwFlags & FREERDP_ADDIN_CHANNEL_ENTRYEX)
-			entry = freerdp_load_dynamic_addin(pszFileName, NULL, "VirtualChannelEntryEx");
+			entry = freerdp_load_dynamic_addin(pszFileName, nullptr, "VirtualChannelEntryEx");
 		else
-			entry = freerdp_load_dynamic_addin(pszFileName, NULL, "VirtualChannelEntry");
+			entry = freerdp_load_dynamic_addin(pszFileName, nullptr, "VirtualChannelEntry");
 	}
 	else if (dwFlags & FREERDP_ADDIN_CHANNEL_DYNAMIC)
-		entry = freerdp_load_dynamic_addin(pszFileName, NULL, "DVCPluginEntry");
+		entry = freerdp_load_dynamic_addin(pszFileName, nullptr, "DVCPluginEntry");
 	else if (dwFlags & FREERDP_ADDIN_CHANNEL_DEVICE)
-		entry = freerdp_load_dynamic_addin(pszFileName, NULL, "DeviceServiceEntry");
+		entry = freerdp_load_dynamic_addin(pszFileName, nullptr, "DeviceServiceEntry");
 	else
-		entry = freerdp_load_dynamic_addin(pszFileName, NULL, pszType);
+		entry = freerdp_load_dynamic_addin(pszFileName, nullptr, pszType);
 
 	free(pszFileName);
 	return entry;
 }
 
-static FREERDP_LOAD_CHANNEL_ADDIN_ENTRY_FN freerdp_load_static_channel_addin_entry = NULL;
+static FREERDP_LOAD_CHANNEL_ADDIN_ENTRY_FN freerdp_load_static_channel_addin_entry = nullptr;
 
-int freerdp_register_addin_provider(FREERDP_LOAD_CHANNEL_ADDIN_ENTRY_FN provider, DWORD dwFlags)
+int freerdp_register_addin_provider(FREERDP_LOAD_CHANNEL_ADDIN_ENTRY_FN provider,
+                                    WINPR_ATTR_UNUSED DWORD dwFlags)
 {
 	freerdp_load_static_channel_addin_entry = provider;
 	return 0;
 }
 
+FREERDP_LOAD_CHANNEL_ADDIN_ENTRY_FN freerdp_get_current_addin_provider(void)
+{
+	return freerdp_load_static_channel_addin_entry;
+}
+
 PVIRTUALCHANNELENTRY freerdp_load_channel_addin_entry(LPCSTR pszName, LPCSTR pszSubsystem,
                                                       LPCSTR pszType, DWORD dwFlags)
 {
-	PVIRTUALCHANNELENTRY entry = NULL;
+	PVIRTUALCHANNELENTRY entry = nullptr;
 
 	if (freerdp_load_static_channel_addin_entry)
 		entry = freerdp_load_static_channel_addin_entry(pszName, pszSubsystem, pszType, dwFlags);

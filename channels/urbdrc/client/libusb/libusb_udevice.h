@@ -26,6 +26,7 @@
 
 #include "urbdrc_types.h"
 #include "urbdrc_main.h"
+#include "msusb.h"
 
 typedef struct libusb_device LIBUSB_DEVICE;
 typedef struct libusb_device_handle LIBUSB_DEVICE_HANDLE;
@@ -35,9 +36,7 @@ typedef struct libusb_interface LIBUSB_INTERFACE;
 typedef struct libusb_interface_descriptor LIBUSB_INTERFACE_DESCRIPTOR;
 typedef struct libusb_endpoint_descriptor LIBUSB_ENDPOINT_DESCEIPTOR;
 
-typedef struct _UDEVICE UDEVICE;
-
-struct _UDEVICE
+typedef struct
 {
 	IUDEVICE iface;
 
@@ -49,11 +48,12 @@ struct _UDEVICE
 	UINT32 ReqCompletion; /* An unique interface ID */
 	IWTSVirtualChannelManager* channelManager;
 	UINT32 channelID;
+	GENERIC_CHANNEL_CALLBACK* channelCallback;
 	UINT16 status;
 	BYTE bus_number;
 	BYTE dev_number;
 	char path[17];
-	int port_number;
+	UINT8 port_number;
 	int isCompositeDevice;
 
 	LIBUSB_DEVICE_HANDLE* libusb_handle;
@@ -66,13 +66,18 @@ struct _UDEVICE
 	wArrayList* request_queue;
 
 	URBDRC_PLUGIN* urbdrc;
-};
+} UDEVICE;
 typedef UDEVICE* PUDEVICE;
 
-size_t udev_new_by_id(URBDRC_PLUGIN* urbdrc, libusb_context* ctx, UINT16 idVendor, UINT16 idProduct,
-                      IUDEVICE*** devArray);
-IUDEVICE* udev_new_by_addr(URBDRC_PLUGIN* urbdrc, libusb_context* ctx, BYTE bus_number,
-                           BYTE dev_number);
-const char* usb_interface_class_to_string(uint8_t class);
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL size_t udev_new_by_id(URBDRC_PLUGIN* urbdrc, libusb_context* ctx, UINT16 idVendor,
+                                    UINT16 idProduct, IUDEVICE*** devArray);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL IUDEVICE* udev_new_by_addr(URBDRC_PLUGIN* urbdrc, libusb_context* context,
+                                         BYTE bus_number, BYTE dev_number);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL const char* usb_interface_class_to_string(uint8_t c_class);
 
 #endif /* FREERDP_CHANNEL_URBDRC_CLIENT_LIBUSB_UDEVICE_H */

@@ -19,9 +19,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <sndio.h>
 #include <stdio.h>
@@ -36,28 +34,27 @@
 
 #include "rdpsnd_main.h"
 
-typedef struct rdpsnd_sndio_plugin rdpsndSndioPlugin;
-
-struct rdpsnd_sndio_plugin
+typedef struct
 {
 	rdpsndDevicePlugin device;
 
 	struct sio_hdl* hdl;
 	struct sio_par par;
-};
+} rdpsndSndioPlugin;
 
-static BOOL rdpsnd_sndio_open(rdpsndDevicePlugin* device, AUDIO_FORMAT* format, int latency)
+static BOOL rdpsnd_sndio_open(rdpsndDevicePlugin* device, const AUDIO_FORMAT* format,
+                              WINPR_ATTR_UNUSED UINT32 latency)
 {
 	rdpsndSndioPlugin* sndio = (rdpsndSndioPlugin*)device;
 
-	if (device == NULL || format == NULL)
+	if (device == nullptr || format == nullptr)
 		return FALSE;
 
-	if (sndio->hdl != NULL)
+	if (sndio->hdl != nullptr)
 		return TRUE;
 
 	sndio->hdl = sio_open(SIO_DEVANY, SIO_PLAY, 0);
-	if (sndio->hdl == NULL)
+	if (sndio->hdl == nullptr)
 	{
 		WLog_ERR(TAG, "could not open audio device");
 		return FALSE;
@@ -91,14 +88,14 @@ static void rdpsnd_sndio_close(rdpsndDevicePlugin* device)
 {
 	rdpsndSndioPlugin* sndio = (rdpsndSndioPlugin*)device;
 
-	if (device == NULL)
+	if (device == nullptr)
 		return;
 
-	if (sndio->hdl != NULL)
+	if (sndio->hdl != nullptr)
 	{
 		sio_stop(sndio->hdl);
 		sio_close(sndio->hdl);
-		sndio->hdl = NULL;
+		sndio->hdl = nullptr;
 	}
 }
 
@@ -106,7 +103,7 @@ static BOOL rdpsnd_sndio_set_volume(rdpsndDevicePlugin* device, UINT32 value)
 {
 	rdpsndSndioPlugin* sndio = (rdpsndSndioPlugin*)device;
 
-	if (device == NULL || sndio->hdl == NULL)
+	if (device == nullptr || sndio->hdl == nullptr)
 		return FALSE;
 
 	/*
@@ -120,29 +117,33 @@ static void rdpsnd_sndio_free(rdpsndDevicePlugin* device)
 {
 	rdpsndSndioPlugin* sndio = (rdpsndSndioPlugin*)device;
 
-	if (device == NULL)
+	if (device == nullptr)
 		return;
 
 	rdpsnd_sndio_close(device);
 	free(sndio);
 }
 
-static BOOL rdpsnd_sndio_format_supported(rdpsndDevicePlugin* device, AUDIO_FORMAT* format)
+static BOOL rdpsnd_sndio_format_supported(WINPR_ATTR_UNUSED rdpsndDevicePlugin* device,
+                                          const AUDIO_FORMAT* format)
 {
-	if (format == NULL)
+	if (format == nullptr)
 		return FALSE;
 
 	return (format->wFormatTag == WAVE_FORMAT_PCM);
 }
 
-static void rdpsnd_sndio_play(rdpsndDevicePlugin* device, BYTE* data, int size)
+static UINT rdpsnd_sndio_play(rdpsndDevicePlugin* device, const BYTE* data, size_t size)
 {
 	rdpsndSndioPlugin* sndio = (rdpsndSndioPlugin*)device;
 
-	if (device == NULL || sndio->hdl == NULL)
-		return;
+	if (device == nullptr || sndio->hdl == nullptr)
+		return ERROR_INVALID_PARAMETER;
 
-	sio_write(sndio->hdl, data, size);
+	const size_t rc = sio_write(sndio->hdl, data, size);
+	if (rc != size)
+		return CHANNEL_RC_OK;
+	return CHANNEL_RC_OK;
 }
 
 /**
@@ -150,22 +151,22 @@ static void rdpsnd_sndio_play(rdpsndDevicePlugin* device, BYTE* data, int size)
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT rdpsnd_sndio_parse_addin_args(rdpsndDevicePlugin* device, ADDIN_ARGV* args)
+static UINT rdpsnd_sndio_parse_addin_args(rdpsndDevicePlugin* device, const ADDIN_ARGV* args)
 {
-	int status;
-	DWORD flags;
-	COMMAND_LINE_ARGUMENT_A* arg;
 	rdpsndSndioPlugin* sndio = (rdpsndSndioPlugin*)device;
-	COMMAND_LINE_ARGUMENT_A rdpsnd_sndio_args[] = { { NULL, 0, NULL, NULL, NULL, -1, NULL, NULL } };
-	flags =
+	WINPR_ASSERT(sndio);
+
+	COMMAND_LINE_ARGUMENT_A rdpsnd_sndio_args[] = { { nullptr, 0, nullptr, nullptr, nullptr, -1,
+		                                              nullptr, nullptr } };
+	const DWORD flags =
 	    COMMAND_LINE_SIGIL_NONE | COMMAND_LINE_SEPARATOR_COLON | COMMAND_LINE_IGN_UNKNOWN_KEYWORD;
-	status = CommandLineParseArgumentsA(args->argc, (const char**)args->argv, rdpsnd_sndio_args,
-	                                    flags, sndio, NULL, NULL);
+	const int status = CommandLineParseArgumentsA(args->argc, args->argv, rdpsnd_sndio_args, flags,
+	                                              sndio, nullptr, nullptr);
 
 	if (status < 0)
 		return ERROR_INVALID_DATA;
 
-	arg = rdpsnd_sndio_args;
+	const COMMAND_LINE_ARGUMENT_A* arg = rdpsnd_sndio_args;
 
 	do
 	{
@@ -173,30 +174,23 @@ static UINT rdpsnd_sndio_parse_addin_args(rdpsndDevicePlugin* device, ADDIN_ARGV
 			continue;
 
 		CommandLineSwitchStart(arg) CommandLineSwitchEnd(arg)
-	} while ((arg = CommandLineFindNextArgumentA(arg)) != NULL);
+	} while ((arg = CommandLineFindNextArgumentA(arg)) != nullptr);
 
 	return CHANNEL_RC_OK;
 }
-
-#ifdef BUILTIN_CHANNELS
-#define freerdp_rdpsnd_client_subsystem_entry sndio_freerdp_rdpsnd_client_subsystem_entry
-#else
-#define freerdp_rdpsnd_client_subsystem_entry FREERDP_API freerdp_rdpsnd_client_subsystem_entry
-#endif
 
 /**
  * Function description
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT freerdp_rdpsnd_client_subsystem_entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints)
+FREERDP_ENTRY_POINT(UINT VCAPITYPE sndio_freerdp_rdpsnd_client_subsystem_entry(
+    PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints))
 {
-	ADDIN_ARGV* args;
-	rdpsndSndioPlugin* sndio;
 	UINT ret = CHANNEL_RC_OK;
-	sndio = (rdpsndSndioPlugin*)calloc(1, sizeof(rdpsndSndioPlugin));
+	rdpsndSndioPlugin* sndio = (rdpsndSndioPlugin*)calloc(1, sizeof(rdpsndSndioPlugin));
 
-	if (sndio == NULL)
+	if (sndio == nullptr)
 		return CHANNEL_RC_NO_MEMORY;
 
 	sndio->device.Open = rdpsnd_sndio_open;
@@ -205,11 +199,11 @@ UINT freerdp_rdpsnd_client_subsystem_entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS p
 	sndio->device.Play = rdpsnd_sndio_play;
 	sndio->device.Close = rdpsnd_sndio_close;
 	sndio->device.Free = rdpsnd_sndio_free;
-	args = pEntryPoints->args;
+	const ADDIN_ARGV* args = pEntryPoints->args;
 
 	if (args->argc > 1)
 	{
-		ret = rdpsnd_sndio_parse_addin_args((rdpsndDevicePlugin*)sndio, args);
+		ret = rdpsnd_sndio_parse_addin_args(&sndio->device, args);
 
 		if (ret != CHANNEL_RC_OK)
 		{

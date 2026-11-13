@@ -23,26 +23,25 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 
 #include <freerdp/types.h>
 #include <freerdp/constants.h>
+#include <freerdp/freerdp.h>
 
 #include "rail_orders.h"
 #include "rail_main.h"
 
-#include "../../channels/client/addin.h"
+#include "../../../channels/client/addin.h"
 
 RailClientContext* rail_get_client_interface(railPlugin* rail)
 {
-	RailClientContext* pInterface;
+	RailClientContext* pInterface = nullptr;
 
 	if (!rail)
-		return NULL;
+		return nullptr;
 
 	pInterface = (RailClientContext*)rail->channelEntryPoints.pInterface;
 	return pInterface;
@@ -55,7 +54,7 @@ RailClientContext* rail_get_client_interface(railPlugin* rail)
  */
 static UINT rail_send(railPlugin* rail, wStream* s)
 {
-	UINT status;
+	UINT status = 0;
 
 	if (!rail)
 	{
@@ -83,23 +82,13 @@ static UINT rail_send(railPlugin* rail, wStream* s)
  */
 UINT rail_send_channel_data(railPlugin* rail, wStream* src)
 {
-	wStream* s;
-	size_t length;
-
 	if (!rail || !src)
-		return ERROR_INVALID_PARAMETER;
-
-	length = Stream_GetPosition(src);
-	s = Stream_New(NULL, length);
-
-	if (!s)
 	{
-		WLog_ERR(TAG, "Stream_New failed!");
-		return CHANNEL_RC_NO_MEMORY;
+		Stream_Free(src, TRUE);
+		return ERROR_INVALID_PARAMETER;
 	}
 
-	Stream_Write(s, Stream_Buffer(src), length);
-	return rail_send(rail, s);
+	return rail_send(rail, src);
 }
 
 /**
@@ -113,13 +102,13 @@ UINT rail_send_channel_data(railPlugin* rail, wStream* src)
  */
 static UINT rail_client_execute(RailClientContext* context, const RAIL_EXEC_ORDER* exec)
 {
-	char* exeOrFile;
-	UINT error;
-	railPlugin* rail;
-	UINT16 flags;
-	RAIL_UNICODE_STRING ruExeOrFile = { 0 };
-	RAIL_UNICODE_STRING ruWorkingDir = { 0 };
-	RAIL_UNICODE_STRING ruArguments = { 0 };
+	const char* exeOrFile = nullptr;
+	UINT error = 0;
+	railPlugin* rail = nullptr;
+	UINT16 flags = 0;
+	RAIL_UNICODE_STRING ruExeOrFile = WINPR_C_ARRAY_INIT;
+	RAIL_UNICODE_STRING ruWorkingDir = WINPR_C_ARRAY_INIT;
+	RAIL_UNICODE_STRING ruArguments = WINPR_C_ARRAY_INIT;
 
 	if (!context || !exec)
 		return ERROR_INVALID_PARAMETER;
@@ -141,9 +130,9 @@ static UINT rail_client_execute(RailClientContext* context, const RAIL_EXEC_ORDE
 	else
 		error = rail_send_client_exec_order(rail, flags, &ruExeOrFile, &ruWorkingDir, &ruArguments);
 
-	free(ruExeOrFile.string);
-	free(ruWorkingDir.string);
-	free(ruArguments.string);
+	rail_unicode_string_free(&ruExeOrFile);
+	rail_unicode_string_free(&ruWorkingDir);
+	rail_unicode_string_free(&ruArguments);
 	return error;
 }
 
@@ -154,7 +143,7 @@ static UINT rail_client_execute(RailClientContext* context, const RAIL_EXEC_ORDE
  */
 static UINT rail_client_activate(RailClientContext* context, const RAIL_ACTIVATE_ORDER* activate)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !activate)
 		return ERROR_INVALID_PARAMETER;
@@ -168,18 +157,15 @@ static UINT rail_client_activate(RailClientContext* context, const RAIL_ACTIVATE
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT rail_send_client_sysparam(RailClientContext* context, RAIL_SYSPARAM_ORDER* sysparam)
+static UINT rail_send_client_sysparam(RailClientContext* context,
+                                      const RAIL_SYSPARAM_ORDER* sysparam)
 {
-	wStream* s;
 	size_t length = RAIL_SYSPARAM_ORDER_LENGTH;
-	railPlugin* rail;
-	UINT error;
-	BOOL extendedSpiSupported;
 
 	if (!context || !sysparam)
 		return ERROR_INVALID_PARAMETER;
 
-	rail = (railPlugin*)context->handle;
+	railPlugin* rail = (railPlugin*)context->handle;
 
 	switch (sysparam->param)
 	{
@@ -214,7 +200,7 @@ static UINT rail_send_client_sysparam(RailClientContext* context, RAIL_SYSPARAM_
 			return ERROR_BAD_ARGUMENTS;
 	}
 
-	s = rail_pdu_init(length);
+	wStream* s = rail_pdu_init(length);
 
 	if (!s)
 	{
@@ -222,21 +208,16 @@ static UINT rail_send_client_sysparam(RailClientContext* context, RAIL_SYSPARAM_
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
-	extendedSpiSupported = rail_is_extended_spi_supported(rail->channelFlags);
-	if ((error = rail_write_sysparam_order(s, sysparam, extendedSpiSupported)))
+	const BOOL extendedSpiSupported = rail_is_extended_spi_supported(rail->channelFlags);
+	const UINT error = rail_write_sysparam_order(s, sysparam, extendedSpiSupported);
+	if (error)
 	{
 		WLog_ERR(TAG, "rail_write_client_sysparam_order failed with error %" PRIu32 "!", error);
 		Stream_Free(s, TRUE);
 		return error;
 	}
 
-	if ((error = rail_send_pdu(rail, s, TS_RAIL_ORDER_SYSPARAM)))
-	{
-		WLog_ERR(TAG, "rail_send_pdu failed with error %" PRIu32 "!", error);
-	}
-
-	Stream_Free(s, TRUE);
-	return error;
+	return rail_send_pdu(rail, s, TS_RAIL_ORDER_SYSPARAM);
 }
 
 /**
@@ -248,12 +229,11 @@ static UINT rail_client_system_param(RailClientContext* context,
                                      const RAIL_SYSPARAM_ORDER* sysInParam)
 {
 	UINT error = CHANNEL_RC_OK;
-	RAIL_SYSPARAM_ORDER sysparam;
 
 	if (!context || !sysInParam)
 		return ERROR_INVALID_PARAMETER;
 
-	sysparam = *sysInParam;
+	RAIL_SYSPARAM_ORDER sysparam = *sysInParam;
 
 	if (sysparam.params & SPI_MASK_SET_HIGH_CONTRAST)
 	{
@@ -343,7 +323,7 @@ static UINT rail_client_system_param(RailClientContext* context,
 static UINT rail_client_system_command(RailClientContext* context,
                                        const RAIL_SYSCOMMAND_ORDER* syscommand)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !syscommand)
 		return ERROR_INVALID_PARAMETER;
@@ -359,13 +339,51 @@ static UINT rail_client_system_command(RailClientContext* context,
  */
 static UINT rail_client_handshake(RailClientContext* context, const RAIL_HANDSHAKE_ORDER* handshake)
 {
-	railPlugin* rail;
-
 	if (!context || !handshake)
 		return ERROR_INVALID_PARAMETER;
 
-	rail = (railPlugin*)context->handle;
+	railPlugin* rail = (railPlugin*)context->handle;
+	WINPR_ASSERT(rail);
+	WLog_Print(rail->log, WLOG_DEBUG, "build=0x%08" PRIx32, handshake->buildNumber);
 	return rail_send_handshake_order(rail, handshake);
+}
+
+static UINT rail_server_handshake(RailClientContext* context, const RAIL_HANDSHAKE_ORDER* handshake)
+{
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(handshake);
+
+	railPlugin* rail = (railPlugin*)context->handle;
+	WINPR_ASSERT(rail);
+
+	WLog_Print(rail->log, WLOG_DEBUG, "build=0x%08" PRIx32, handshake->buildNumber);
+
+	const UINT32 buildnumber =
+	    freerdp_settings_get_uint32(rail->rdpcontext->settings, FreeRDP_ClientBuild);
+	const RAIL_HANDSHAKE_ORDER clientHandshake = { buildnumber };
+	const UINT status = context->ClientHandshake(context, &clientHandshake);
+	if (status != CHANNEL_RC_OK)
+		return status;
+	/* Advertise client status before waiting for monitored-desktop orders. */
+	return rail_send_client_status(context);
+}
+
+static UINT rail_server_handshake_ex(RailClientContext* context,
+                                     const RAIL_HANDSHAKE_EX_ORDER* handshakeEx)
+{
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(handshakeEx);
+
+	railPlugin* rail = (railPlugin*)context->handle;
+	WINPR_ASSERT(rail);
+
+	const RAIL_HANDSHAKE_ORDER handshake = { handshakeEx->buildNumber };
+
+	char buffer[128] = WINPR_C_ARRAY_INIT;
+	WLog_Print(
+	    rail->log, WLOG_DEBUG, "build=0x%08" PRIx32 ", flags=%s", handshakeEx->buildNumber,
+	    rail_handshake_ex_flags_to_string(handshakeEx->railHandshakeFlags, buffer, sizeof(buffer)));
+	return rail_server_handshake(context, &handshake);
 }
 
 /**
@@ -376,7 +394,7 @@ static UINT rail_client_handshake(RailClientContext* context, const RAIL_HANDSHA
 static UINT rail_client_notify_event(RailClientContext* context,
                                      const RAIL_NOTIFY_EVENT_ORDER* notifyEvent)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !notifyEvent)
 		return ERROR_INVALID_PARAMETER;
@@ -393,7 +411,7 @@ static UINT rail_client_notify_event(RailClientContext* context,
 static UINT rail_client_window_move(RailClientContext* context,
                                     const RAIL_WINDOW_MOVE_ORDER* windowMove)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !windowMove)
 		return ERROR_INVALID_PARAMETER;
@@ -410,7 +428,7 @@ static UINT rail_client_window_move(RailClientContext* context,
 static UINT rail_client_information(RailClientContext* context,
                                     const RAIL_CLIENT_STATUS_ORDER* clientStatus)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !clientStatus)
 		return ERROR_INVALID_PARAMETER;
@@ -426,7 +444,7 @@ static UINT rail_client_information(RailClientContext* context,
  */
 static UINT rail_client_system_menu(RailClientContext* context, const RAIL_SYSMENU_ORDER* sysmenu)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !sysmenu)
 		return ERROR_INVALID_PARAMETER;
@@ -443,7 +461,7 @@ static UINT rail_client_system_menu(RailClientContext* context, const RAIL_SYSME
 static UINT rail_client_language_bar_info(RailClientContext* context,
                                           const RAIL_LANGBAR_INFO_ORDER* langBarInfo)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !langBarInfo)
 		return ERROR_INVALID_PARAMETER;
@@ -455,7 +473,7 @@ static UINT rail_client_language_bar_info(RailClientContext* context,
 static UINT rail_client_language_ime_info(RailClientContext* context,
                                           const RAIL_LANGUAGEIME_INFO_ORDER* langImeInfo)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !langImeInfo)
 		return ERROR_INVALID_PARAMETER;
@@ -472,7 +490,7 @@ static UINT rail_client_language_ime_info(RailClientContext* context,
 static UINT rail_client_get_appid_request(RailClientContext* context,
                                           const RAIL_GET_APPID_REQ_ORDER* getAppIdReq)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !getAppIdReq || !context->handle)
 		return ERROR_INVALID_PARAMETER;
@@ -484,7 +502,7 @@ static UINT rail_client_get_appid_request(RailClientContext* context,
 static UINT rail_client_compartment_info(RailClientContext* context,
                                          const RAIL_COMPARTMENT_INFO_ORDER* compartmentInfo)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !compartmentInfo || !context->handle)
 		return ERROR_INVALID_PARAMETER;
@@ -495,7 +513,7 @@ static UINT rail_client_compartment_info(RailClientContext* context,
 
 static UINT rail_client_cloak(RailClientContext* context, const RAIL_CLOAK* cloak)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !cloak || !context->handle)
 		return ERROR_INVALID_PARAMETER;
@@ -506,13 +524,31 @@ static UINT rail_client_cloak(RailClientContext* context, const RAIL_CLOAK* cloa
 
 static UINT rail_client_snap_arrange(RailClientContext* context, const RAIL_SNAP_ARRANGE* snap)
 {
-	railPlugin* rail;
+	railPlugin* rail = nullptr;
 
 	if (!context || !snap || !context->handle)
 		return ERROR_INVALID_PARAMETER;
 
 	rail = (railPlugin*)context->handle;
 	return rail_send_client_snap_arrange_order(rail, snap);
+}
+
+static UINT rail_client_text_scale(RailClientContext* context, UINT32 textScale)
+{
+	if (!context || !context->handle)
+		return ERROR_INVALID_PARAMETER;
+
+	railPlugin* rail = (railPlugin*)context->handle;
+	return rail_send_client_text_scale_order(rail, textScale);
+}
+
+static UINT rail_client_caret_blink_rate(RailClientContext* context, UINT32 rate)
+{
+	if (!context || !context->handle)
+		return ERROR_INVALID_PARAMETER;
+
+	railPlugin* rail = (railPlugin*)context->handle;
+	return rail_send_client_caret_blink_rate_order(rail, rate);
 }
 
 static VOID VCAPITYPE rail_virtual_channel_open_event_ex(LPVOID lpUserParam, DWORD openHandle,
@@ -553,13 +589,13 @@ static VOID VCAPITYPE rail_virtual_channel_open_event_ex(LPVOID lpUserParam, DWO
 
 		case CHANNEL_EVENT_USER:
 			break;
+		default:
+			break;
 	}
 
 	if (error && rail && rail->rdpcontext)
 		setChannelError(rail->rdpcontext, error,
 		                "rail_virtual_channel_open_event reported an error");
-
-	return;
 }
 
 /**
@@ -567,33 +603,19 @@ static VOID VCAPITYPE rail_virtual_channel_open_event_ex(LPVOID lpUserParam, DWO
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT rail_virtual_channel_event_connected(railPlugin* rail, LPVOID pData, UINT32 dataLength)
+static UINT rail_virtual_channel_event_connected(railPlugin* rail, WINPR_ATTR_UNUSED LPVOID pData,
+                                                 WINPR_ATTR_UNUSED UINT32 dataLength)
 {
-	RailClientContext* context = rail_get_client_interface(rail);
-	UINT status;
-	status = rail->channelEntryPoints.pVirtualChannelOpenEx(rail->InitHandle, &rail->OpenHandle,
-	                                                        rail->channelDef.name,
-	                                                        rail_virtual_channel_open_event_ex);
+	WINPR_ASSERT(rail);
 
-	if (status != CHANNEL_RC_OK)
-	{
-		WLog_ERR(TAG, "pVirtualChannelOpen failed with %s [%08" PRIX32 "]",
-		         WTSErrorToString(status), status);
-		return status;
-	}
+	rail->MsgsHandle = channel_client_create_handler(rail->rdpcontext, rail, rail_order_recv,
+	                                                 RAIL_SVC_CHANNEL_NAME);
+	if (!rail->MsgsHandle)
+		return ERROR_INTERNAL_ERROR;
 
-	if (context)
-	{
-		IFCALLRET(context->OnOpen, status, context, &rail->sendHandshake);
-
-		if (status != CHANNEL_RC_OK)
-			WLog_ERR(TAG, "context->OnOpen failed with %s [%08" PRIX32 "]",
-			         WTSErrorToString(status), status);
-	}
-	rail->MsgsHandle =
-	    channel_client_create_handler(rail->rdpcontext, rail, rail_order_recv, "rail");
-
-	return CHANNEL_RC_OK;
+	return rail->channelEntryPoints.pVirtualChannelOpenEx(rail->InitHandle, &rail->OpenHandle,
+	                                                      rail->channelDef.name,
+	                                                      rail_virtual_channel_open_event_ex);
 }
 
 /**
@@ -603,13 +625,13 @@ static UINT rail_virtual_channel_event_connected(railPlugin* rail, LPVOID pData,
  */
 static UINT rail_virtual_channel_event_disconnected(railPlugin* rail)
 {
-	UINT rc;
+	UINT rc = 0;
 
+	channel_client_quit_handler(rail->MsgsHandle);
 	if (rail->OpenHandle == 0)
 		return CHANNEL_RC_OK;
 
-	channel_client_quit_handler(rail->MsgsHandle);
-
+	WINPR_ASSERT(rail->channelEntryPoints.pVirtualChannelCloseEx);
 	rc = rail->channelEntryPoints.pVirtualChannelCloseEx(rail->InitHandle, rail->OpenHandle);
 
 	if (CHANNEL_RC_OK != rc)
@@ -621,13 +643,12 @@ static UINT rail_virtual_channel_event_disconnected(railPlugin* rail)
 
 	rail->OpenHandle = 0;
 
-
 	return CHANNEL_RC_OK;
 }
 
 static void rail_virtual_channel_event_terminated(railPlugin* rail)
 {
-	rail->InitHandle = 0;
+	rail->InitHandle = nullptr;
 	free(rail->context);
 	free(rail);
 }
@@ -679,12 +700,13 @@ static VOID VCAPITYPE rail_virtual_channel_init_event_ex(LPVOID lpUserParam, LPV
 /* rail is always built-in */
 #define VirtualChannelEntryEx rail_VirtualChannelEntryEx
 
-BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS pEntryPoints, PVOID pInitHandle)
+FREERDP_ENTRY_POINT(BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS_EX pEntryPoints,
+                                                         PVOID pInitHandle))
 {
-	UINT rc;
-	railPlugin* rail;
-	RailClientContext* context = NULL;
-	CHANNEL_ENTRY_POINTS_FREERDP_EX* pEntryPointsEx;
+	UINT rc = 0;
+	railPlugin* rail = nullptr;
+	RailClientContext* context = nullptr;
+	CHANNEL_ENTRY_POINTS_FREERDP_EX* pEntryPointsEx = nullptr;
 	BOOL isFreerdp = FALSE;
 	rail = (railPlugin*)calloc(1, sizeof(railPlugin));
 
@@ -694,11 +716,9 @@ BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS pEntryPoints, PVOID p
 		return FALSE;
 	}
 
-	/* Default to automatically replying to server handshakes */
-	rail->sendHandshake = TRUE;
 	rail->channelDef.options = CHANNEL_OPTION_INITIALIZED | CHANNEL_OPTION_ENCRYPT_RDP |
 	                           CHANNEL_OPTION_COMPRESS_RDP | CHANNEL_OPTION_SHOW_PROTOCOL;
-	sprintf_s(rail->channelDef.name, ARRAYSIZE(rail->channelDef.name), RAIL_SVC_CHANNEL_NAME);
+	(void)sprintf_s(rail->channelDef.name, ARRAYSIZE(rail->channelDef.name), RAIL_SVC_CHANNEL_NAME);
 	pEntryPointsEx = (CHANNEL_ENTRY_POINTS_FREERDP_EX*)pEntryPoints;
 
 	if ((pEntryPointsEx->cbSize >= sizeof(CHANNEL_ENTRY_POINTS_FREERDP_EX)) &&
@@ -714,12 +734,14 @@ BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS pEntryPoints, PVOID p
 		}
 
 		context->handle = (void*)rail;
-		context->custom = NULL;
+		context->custom = nullptr;
 		context->ClientExecute = rail_client_execute;
 		context->ClientActivate = rail_client_activate;
 		context->ClientSystemParam = rail_client_system_param;
 		context->ClientSystemCommand = rail_client_system_command;
 		context->ClientHandshake = rail_client_handshake;
+		context->ServerHandshake = rail_server_handshake;
+		context->ServerHandshakeEx = rail_server_handshake_ex;
 		context->ClientNotifyEvent = rail_client_notify_event;
 		context->ClientWindowMove = rail_client_window_move;
 		context->ClientInformation = rail_client_information;
@@ -730,6 +752,8 @@ BOOL VCAPITYPE VirtualChannelEntryEx(PCHANNEL_ENTRY_POINTS pEntryPoints, PVOID p
 		context->ClientSnapArrange = rail_client_snap_arrange;
 		context->ClientCloak = rail_client_cloak;
 		context->ClientCompartmentInfo = rail_client_compartment_info;
+		context->ClientTextScale = rail_client_text_scale;
+		context->ClientCaretBlinkRate = rail_client_caret_blink_rate;
 		rail->rdpcontext = pEntryPointsEx->context;
 		rail->context = context;
 		isFreerdp = TRUE;

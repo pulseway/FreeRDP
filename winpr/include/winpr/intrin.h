@@ -22,7 +22,7 @@
 #ifndef WINPR_INTRIN_H
 #define WINPR_INTRIN_H
 
-#ifndef _WIN32
+#if !defined(_WIN32) || defined(__MINGW32__) || defined(_M_ARM64)
 
 /**
  * __lzcnt16, __lzcnt, __lzcnt64:
@@ -33,19 +33,21 @@
 
 #if (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2))
 
-static INLINE UINT32 __lzcnt(UINT32 _val32)
+WINPR_ATTR_NODISCARD static inline UINT32 __lzcnt(UINT32 _val32)
 {
 	return ((UINT32)__builtin_clz(_val32));
 }
 
-static INLINE UINT16 __lzcnt16(UINT16 _val16)
+#if !(defined(__MINGW32__) && defined(__clang__))
+WINPR_ATTR_NODISCARD static inline UINT16 __lzcnt16(UINT16 _val16)
 {
 	return ((UINT16)(__builtin_clz((UINT32)_val16) - 16));
 }
+#endif /* !(defined(__MINGW32__) && defined(__clang__)) */
 
 #else /* (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2) */
 
-static INLINE UINT32 __lzcnt(UINT32 x)
+WINPR_ATTR_NODISCARD static inline UINT32 __lzcnt(UINT32 x)
 {
 	unsigned y;
 	int n = 32;
@@ -79,12 +81,13 @@ static INLINE UINT32 __lzcnt(UINT32 x)
 	return n - x;
 }
 
-static INLINE UINT16 __lzcnt16(UINT16 x)
+WINPR_ATTR_NODISCARD static inline UINT16 __lzcnt16(UINT16 x)
 {
 	return ((UINT16)__lzcnt((UINT32)x));
 }
 
 #endif /* (__GNUC__ > 4) || ((__GNUC__ == 4) && (__GNUC_MINOR__ >= 2) */
 
-#endif /* _WIN32 */
+#endif /* !defined(_WIN32) || defined(__MINGW32__) */
+
 #endif /* WINPR_INTRIN_H */

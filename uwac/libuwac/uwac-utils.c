@@ -22,12 +22,13 @@
  * OF THIS SOFTWARE.
  */
 
-#include "config.h"
+#include <uwac/config.h>
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <winpr/wtypes.h>
 
 #include "uwac-utils.h"
 
@@ -37,9 +38,10 @@
 
 static void* fail_on_null(void* p)
 {
-	if (p == NULL)
+	if (p == nullptr)
 	{
-		fprintf(stderr, "out of memory\n");
+		(void)fprintf(stderr, "out of memory\n");
+		// NOLINTNEXTLINE(concurrency-mt-unsafe)
 		exit(EXIT_FAILURE);
 	}
 

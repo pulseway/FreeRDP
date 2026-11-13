@@ -18,9 +18,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdlib.h>
 
@@ -34,24 +32,50 @@
 #include <freerdp/channels/channels.h>
 #include <freerdp/channels/cliprdr.h>
 
+#include <freerdp/client/client_cliprdr_file.h>
+
 #include "wlf_cliprdr.h"
 
 #define TAG CLIENT_TAG("wayland.cliprdr")
 
-#define MAX_CLIPBOARD_FORMATS 255
+#define mime_text_plain "text/plain"
+// NOLINTNEXTLINE(bugprone-suspicious-missing-comma)
+static const char mime_text_utf8[] = mime_text_plain ";charset=utf-8";
 
-static const char* mime_text[] = { "text/plain",  "text/plain;charset=utf-8",
-	                               "UTF8_STRING", "COMPOUND_TEXT",
-	                               "TEXT",        "STRING" };
+// NOLINTNEXTLINE(bugprone-suspicious-missing-comma)
+static const char* mime_text[] = { mime_text_plain, mime_text_utf8, "UTF8_STRING",
+	                               "COMPOUND_TEXT", "TEXT",         "STRING" };
 
-static const char* mime_image[] = {
-	"image/png",       "image/bmp",   "image/x-bmp",        "image/x-MS-bmp",
-	"image/x-icon",    "image/x-ico", "image/x-win-bitmap", "image/vmd.microsoft.icon",
-	"application/ico", "image/ico",   "image/icon",         "image/jpeg",
-	"image/tiff"
-};
+static const char mime_png[] = "image/png";
+static const char mime_webp[] = "image/webp";
+static const char mime_jpg[] = "image/jpeg";
+static const char mime_tiff[] = "image/tiff";
+static const char mime_uri_list[] = "text/uri-list";
+static const char mime_html[] = "text/html";
 
-static const char* mime_html[] = { "text/html" };
+#define BMP_MIME_LIST "image/bmp", "image/x-bmp", "image/x-MS-bmp", "image/x-win-bitmap"
+static const char* mime_bitmap[] = { BMP_MIME_LIST };
+static const char* mime_image[] = { mime_png, mime_webp, mime_jpg, mime_tiff, BMP_MIME_LIST };
+
+static const char mime_gnome_copied_files[] = "x-special/gnome-copied-files";
+static const char mime_mate_copied_files[] = "x-special/mate-copied-files";
+
+static const char type_FileGroupDescriptorW[] = "FileGroupDescriptorW";
+static const char type_HtmlFormat[] = "HTML Format";
+
+typedef struct
+{
+	FILE* responseFile;
+	UINT32 responseFormat;
+	char* responseMime;
+} wlf_request;
+
+typedef struct
+{
+	const FILE* responseFile;
+	UINT32 responseFormat;
+	const char* responseMime;
+} wlf_const_request;
 
 struct wlf_clipboard
 {
@@ -62,7 +86,6 @@ struct wlf_clipboard
 
 	UwacSeat* seat;
 	wClipboard* system;
-	wClipboardDelegate* delegate;
 
 	size_t numClientFormats;
 	CLIPRDR_FORMAT* clientFormats;
@@ -72,21 +95,62 @@ struct wlf_clipboard
 
 	BOOL sync;
 
-	/* File clipping */
-	BOOL streams_supported;
-	BOOL file_formats_registered;
+	CRITICAL_SECTION lock;
+	CliprdrFileContext* file;
 
-	/* Server response stuff */
-	FILE* responseFile;
-	UINT32 responseFormat;
-	const char* responseMime;
+	wQueue* request_queue;
 };
+
+static void wlf_request_free(void* rq)
+{
+	wlf_request* request = rq;
+	if (request)
+	{
+		free(request->responseMime);
+		if (request->responseFile)
+			(void)fclose(request->responseFile);
+	}
+	free(request);
+}
+
+static wlf_request* wlf_request_new(void)
+{
+	return calloc(1, sizeof(wlf_request));
+}
+
+static void* wlf_request_clone(const void* oth)
+{
+	const wlf_request* other = (const wlf_request*)oth;
+	wlf_request* copy = wlf_request_new();
+	if (!copy)
+		return nullptr;
+	*copy = *other;
+	if (other->responseMime)
+	{
+		copy->responseMime = _strdup(other->responseMime);
+		if (!copy->responseMime)
+			goto fail;
+	}
+	return copy;
+fail:
+	wlf_request_free(copy);
+	return nullptr;
+}
+
+static BOOL wlf_mime_is_file(const char* mime)
+{
+	if (strncmp(mime_uri_list, mime, sizeof(mime_uri_list)) == 0)
+		return TRUE;
+	if (strncmp(mime_gnome_copied_files, mime, sizeof(mime_gnome_copied_files)) == 0)
+		return TRUE;
+	if (strncmp(mime_mate_copied_files, mime, sizeof(mime_mate_copied_files)) == 0)
+		return TRUE;
+	return FALSE;
+}
 
 static BOOL wlf_mime_is_text(const char* mime)
 {
-	size_t x;
-
-	for (x = 0; x < ARRAYSIZE(mime_text); x++)
+	for (size_t x = 0; x < ARRAYSIZE(mime_text); x++)
 	{
 		if (strcmp(mime, mime_text[x]) == 0)
 			return TRUE;
@@ -97,9 +161,7 @@ static BOOL wlf_mime_is_text(const char* mime)
 
 static BOOL wlf_mime_is_image(const char* mime)
 {
-	size_t x;
-
-	for (x = 0; x < ARRAYSIZE(mime_image); x++)
+	for (size_t x = 0; x < ARRAYSIZE(mime_image); x++)
 	{
 		if (strcmp(mime, mime_image[x]) == 0)
 			return TRUE;
@@ -110,31 +172,21 @@ static BOOL wlf_mime_is_image(const char* mime)
 
 static BOOL wlf_mime_is_html(const char* mime)
 {
-	size_t x;
-
-	for (x = 0; x < ARRAYSIZE(mime_html); x++)
-	{
-		if (strcmp(mime, mime_html[x]) == 0)
-			return TRUE;
-	}
-
-	return FALSE;
+	return strcmp(mime, mime_html) == 0;
 }
 
 static void wlf_cliprdr_free_server_formats(wfClipboard* clipboard)
 {
 	if (clipboard && clipboard->serverFormats)
 	{
-		size_t j;
-
-		for (j = 0; j < clipboard->numServerFormats; j++)
+		for (size_t j = 0; j < clipboard->numServerFormats; j++)
 		{
 			CLIPRDR_FORMAT* format = &clipboard->serverFormats[j];
 			free(format->formatName);
 		}
 
 		free(clipboard->serverFormats);
-		clipboard->serverFormats = NULL;
+		clipboard->serverFormats = nullptr;
 		clipboard->numServerFormats = 0;
 	}
 
@@ -146,16 +198,14 @@ static void wlf_cliprdr_free_client_formats(wfClipboard* clipboard)
 {
 	if (clipboard && clipboard->numClientFormats)
 	{
-		size_t j;
-
-		for (j = 0; j < clipboard->numClientFormats; j++)
+		for (size_t j = 0; j < clipboard->numClientFormats; j++)
 		{
 			CLIPRDR_FORMAT* format = &clipboard->clientFormats[j];
 			free(format->formatName);
 		}
 
 		free(clipboard->clientFormats);
-		clipboard->clientFormats = NULL;
+		clipboard->clientFormats = nullptr;
 		clipboard->numClientFormats = 0;
 	}
 
@@ -170,21 +220,35 @@ static void wlf_cliprdr_free_client_formats(wfClipboard* clipboard)
  */
 static UINT wlf_cliprdr_send_client_format_list(wfClipboard* clipboard)
 {
-	CLIPRDR_FORMAT_LIST formatList = { 0 };
-	formatList.msgFlags = CB_RESPONSE_OK;
-	formatList.numFormats = (UINT32)clipboard->numClientFormats;
-	formatList.formats = clipboard->clientFormats;
-	formatList.msgType = CB_FORMAT_LIST;
+	WINPR_ASSERT(clipboard);
+
+	const CLIPRDR_FORMAT_LIST formatList = { .common.msgFlags = 0,
+		                                     .numFormats = (UINT32)clipboard->numClientFormats,
+		                                     .formats = clipboard->clientFormats,
+		                                     .common.msgType = CB_FORMAT_LIST };
+
+	if (!cliprdr_file_context_clear(clipboard->file))
+		return ERROR_INTERNAL_ERROR;
+
+	WLog_VRB(TAG, "-------------- client format list [%" PRIu32 "] ------------------",
+	         formatList.numFormats);
+	for (UINT32 x = 0; x < formatList.numFormats; x++)
+	{
+		const CLIPRDR_FORMAT* format = &formatList.formats[x];
+		WLog_VRB(TAG, "client announces %" PRIu32 " [%s][%s]", format->formatId,
+		         ClipboardGetFormatIdString(format->formatId), format->formatName);
+	}
+	WINPR_ASSERT(clipboard->context);
+	WINPR_ASSERT(clipboard->context->ClientFormatList);
 	return clipboard->context->ClientFormatList(clipboard->context, &formatList);
 }
 
 static void wfl_cliprdr_add_client_format_id(wfClipboard* clipboard, UINT32 formatId)
 {
-	size_t x;
-	CLIPRDR_FORMAT* format;
+	CLIPRDR_FORMAT* format = nullptr;
 	const char* name = ClipboardGetFormatName(clipboard->system, formatId);
 
-	for (x = 0; x < clipboard->numClientFormats; x++)
+	for (size_t x = 0; x < clipboard->numClientFormats; x++)
 	{
 		format = &clipboard->clientFormats[x];
 
@@ -201,17 +265,19 @@ static void wfl_cliprdr_add_client_format_id(wfClipboard* clipboard, UINT32 form
 	clipboard->clientFormats = format;
 	format = &clipboard->clientFormats[clipboard->numClientFormats++];
 	format->formatId = formatId;
-	format->formatName = NULL;
+	format->formatName = nullptr;
 
 	if (name && (formatId >= CF_MAX))
 		format->formatName = _strdup(name);
 }
 
-static void wlf_cliprdr_add_client_format(wfClipboard* clipboard, const char* mime)
+static BOOL wlf_cliprdr_add_client_format(wfClipboard* clipboard, const char* mime)
 {
+	WINPR_ASSERT(mime);
+	ClipboardLock(clipboard->system);
 	if (wlf_mime_is_html(mime))
 	{
-		UINT32 formatId = ClipboardGetFormatId(clipboard->system, "HTML Format");
+		UINT32 formatId = ClipboardGetFormatId(clipboard->system, type_HtmlFormat);
 		wfl_cliprdr_add_client_format_id(clipboard, formatId);
 	}
 	else if (wlf_mime_is_text(mime))
@@ -222,12 +288,25 @@ static void wlf_cliprdr_add_client_format(wfClipboard* clipboard, const char* mi
 	}
 	else if (wlf_mime_is_image(mime))
 	{
-		UINT32 formatId = ClipboardGetFormatId(clipboard->system, "image/bmp");
-		wfl_cliprdr_add_client_format_id(clipboard, formatId);
+		for (size_t x = 0; x < ARRAYSIZE(mime_image); x++)
+		{
+			const char* mime_bmp = mime_image[x];
+			UINT32 formatId = ClipboardGetFormatId(clipboard->system, mime_bmp);
+			if (formatId != 0)
+				wfl_cliprdr_add_client_format_id(clipboard, formatId);
+		}
 		wfl_cliprdr_add_client_format_id(clipboard, CF_DIB);
+		wfl_cliprdr_add_client_format_id(clipboard, CF_TIFF);
+	}
+	else if (wlf_mime_is_file(mime))
+	{
+		const UINT32 fileFormatId =
+		    ClipboardGetFormatId(clipboard->system, type_FileGroupDescriptorW);
+		wfl_cliprdr_add_client_format_id(clipboard, fileFormatId);
 	}
 
-	wlf_cliprdr_send_client_format_list(clipboard);
+	ClipboardUnlock(clipboard->system);
+	return (wlf_cliprdr_send_client_format_list(clipboard) == CHANNEL_RC_OK);
 }
 
 /**
@@ -235,10 +314,18 @@ static void wlf_cliprdr_add_client_format(wfClipboard* clipboard, const char* mi
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT wlf_cliprdr_send_data_request(wfClipboard* clipboard, UINT32 formatId)
+static UINT wlf_cliprdr_send_data_request(wfClipboard* clipboard, const wlf_const_request* rq)
 {
-	CLIPRDR_FORMAT_DATA_REQUEST request = { 0 };
-	request.requestedFormatId = formatId;
+	WINPR_ASSERT(rq);
+
+	CLIPRDR_FORMAT_DATA_REQUEST request = { .requestedFormatId = rq->responseFormat };
+
+	if (!Queue_Enqueue(clipboard->request_queue, rq))
+		return ERROR_INTERNAL_ERROR;
+
+	WINPR_ASSERT(clipboard);
+	WINPR_ASSERT(clipboard->context);
+	WINPR_ASSERT(clipboard->context->ClientFormatDataRequest);
 	return clipboard->context->ClientFormatDataRequest(clipboard->context, &request);
 }
 
@@ -249,14 +336,18 @@ static UINT wlf_cliprdr_send_data_request(wfClipboard* clipboard, UINT32 formatI
  */
 static UINT wlf_cliprdr_send_data_response(wfClipboard* clipboard, const BYTE* data, size_t size)
 {
-	CLIPRDR_FORMAT_DATA_RESPONSE response = { 0 };
+	CLIPRDR_FORMAT_DATA_RESPONSE response = WINPR_C_ARRAY_INIT;
 
 	if (size > UINT32_MAX)
 		return ERROR_INVALID_PARAMETER;
 
-	response.msgFlags = (data) ? CB_RESPONSE_OK : CB_RESPONSE_FAIL;
-	response.dataLen = (UINT32)size;
+	response.common.msgFlags = (data) ? CB_RESPONSE_OK : CB_RESPONSE_FAIL;
+	response.common.dataLen = (UINT32)size;
 	response.requestedFormatData = data;
+
+	WINPR_ASSERT(clipboard);
+	WINPR_ASSERT(clipboard->context);
+	WINPR_ASSERT(clipboard->context->ClientFormatDataResponse);
 	return clipboard->context->ClientFormatDataResponse(clipboard->context, &response);
 }
 
@@ -275,9 +366,8 @@ BOOL wlf_cliprdr_handle_event(wfClipboard* clipboard, const UwacClipboardEvent* 
 			return TRUE;
 
 		case UWAC_EVENT_CLIPBOARD_OFFER:
-			WLog_Print(clipboard->log, WLOG_INFO, "client announces mime %s", event->mime);
-			wlf_cliprdr_add_client_format(clipboard, event->mime);
-			return TRUE;
+			WLog_Print(clipboard->log, WLOG_DEBUG, "client announces mime %s", event->mime);
+			return wlf_cliprdr_add_client_format(clipboard, event->mime);
 
 		case UWAC_EVENT_CLIPBOARD_SELECT:
 			WLog_Print(clipboard->log, WLOG_DEBUG, "client announces new data");
@@ -296,19 +386,22 @@ BOOL wlf_cliprdr_handle_event(wfClipboard* clipboard, const UwacClipboardEvent* 
  */
 static UINT wlf_cliprdr_send_client_capabilities(wfClipboard* clipboard)
 {
-	CLIPRDR_CAPABILITIES capabilities;
-	CLIPRDR_GENERAL_CAPABILITY_SET generalCapabilitySet;
-	capabilities.cCapabilitiesSets = 1;
-	capabilities.capabilitySets = (CLIPRDR_CAPABILITY_SET*)&(generalCapabilitySet);
-	generalCapabilitySet.capabilitySetType = CB_CAPSTYPE_GENERAL;
-	generalCapabilitySet.capabilitySetLength = 12;
-	generalCapabilitySet.version = CB_CAPS_VERSION_2;
-	generalCapabilitySet.generalFlags = CB_USE_LONG_FORMAT_NAMES;
+	WINPR_ASSERT(clipboard);
 
-	if (clipboard->streams_supported && clipboard->file_formats_registered)
-		generalCapabilitySet.generalFlags |=
-		    CB_STREAM_FILECLIP_ENABLED | CB_FILECLIP_NO_FILE_PATHS | CB_HUGE_FILE_SUPPORT_ENABLED;
+	CLIPRDR_GENERAL_CAPABILITY_SET generalCapabilitySet = {
+		.capabilitySetType = CB_CAPSTYPE_GENERAL,
+		.capabilitySetLength = 12,
+		.version = CB_CAPS_VERSION_2,
+		.generalFlags =
+		    CB_USE_LONG_FORMAT_NAMES | cliprdr_file_context_current_flags(clipboard->file)
+	};
+	CLIPRDR_CAPABILITIES capabilities = { .cCapabilitiesSets = 1,
+		                                  .capabilitySets =
+		                                      (CLIPRDR_CAPABILITY_SET*)&(generalCapabilitySet) };
 
+	WINPR_ASSERT(clipboard);
+	WINPR_ASSERT(clipboard->context);
+	WINPR_ASSERT(clipboard->context->ClientCapabilities);
 	return clipboard->context->ClientCapabilities(clipboard->context, &capabilities);
 }
 
@@ -319,10 +412,14 @@ static UINT wlf_cliprdr_send_client_capabilities(wfClipboard* clipboard)
  */
 static UINT wlf_cliprdr_send_client_format_list_response(wfClipboard* clipboard, BOOL status)
 {
-	CLIPRDR_FORMAT_LIST_RESPONSE formatListResponse;
-	formatListResponse.msgType = CB_FORMAT_LIST_RESPONSE;
-	formatListResponse.msgFlags = status ? CB_RESPONSE_OK : CB_RESPONSE_FAIL;
-	formatListResponse.dataLen = 0;
+	const CLIPRDR_FORMAT_LIST_RESPONSE formatListResponse = {
+		.common.msgType = CB_FORMAT_LIST_RESPONSE,
+		.common.msgFlags = status ? CB_RESPONSE_OK : CB_RESPONSE_FAIL,
+		.common.dataLen = 0
+	};
+	WINPR_ASSERT(clipboard);
+	WINPR_ASSERT(clipboard->context);
+	WINPR_ASSERT(clipboard->context->ClientFormatListResponse);
 	return clipboard->context->ClientFormatListResponse(clipboard->context, &formatListResponse);
 }
 
@@ -334,9 +431,14 @@ static UINT wlf_cliprdr_send_client_format_list_response(wfClipboard* clipboard,
 static UINT wlf_cliprdr_monitor_ready(CliprdrClientContext* context,
                                       const CLIPRDR_MONITOR_READY* monitorReady)
 {
-	wfClipboard* clipboard = (wfClipboard*)context->custom;
-	UINT ret;
+	UINT ret = 0;
+
 	WINPR_UNUSED(monitorReady);
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(monitorReady);
+
+	wfClipboard* clipboard = cliprdr_file_context_get_context(context->custom);
+	WINPR_ASSERT(clipboard);
 
 	if ((ret = wlf_cliprdr_send_client_capabilities(clipboard)) != CHANNEL_RC_OK)
 		return ret;
@@ -356,24 +458,30 @@ static UINT wlf_cliprdr_monitor_ready(CliprdrClientContext* context,
 static UINT wlf_cliprdr_server_capabilities(CliprdrClientContext* context,
                                             const CLIPRDR_CAPABILITIES* capabilities)
 {
-	UINT32 i;
-	const BYTE* capsPtr = (const BYTE*)capabilities->capabilitySets;
-	wfClipboard* clipboard = (wfClipboard*)context->custom;
-	clipboard->streams_supported = FALSE;
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(capabilities);
 
-	for (i = 0; i < capabilities->cCapabilitiesSets; i++)
+	const BYTE* capsPtr = (const BYTE*)capabilities->capabilitySets;
+	WINPR_ASSERT(capsPtr);
+
+	wfClipboard* clipboard = cliprdr_file_context_get_context(context->custom);
+	WINPR_ASSERT(clipboard);
+
+	if (!cliprdr_file_context_remote_set_flags(clipboard->file, 0))
+		return ERROR_INTERNAL_ERROR;
+
+	for (UINT32 i = 0; i < capabilities->cCapabilitiesSets; i++)
 	{
-		const CLIPRDR_CAPABILITY_SET* caps = (const CLIPRDR_CAPABILITY_SET*)capsPtr;
+		const CLIPRDR_CAPABILITY_SET* caps =
+		    WINPR_PACKED_ALIGN_CAST(const CLIPRDR_CAPABILITY_SET*, capsPtr);
 
 		if (caps->capabilitySetType == CB_CAPSTYPE_GENERAL)
 		{
 			const CLIPRDR_GENERAL_CAPABILITY_SET* generalCaps =
-			    (const CLIPRDR_GENERAL_CAPABILITY_SET*)caps;
+			    WINPR_PACKED_ALIGN_CAST(const CLIPRDR_GENERAL_CAPABILITY_SET*, caps);
 
-			if (generalCaps->generalFlags & CB_STREAM_FILECLIP_ENABLED)
-			{
-				clipboard->streams_supported = TRUE;
-			}
+			if (!cliprdr_file_context_remote_set_flags(clipboard->file, generalCaps->generalFlags))
+				return ERROR_INTERNAL_ERROR;
 		}
 
 		capsPtr += caps->capabilitySetLength;
@@ -382,66 +490,89 @@ static UINT wlf_cliprdr_server_capabilities(CliprdrClientContext* context,
 	return CHANNEL_RC_OK;
 }
 
+static UINT32 wlf_get_server_format_id(const wfClipboard* clipboard, const char* name)
+{
+	WINPR_ASSERT(clipboard);
+	WINPR_ASSERT(name);
+
+	for (UINT32 x = 0; x < clipboard->numServerFormats; x++)
+	{
+		const CLIPRDR_FORMAT* format = &clipboard->serverFormats[x];
+		if (!format->formatName)
+			continue;
+		if (strcmp(name, format->formatName) == 0)
+			return format->formatId;
+	}
+	return 0;
+}
+
+static const char* wlf_get_server_format_name(const wfClipboard* clipboard, UINT32 formatId)
+{
+	WINPR_ASSERT(clipboard);
+
+	for (UINT32 x = 0; x < clipboard->numServerFormats; x++)
+	{
+		const CLIPRDR_FORMAT* format = &clipboard->serverFormats[x];
+		if (format->formatId == formatId)
+			return format->formatName;
+	}
+	return nullptr;
+}
+
 static void wlf_cliprdr_transfer_data(UwacSeat* seat, void* context, const char* mime, int fd)
 {
 	wfClipboard* clipboard = (wfClipboard*)context;
-	size_t x;
 	WINPR_UNUSED(seat);
-	clipboard->responseMime = NULL;
 
-	for (x = 0; x < ARRAYSIZE(mime_html); x++)
+	EnterCriticalSection(&clipboard->lock);
+
+	wlf_const_request request = WINPR_C_ARRAY_INIT;
+	if (wlf_mime_is_html(mime))
 	{
-		const char* mime_cur = mime_html[x];
-
-		if (strcmp(mime_cur, mime) == 0)
-		{
-			clipboard->responseMime = mime_cur;
-			clipboard->responseFormat = ClipboardGetFormatId(clipboard->system, "HTML Format");
-			break;
-		}
+		request.responseMime = mime_html;
+		request.responseFormat = wlf_get_server_format_id(clipboard, type_HtmlFormat);
+	}
+	else if (wlf_mime_is_file(mime))
+	{
+		request.responseMime = mime;
+		request.responseFormat = wlf_get_server_format_id(clipboard, type_FileGroupDescriptorW);
+	}
+	else if (wlf_mime_is_text(mime))
+	{
+		request.responseMime = mime_text_plain;
+		request.responseFormat = CF_UNICODETEXT;
+	}
+	else if (wlf_mime_is_image(mime))
+	{
+		request.responseMime = mime;
+		if (strcmp(mime, mime_tiff) == 0)
+			request.responseFormat = CF_TIFF;
+		else
+			request.responseFormat = CF_DIB;
 	}
 
-	for (x = 0; x < ARRAYSIZE(mime_text); x++)
+	if (request.responseMime != nullptr)
 	{
-		const char* mime_cur = mime_text[x];
+		request.responseFile = fdopen(fd, "w");
 
-		if (strcmp(mime_cur, mime) == 0)
-		{
-			clipboard->responseMime = mime_cur;
-			clipboard->responseFormat = CF_UNICODETEXT;
-			break;
-		}
-	}
-
-	for (x = 0; x < ARRAYSIZE(mime_image); x++)
-	{
-		const char* mime_cur = mime_image[x];
-
-		if (strcmp(mime_cur, mime) == 0)
-		{
-			clipboard->responseMime = mime_cur;
-			clipboard->responseFormat = CF_DIB;
-			break;
-		}
-	}
-
-	if (clipboard->responseMime != NULL)
-	{
-		clipboard->responseFile = fdopen(fd, "w");
-
-		if (clipboard->responseFile)
-			wlf_cliprdr_send_data_request(clipboard, clipboard->responseFormat);
+		if (request.responseFile)
+			wlf_cliprdr_send_data_request(clipboard, &request);
 		else
 			WLog_Print(clipboard->log, WLOG_ERROR,
 			           "failed to open clipboard file descriptor for MIME %s",
-			           clipboard->responseMime);
+			           request.responseMime);
 	}
+
+	LeaveCriticalSection(&clipboard->lock);
 }
 
 static void wlf_cliprdr_cancel_data(UwacSeat* seat, void* context)
 {
+	wfClipboard* clipboard = (wfClipboard*)context;
+
 	WINPR_UNUSED(seat);
-	WINPR_UNUSED(context);
+	WINPR_ASSERT(clipboard);
+	cliprdr_file_context_clear(clipboard->file);
 }
 
 /**
@@ -455,17 +586,20 @@ static void wlf_cliprdr_cancel_data(UwacSeat* seat, void* context)
 static UINT wlf_cliprdr_server_format_list(CliprdrClientContext* context,
                                            const CLIPRDR_FORMAT_LIST* formatList)
 {
-	UINT32 i;
-	wfClipboard* clipboard;
 	BOOL html = FALSE;
 	BOOL text = FALSE;
 	BOOL image = FALSE;
+	BOOL file = FALSE;
 
 	if (!context || !context->custom)
 		return ERROR_INVALID_PARAMETER;
 
-	clipboard = (wfClipboard*)context->custom;
+	wfClipboard* clipboard = cliprdr_file_context_get_context(context->custom);
+	WINPR_ASSERT(clipboard);
+
 	wlf_cliprdr_free_server_formats(clipboard);
+	if (!cliprdr_file_context_clear(clipboard->file))
+		return ERROR_INTERNAL_ERROR;
 
 	if (!(clipboard->serverFormats =
 	          (CLIPRDR_FORMAT*)calloc(formatList->numFormats, sizeof(CLIPRDR_FORMAT))))
@@ -481,11 +615,11 @@ static UINT wlf_cliprdr_server_format_list(CliprdrClientContext* context,
 	if (!clipboard->seat)
 	{
 		WLog_Print(clipboard->log, WLOG_ERROR,
-		           "clipboard->seat=NULL, check your client implementation");
+		           "clipboard->seat=nullptr, check your client implementation");
 		return ERROR_INTERNAL_ERROR;
 	}
 
-	for (i = 0; i < formatList->numFormats; i++)
+	for (UINT32 i = 0; i < formatList->numFormats; i++)
 	{
 		const CLIPRDR_FORMAT* format = &formatList->formats[i];
 		CLIPRDR_FORMAT* srvFormat = &clipboard->serverFormats[i];
@@ -504,10 +638,15 @@ static UINT wlf_cliprdr_server_format_list(CliprdrClientContext* context,
 
 		if (format->formatName)
 		{
-			if (strcmp(format->formatName, "HTML Format") == 0)
+			if (strcmp(format->formatName, type_HtmlFormat) == 0)
 			{
 				text = TRUE;
 				html = TRUE;
+			}
+			else if (strcmp(format->formatName, type_FileGroupDescriptorW) == 0)
+			{
+				file = TRUE;
+				text = TRUE;
 			}
 		}
 		else
@@ -532,25 +671,25 @@ static UINT wlf_cliprdr_server_format_list(CliprdrClientContext* context,
 
 	if (html)
 	{
-		size_t x;
+		UwacClipboardOfferCreate(clipboard->seat, mime_html);
+	}
 
-		for (x = 0; x < ARRAYSIZE(mime_html); x++)
-			UwacClipboardOfferCreate(clipboard->seat, mime_html[x]);
+	if (file && cliprdr_file_context_has_local_support(clipboard->file))
+	{
+		UwacClipboardOfferCreate(clipboard->seat, mime_uri_list);
+		UwacClipboardOfferCreate(clipboard->seat, mime_gnome_copied_files);
+		UwacClipboardOfferCreate(clipboard->seat, mime_mate_copied_files);
 	}
 
 	if (text)
 	{
-		size_t x;
-
-		for (x = 0; x < ARRAYSIZE(mime_text); x++)
+		for (size_t x = 0; x < ARRAYSIZE(mime_text); x++)
 			UwacClipboardOfferCreate(clipboard->seat, mime_text[x]);
 	}
 
 	if (image)
 	{
-		size_t x;
-
-		for (x = 0; x < ARRAYSIZE(mime_image); x++)
+		for (size_t x = 0; x < ARRAYSIZE(mime_image); x++)
 			UwacClipboardOfferCreate(clipboard->seat, mime_image[x]);
 	}
 
@@ -565,10 +704,14 @@ static UINT wlf_cliprdr_server_format_list(CliprdrClientContext* context,
  * @return 0 on success, otherwise a Win32 error code
  */
 static UINT
-wlf_cliprdr_server_format_list_response(CliprdrClientContext* context,
+wlf_cliprdr_server_format_list_response(WINPR_ATTR_UNUSED CliprdrClientContext* context,
                                         const CLIPRDR_FORMAT_LIST_RESPONSE* formatListResponse)
 {
-	// wfClipboard* clipboard = (wfClipboard*) context->custom;
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(formatListResponse);
+
+	if (formatListResponse->common.msgFlags & CB_RESPONSE_FAIL)
+		WLog_WARN(TAG, "format list update failed");
 	return CHANNEL_RC_OK;
 }
 
@@ -581,80 +724,98 @@ static UINT
 wlf_cliprdr_server_format_data_request(CliprdrClientContext* context,
                                        const CLIPRDR_FORMAT_DATA_REQUEST* formatDataRequest)
 {
-	int cnv;
 	UINT rc = CHANNEL_RC_OK;
-	BYTE* data;
-	LPWSTR cdata;
-	size_t size;
-	const char* mime;
-	UINT32 formatId = formatDataRequest->requestedFormatId;
-	wfClipboard* clipboard = (wfClipboard*)context->custom;
+	char* data = nullptr;
+	size_t size = 0;
+	const char* mime = nullptr;
+	UINT32 formatId = 0;
+	UINT32 localFormatId = 0;
+	wfClipboard* clipboard = nullptr;
+
+	UINT32 dsize = 0;
+	BYTE* ddata = nullptr;
+
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(formatDataRequest);
+
+	localFormatId = formatId = formatDataRequest->requestedFormatId;
+	clipboard = cliprdr_file_context_get_context(context->custom);
+	WINPR_ASSERT(clipboard);
+
+	ClipboardLock(clipboard->system);
+	const UINT32 fileFormatId = ClipboardGetFormatId(clipboard->system, type_FileGroupDescriptorW);
+	const UINT32 htmlFormatId = ClipboardGetFormatId(clipboard->system, type_HtmlFormat);
 
 	switch (formatId)
 	{
 		case CF_TEXT:
 		case CF_OEMTEXT:
 		case CF_UNICODETEXT:
-			mime = "text/plain;charset=utf-8";
+			localFormatId = ClipboardGetFormatId(clipboard->system, mime_text_plain);
+			mime = mime_text_utf8;
 			break;
 
 		case CF_DIB:
 		case CF_DIBV5:
-			mime = "image/bmp";
+			mime = mime_bitmap[0];
+			break;
+
+		case CF_TIFF:
+			mime = mime_tiff;
 			break;
 
 		default:
-			if (formatId == ClipboardGetFormatId(clipboard->system, "HTML Format"))
-				mime = "text/html";
-			else if (formatId == ClipboardGetFormatId(clipboard->system, "image/bmp"))
-				mime = "image/bmp";
+			if (formatId == fileFormatId)
+			{
+				localFormatId = ClipboardGetFormatId(clipboard->system, mime_uri_list);
+				mime = mime_uri_list;
+			}
+			else if (formatId == htmlFormatId)
+			{
+				localFormatId = ClipboardGetFormatId(clipboard->system, mime_html);
+				mime = mime_html;
+			}
 			else
-				mime = ClipboardGetFormatName(clipboard->system, formatId);
-
+				goto fail;
 			break;
 	}
 
 	data = UwacClipboardDataGet(clipboard->seat, mime, &size);
 
-	if (!data)
-		return ERROR_INTERNAL_ERROR;
+	if (!data || (size > UINT32_MAX))
+		goto fail;
 
-	switch (formatId)
+	if (fileFormatId == formatId)
 	{
-		case CF_UNICODETEXT:
-			if (size > INT_MAX)
-				rc = ERROR_INTERNAL_ERROR;
-			else
-			{
-				cdata = NULL;
-				cnv = ConvertToUnicode(CP_UTF8, 0, (LPCSTR)data, (int)size, &cdata, 0);
-				free(data);
-				data = NULL;
-
-				if (cnv < 0)
-					rc = ERROR_INTERNAL_ERROR;
-				else
-				{
-					size = (size_t)cnv;
-					data = (BYTE*)cdata;
-					size *= sizeof(WCHAR);
-				}
-			}
-
-			break;
-
-		default:
-			// TODO: Image conversions
-			break;
+		if (!cliprdr_file_context_update_client_data(clipboard->file, data, size))
+			goto fail;
 	}
 
-	if (rc != CHANNEL_RC_OK)
 	{
+		const BOOL res = ClipboardSetData(clipboard->system, localFormatId, data, (UINT32)size);
 		free(data);
-		return rc;
-	}
 
-	rc = wlf_cliprdr_send_data_response(clipboard, data, size);
+		UINT32 len = 0;
+		data = nullptr;
+		if (res)
+			data = ClipboardGetData(clipboard->system, formatId, &len);
+
+		if (!res || !data)
+			goto fail;
+
+		if (fileFormatId == formatId)
+		{
+			const UINT32 flags = cliprdr_file_context_remote_get_flags(clipboard->file);
+			const UINT32 error = cliprdr_serialize_file_list_ex(
+			    flags, WINPR_PACKED_ALIGN_CAST(const FILEDESCRIPTORW*, data),
+			    len / sizeof(FILEDESCRIPTORW), &ddata, &dsize);
+			if (error)
+				goto fail;
+		}
+	}
+fail:
+	ClipboardUnlock(clipboard->system);
+	rc = wlf_cliprdr_send_data_response(clipboard, ddata, dsize);
 	free(data);
 	return rc;
 }
@@ -668,189 +829,154 @@ static UINT
 wlf_cliprdr_server_format_data_response(CliprdrClientContext* context,
                                         const CLIPRDR_FORMAT_DATA_RESPONSE* formatDataResponse)
 {
-	int cnv;
 	UINT rc = ERROR_INTERNAL_ERROR;
-	UINT32 size = formatDataResponse->dataLen;
-	LPSTR cdata = NULL;
-	LPCSTR data = (LPCSTR)formatDataResponse->requestedFormatData;
-	const WCHAR* wdata = (const WCHAR*)formatDataResponse->requestedFormatData;
-	wfClipboard* clipboard = (wfClipboard*)context->custom;
 
-	if (size > INT_MAX * sizeof(WCHAR))
-		return ERROR_INTERNAL_ERROR;
+	WINPR_ASSERT(context);
+	WINPR_ASSERT(formatDataResponse);
 
-	switch (clipboard->responseFormat)
-	{
-		case CF_UNICODETEXT:
-			cnv = ConvertFromUnicode(CP_UTF8, 0, wdata, (int)(size / sizeof(WCHAR)), &cdata, 0,
-			                         NULL, NULL);
+	const UINT32 size = formatDataResponse->common.dataLen;
+	const BYTE* data = formatDataResponse->requestedFormatData;
 
-			if (cnv < 0)
-				return ERROR_INTERNAL_ERROR;
+	wfClipboard* clipboard = cliprdr_file_context_get_context(context->custom);
+	WINPR_ASSERT(clipboard);
 
-			size = (size_t)cnv;
-			data = cdata;
-			break;
+	wlf_request* request = Queue_Dequeue(clipboard->request_queue);
+	if (!request)
+		goto fail;
 
-		default:
-			// TODO: Image conversions
-			break;
-	}
-
-	fwrite(data, 1, size, clipboard->responseFile);
-	fclose(clipboard->responseFile);
 	rc = CHANNEL_RC_OK;
-	free(cdata);
+	if (formatDataResponse->common.msgFlags & CB_RESPONSE_FAIL)
+	{
+		WLog_WARN(TAG, "clipboard data request for format %" PRIu32 " [%s], mime %s failed",
+		          request->responseFormat, ClipboardGetFormatIdString(request->responseFormat),
+		          request->responseMime);
+		goto fail;
+	}
+	rc = ERROR_INTERNAL_ERROR;
+
+	ClipboardLock(clipboard->system);
+	EnterCriticalSection(&clipboard->lock);
+	{
+		BYTE* cdata = nullptr;
+		UINT32 srcFormatId = 0;
+		UINT32 dstFormatId = 0;
+		switch (request->responseFormat)
+		{
+			case CF_TEXT:
+			case CF_OEMTEXT:
+			case CF_UNICODETEXT:
+				srcFormatId = request->responseFormat;
+				dstFormatId = ClipboardGetFormatId(clipboard->system, request->responseMime);
+				break;
+
+			case CF_DIB:
+			case CF_DIBV5:
+				srcFormatId = request->responseFormat;
+				dstFormatId = ClipboardGetFormatId(clipboard->system, request->responseMime);
+				break;
+
+			default:
+			{
+				const char* name = wlf_get_server_format_name(clipboard, request->responseFormat);
+				if (name)
+				{
+					if (strcmp(type_FileGroupDescriptorW, name) == 0)
+					{
+						srcFormatId =
+						    ClipboardGetFormatId(clipboard->system, type_FileGroupDescriptorW);
+						dstFormatId =
+						    ClipboardGetFormatId(clipboard->system, request->responseMime);
+
+						if (!cliprdr_file_context_update_server_data(clipboard->file,
+						                                             clipboard->system, data, size))
+							goto unlock;
+					}
+					else if (strcmp(type_HtmlFormat, name) == 0)
+					{
+						srcFormatId = ClipboardGetFormatId(clipboard->system, type_HtmlFormat);
+						dstFormatId =
+						    ClipboardGetFormatId(clipboard->system, request->responseMime);
+					}
+				}
+			}
+			break;
+		}
+		{
+			UINT32 len = 0;
+
+			{
+				const BOOL sres = ClipboardSetData(clipboard->system, srcFormatId, data, size);
+				if (sres)
+					cdata = ClipboardGetData(clipboard->system, dstFormatId, &len);
+
+				if (!sres || !cdata)
+					goto unlock;
+			}
+
+			if (request->responseFile)
+			{
+				const size_t res = fwrite(cdata, 1, len, request->responseFile);
+				if (res == len)
+					rc = CHANNEL_RC_OK;
+			}
+			else
+				rc = CHANNEL_RC_OK;
+		}
+
+	unlock:
+		free(cdata);
+	}
+	ClipboardUnlock(clipboard->system);
+	LeaveCriticalSection(&clipboard->lock);
+fail:
+	wlf_request_free(request);
 	return rc;
-}
-
-static UINT
-wlf_cliprdr_server_file_size_request(wfClipboard* clipboard,
-                                     const CLIPRDR_FILE_CONTENTS_REQUEST* fileContentsRequest)
-{
-	wClipboardFileSizeRequest request = { 0 };
-	request.streamId = fileContentsRequest->streamId;
-	request.listIndex = fileContentsRequest->listIndex;
-
-	if (fileContentsRequest->cbRequested != sizeof(UINT64))
-	{
-		WLog_Print(clipboard->log, WLOG_WARN,
-		           "unexpected FILECONTENTS_SIZE request: %" PRIu32 " bytes",
-		           fileContentsRequest->cbRequested);
-	}
-
-	return clipboard->delegate->ClientRequestFileSize(clipboard->delegate, &request);
-}
-
-static UINT
-wlf_cliprdr_server_file_range_request(wfClipboard* clipboard,
-                                      const CLIPRDR_FILE_CONTENTS_REQUEST* fileContentsRequest)
-{
-	wClipboardFileRangeRequest request = { 0 };
-	request.streamId = fileContentsRequest->streamId;
-	request.listIndex = fileContentsRequest->listIndex;
-	request.nPositionLow = fileContentsRequest->nPositionLow;
-	request.nPositionHigh = fileContentsRequest->nPositionHigh;
-	request.cbRequested = fileContentsRequest->cbRequested;
-	return clipboard->delegate->ClientRequestFileRange(clipboard->delegate, &request);
-}
-
-static UINT
-wlf_cliprdr_send_file_contents_failure(CliprdrClientContext* context,
-                                       const CLIPRDR_FILE_CONTENTS_REQUEST* fileContentsRequest)
-{
-	CLIPRDR_FILE_CONTENTS_RESPONSE response = { 0 };
-	response.msgFlags = CB_RESPONSE_FAIL;
-	response.streamId = fileContentsRequest->streamId;
-	return context->ClientFileContentsResponse(context, &response);
-}
-
-static UINT
-wlf_cliprdr_server_file_contents_request(CliprdrClientContext* context,
-                                         const CLIPRDR_FILE_CONTENTS_REQUEST* fileContentsRequest)
-{
-	UINT error = NO_ERROR;
-	wfClipboard* clipboard = context->custom;
-
-	/*
-	 * MS-RDPECLIP 2.2.5.3 File Contents Request PDU (CLIPRDR_FILECONTENTS_REQUEST):
-	 * The FILECONTENTS_SIZE and FILECONTENTS_RANGE flags MUST NOT be set at the same time.
-	 */
-	if ((fileContentsRequest->dwFlags & (FILECONTENTS_SIZE | FILECONTENTS_RANGE)) ==
-	    (FILECONTENTS_SIZE | FILECONTENTS_RANGE))
-	{
-		WLog_Print(clipboard->log, WLOG_ERROR, "invalid CLIPRDR_FILECONTENTS_REQUEST.dwFlags");
-		return wlf_cliprdr_send_file_contents_failure(context, fileContentsRequest);
-	}
-
-	if (fileContentsRequest->dwFlags & FILECONTENTS_SIZE)
-		error = wlf_cliprdr_server_file_size_request(clipboard, fileContentsRequest);
-
-	if (fileContentsRequest->dwFlags & FILECONTENTS_RANGE)
-		error = wlf_cliprdr_server_file_range_request(clipboard, fileContentsRequest);
-
-	if (error)
-	{
-		WLog_Print(clipboard->log, WLOG_ERROR,
-		           "failed to handle CLIPRDR_FILECONTENTS_REQUEST: 0x%08X", error);
-		return wlf_cliprdr_send_file_contents_failure(context, fileContentsRequest);
-	}
-
-	return CHANNEL_RC_OK;
-}
-
-static UINT wlf_cliprdr_clipboard_file_size_success(wClipboardDelegate* delegate,
-                                                    const wClipboardFileSizeRequest* request,
-                                                    UINT64 fileSize)
-{
-	CLIPRDR_FILE_CONTENTS_RESPONSE response = { 0 };
-	wfClipboard* clipboard = delegate->custom;
-	response.msgFlags = CB_RESPONSE_OK;
-	response.streamId = request->streamId;
-	response.cbRequested = sizeof(UINT64);
-	response.requestedData = (BYTE*)&fileSize;
-	return clipboard->context->ClientFileContentsResponse(clipboard->context, &response);
-}
-
-static UINT wlf_cliprdr_clipboard_file_size_failure(wClipboardDelegate* delegate,
-                                                    const wClipboardFileSizeRequest* request,
-                                                    UINT errorCode)
-{
-	CLIPRDR_FILE_CONTENTS_RESPONSE response = { 0 };
-	wfClipboard* clipboard = delegate->custom;
-	WINPR_UNUSED(errorCode);
-	response.msgFlags = CB_RESPONSE_FAIL;
-	response.streamId = request->streamId;
-	return clipboard->context->ClientFileContentsResponse(clipboard->context, &response);
-}
-
-static UINT wlf_cliprdr_clipboard_file_range_success(wClipboardDelegate* delegate,
-                                                     const wClipboardFileRangeRequest* request,
-                                                     const BYTE* data, UINT32 size)
-{
-	CLIPRDR_FILE_CONTENTS_RESPONSE response = { 0 };
-	wfClipboard* clipboard = delegate->custom;
-	response.msgFlags = CB_RESPONSE_OK;
-	response.streamId = request->streamId;
-	response.cbRequested = size;
-	response.requestedData = (const BYTE*)data;
-	return clipboard->context->ClientFileContentsResponse(clipboard->context, &response);
-}
-
-static UINT wlf_cliprdr_clipboard_file_range_failure(wClipboardDelegate* delegate,
-                                                     const wClipboardFileRangeRequest* request,
-                                                     UINT errorCode)
-{
-	CLIPRDR_FILE_CONTENTS_RESPONSE response = { 0 };
-	wfClipboard* clipboard = delegate->custom;
-	WINPR_UNUSED(errorCode);
-	response.msgFlags = CB_RESPONSE_FAIL;
-	response.streamId = request->streamId;
-	return clipboard->context->ClientFileContentsResponse(clipboard->context, &response);
 }
 
 wfClipboard* wlf_clipboard_new(wlfContext* wfc)
 {
-	rdpChannels* channels;
-	wfClipboard* clipboard;
+	rdpChannels* channels = nullptr;
+	wfClipboard* clipboard = nullptr;
 
-	if (!(clipboard = (wfClipboard*)calloc(1, sizeof(wfClipboard))))
-		return NULL;
+	WINPR_ASSERT(wfc);
 
+	clipboard = (wfClipboard*)calloc(1, sizeof(wfClipboard));
+
+	if (!clipboard)
+		goto fail;
+
+	InitializeCriticalSection(&clipboard->lock);
 	clipboard->wfc = wfc;
-	channels = wfc->context.channels;
+	channels = wfc->common.context.channels;
 	clipboard->log = WLog_Get(TAG);
 	clipboard->channels = channels;
 	clipboard->system = ClipboardCreate();
-	clipboard->delegate = ClipboardGetDelegate(clipboard->system);
-	clipboard->delegate->custom = clipboard;
-	/* TODO: set up a filesystem base path for local URI */
-	/* clipboard->delegate->basePath = "file:///tmp/foo/bar/gaga"; */
-	clipboard->delegate->ClipboardFileSizeSuccess = wlf_cliprdr_clipboard_file_size_success;
-	clipboard->delegate->ClipboardFileSizeFailure = wlf_cliprdr_clipboard_file_size_failure;
-	clipboard->delegate->ClipboardFileRangeSuccess = wlf_cliprdr_clipboard_file_range_success;
-	clipboard->delegate->ClipboardFileRangeFailure = wlf_cliprdr_clipboard_file_range_failure;
+	if (!clipboard->system)
+		goto fail;
+
+	clipboard->file = cliprdr_file_context_new(clipboard);
+	if (!clipboard->file)
+		goto fail;
+
+	if (!cliprdr_file_context_set_locally_available(clipboard->file, TRUE))
+		goto fail;
+
+	clipboard->request_queue = Queue_New(TRUE, -1, -1);
+	if (!clipboard->request_queue)
+		goto fail;
+
+	{
+		wObject* obj = Queue_Object(clipboard->request_queue);
+		WINPR_ASSERT(obj);
+		obj->fnObjectFree = wlf_request_free;
+		obj->fnObjectNew = wlf_request_clone;
+	}
+
 	return clipboard;
+
+fail:
+	wlf_clipboard_free(clipboard);
+	return nullptr;
 }
 
 void wlf_clipboard_free(wfClipboard* clipboard)
@@ -858,36 +984,44 @@ void wlf_clipboard_free(wfClipboard* clipboard)
 	if (!clipboard)
 		return;
 
+	cliprdr_file_context_free(clipboard->file);
+
 	wlf_cliprdr_free_server_formats(clipboard);
 	wlf_cliprdr_free_client_formats(clipboard);
 	ClipboardDestroy(clipboard->system);
+
+	EnterCriticalSection(&clipboard->lock);
+
+	Queue_Free(clipboard->request_queue);
+	LeaveCriticalSection(&clipboard->lock);
+	DeleteCriticalSection(&clipboard->lock);
 	free(clipboard);
 }
 
 BOOL wlf_cliprdr_init(wfClipboard* clipboard, CliprdrClientContext* cliprdr)
 {
-	if (!cliprdr || !clipboard)
-		return FALSE;
+	WINPR_ASSERT(clipboard);
+	WINPR_ASSERT(cliprdr);
 
 	clipboard->context = cliprdr;
-	cliprdr->custom = (void*)clipboard;
 	cliprdr->MonitorReady = wlf_cliprdr_monitor_ready;
 	cliprdr->ServerCapabilities = wlf_cliprdr_server_capabilities;
 	cliprdr->ServerFormatList = wlf_cliprdr_server_format_list;
 	cliprdr->ServerFormatListResponse = wlf_cliprdr_server_format_list_response;
 	cliprdr->ServerFormatDataRequest = wlf_cliprdr_server_format_data_request;
 	cliprdr->ServerFormatDataResponse = wlf_cliprdr_server_format_data_response;
-	cliprdr->ServerFileContentsRequest = wlf_cliprdr_server_file_contents_request;
-	return TRUE;
+
+	return cliprdr_file_context_init(clipboard->file, cliprdr);
 }
 
 BOOL wlf_cliprdr_uninit(wfClipboard* clipboard, CliprdrClientContext* cliprdr)
 {
-	if (cliprdr)
-		cliprdr->custom = NULL;
+	WINPR_ASSERT(clipboard);
+	if (!cliprdr_file_context_uninit(clipboard->file, cliprdr))
+		return FALSE;
 
-	if (clipboard)
-		clipboard->context = NULL;
+	if (cliprdr)
+		cliprdr->custom = nullptr;
 
 	return TRUE;
 }

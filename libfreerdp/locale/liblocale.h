@@ -20,9 +20,7 @@
 #ifndef FREERDP_LIB_LOCALE_LIB_H
 #define FREERDP_LIB_LOCALE_LIB_H
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <freerdp/log.h>
 
@@ -37,13 +35,5 @@
 #endif
 
 #define TIMEZONE_TAG FREERDP_TAG("timezone")
-#ifdef WITH_DEBUG_TIMEZONE
-#define DEBUG_TIMEZONE(...) WLog_DBG(TIMEZONE_TAG, __VA_ARGS__)
-#else
-#define DEBUG_TIMEZONE(...) \
-	do                      \
-	{                       \
-	} while (0)
-#endif
 
 #endif /* FREERDP_LIB_LOCALE_LIB_H */

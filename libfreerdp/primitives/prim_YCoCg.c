@@ -17,14 +17,13 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <freerdp/types.h>
 #include <freerdp/primitives.h>
 
 #include "prim_internal.h"
+#include "prim_YCoCg.h"
 
 /* helper function to convert raw 8 bit values to signed 16bit values.
  */
@@ -35,28 +34,28 @@ static INT16 convert(UINT8 raw, int shift)
 }
 
 /* ------------------------------------------------------------------------- */
-static pstatus_t general_YCoCgToRGB_8u_AC4R(const BYTE* pSrc, INT32 srcStep, BYTE* pDst,
-                                            UINT32 DstFormat, INT32 dstStep, UINT32 width,
-                                            UINT32 height, UINT8 shift, BOOL withAlpha)
+static pstatus_t general_YCoCgToRGB_8u_AC4R(const BYTE* WINPR_RESTRICT pSrc, INT32 srcStep,
+                                            BYTE* WINPR_RESTRICT pDst, UINT32 DstFormat,
+                                            INT32 dstStep, UINT32 width, UINT32 height, UINT8 shift,
+                                            BOOL withAlpha)
 {
-	UINT32 x, y;
-	const DWORD formatSize = GetBytesPerPixel(DstFormat);
+	const DWORD formatSize = FreeRDPGetBytesPerPixel(DstFormat);
 	fkt_writePixel writePixel = getPixelWriteFunction(DstFormat, TRUE);
 
-	for (y = 0; y < height; y++)
+	for (size_t y = 0; y < height; y++)
 	{
-		const BYTE* sptr = &pSrc[srcStep * y];
-		BYTE* dptr = &pDst[dstStep * y];
-		for (x = 0; x < width; x++)
+		const BYTE* sptr = &pSrc[y * WINPR_ASSERTING_INT_CAST(uint32_t, srcStep)];
+		BYTE* dptr = &pDst[y * WINPR_ASSERTING_INT_CAST(uint32_t, dstStep)];
+		for (size_t x = 0; x < width; x++)
 		{
 			/* Note: shifts must be done before sign-conversion. */
 			const INT16 Cg = convert(*sptr++, shift);
 			const INT16 Co = convert(*sptr++, shift);
 			const INT16 Y = *sptr++; /* UINT8->INT16 */
-			const INT16 T = Y - Cg;
-			const INT16 B = T + Co;
-			const INT16 G = Y + Cg;
-			const INT16 R = T - Co;
+			const INT16 T = (INT16)(Y - Cg);
+			const INT16 B = (INT16)(T + Co);
+			const INT16 G = (INT16)(Y + Cg);
+			const INT16 R = (INT16)(T - Co);
 			BYTE A = *sptr++;
 
 			if (!withAlpha)
@@ -70,7 +69,14 @@ static pstatus_t general_YCoCgToRGB_8u_AC4R(const BYTE* pSrc, INT32 srcStep, BYT
 }
 
 /* ------------------------------------------------------------------------- */
-void primitives_init_YCoCg(primitives_t* prims)
+void primitives_init_YCoCg(primitives_t* WINPR_RESTRICT prims)
 {
 	prims->YCoCgToRGB_8u_AC4R = general_YCoCgToRGB_8u_AC4R;
+}
+
+void primitives_init_YCoCg_opt(primitives_t* WINPR_RESTRICT prims)
+{
+	primitives_init_YCoCg(prims);
+	primitives_init_YCoCg_ssse3(prims);
+	primitives_init_YCoCg_neon(prims);
 }

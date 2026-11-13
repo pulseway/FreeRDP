@@ -20,29 +20,28 @@
 #ifndef WINPR_CLIPBOARD_PRIVATE_H
 #define WINPR_CLIPBOARD_PRIVATE_H
 
+#include <winpr/winpr.h>
 #include <winpr/clipboard.h>
 
 #include <winpr/collections.h>
 
-typedef struct _wClipboardFormat wClipboardFormat;
-typedef struct _wClipboardSynthesizer wClipboardSynthesizer;
+typedef struct
+{
+	UINT32 syntheticId;
+	CLIPBOARD_SYNTHESIZE_FN pfnSynthesize;
+	CLIPBOARD_SYNTHESIZE_FN pfnSynthesizeEx;
+} wClipboardSynthesizer;
 
-struct _wClipboardFormat
+typedef struct
 {
 	UINT32 formatId;
 	char* formatName;
 
 	UINT32 numSynthesizers;
 	wClipboardSynthesizer* synthesizers;
-};
+} wClipboardFormat;
 
-struct _wClipboardSynthesizer
-{
-	UINT32 syntheticId;
-	CLIPBOARD_SYNTHESIZE_FN pfnSynthesize;
-};
-
-struct _wClipboard
+struct s_wClipboard
 {
 	UINT64 ownerId;
 
@@ -70,6 +69,30 @@ struct _wClipboard
 	CRITICAL_SECTION lock;
 };
 
-BOOL ClipboardInitSynthesizers(wClipboard* clipboard);
+WINPR_LOCAL WINPR_ATTR_NODISCARD BOOL ClipboardInitSynthesizers(wClipboard* clipboard);
+
+WINPR_LOCAL WINPR_ATTR_NODISCARD char* parse_uri_to_local_file(const char* uri, size_t uri_len);
+
+extern const char* const mime_text_plain;
+extern const char* const mime_text_utf8;
+extern const char* const mime_text_UTF8_STRING;
+
+/** @brief Same as \ref ClipboardRegisterSynthesizer but with different \ref pfnSynthesize calling
+ * convention. While functions registered with \ref ClipboardRegisterSynthesizer will call \ref
+ * pfnSynthesize with the \ref formatId of the data in the clipboard functions registered with this
+ * will be called with \ref syntheticId instead.
+ *
+ *  @param clipboard The clipboard to use
+ *  @param formatId The format of the data in the clipboard
+ *  @param syntheticId The format of the data to synthesize
+ *  @param pfnSynthesize The function to call to synthesize
+ *  @return TRUE for success, FALSE otherwise
+ *
+ *  @since version 3.32.2
+ */
+WINPR_ATTR_NODISCARD
+WINPR_LOCAL BOOL ClipboardRegisterSynthesizerEx(wClipboard* clipboard, UINT32 formatId,
+                                                UINT32 syntheticId,
+                                                CLIPBOARD_SYNTHESIZE_FN pfnSynthesize);
 
 #endif /* WINPR_CLIPBOARD_PRIVATE_H */

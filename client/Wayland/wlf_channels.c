@@ -17,97 +17,26 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <freerdp/gdi/gfx.h>
+
+#include <freerdp/gdi/video.h>
 
 #include "wlf_channels.h"
 #include "wlf_cliprdr.h"
 #include "wlf_disp.h"
 #include "wlfreerdp.h"
 
-BOOL encomsp_toggle_control(EncomspClientContext* encomsp, BOOL control)
-{
-	ENCOMSP_CHANGE_PARTICIPANT_CONTROL_LEVEL_PDU pdu;
-
-	if (!encomsp)
-		return FALSE;
-
-	pdu.ParticipantId = 0;
-	pdu.Flags = ENCOMSP_REQUEST_VIEW;
-
-	if (control)
-		pdu.Flags |= ENCOMSP_REQUEST_INTERACT;
-
-	encomsp->ChangeParticipantControlLevel(encomsp, &pdu);
-	return TRUE;
-}
-
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT
-wlf_encomsp_participant_created(EncomspClientContext* context,
-                                const ENCOMSP_PARTICIPANT_CREATED_PDU* participantCreated)
-{
-	wlfContext* wlf;
-	rdpSettings* settings;
-	BOOL request;
-
-	if (!context || !context->custom || !participantCreated)
-		return ERROR_INVALID_PARAMETER;
-
-	wlf = (wlfContext*)context->custom;
-	settings = wlf->context.settings;
-
-	if (!settings)
-		return ERROR_INVALID_PARAMETER;
-
-	request = freerdp_settings_get_bool(settings, FreeRDP_RemoteAssistanceRequestControl);
-	if (request && (participantCreated->Flags & ENCOMSP_MAY_VIEW) &&
-	    !(participantCreated->Flags & ENCOMSP_MAY_INTERACT))
-	{
-		if (!encomsp_toggle_control(context, TRUE))
-			return ERROR_INTERNAL_ERROR;
-	}
-
-	return CHANNEL_RC_OK;
-}
-
-static void wlf_encomsp_init(wlfContext* wlf, EncomspClientContext* encomsp)
-{
-	wlf->encomsp = encomsp;
-	encomsp->custom = (void*)wlf;
-	encomsp->ParticipantCreated = wlf_encomsp_participant_created;
-}
-
-static void wlf_encomsp_uninit(wlfContext* wlf, EncomspClientContext* encomsp)
-{
-	if (encomsp)
-	{
-		encomsp->custom = NULL;
-		encomsp->ParticipantCreated = NULL;
-	}
-
-	if (wlf)
-		wlf->encomsp = NULL;
-}
-
-void wlf_OnChannelConnectedEventHandler(void* context, ChannelConnectedEventArgs* e)
+void wlf_OnChannelConnectedEventHandler(void* context, const ChannelConnectedEventArgs* e)
 {
 	wlfContext* wlf = (wlfContext*)context;
 
-	if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0)
+	WINPR_ASSERT(wlf);
+	WINPR_ASSERT(e);
+
+	if (FALSE)
 	{
-		wlf->rdpei = (RdpeiClientContext*)e->pInterface;
-	}
-	else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
-	{
-		gdi_graphics_pipeline_init(wlf->context.gdi, (RdpgfxClientContext*)e->pInterface);
 	}
 	else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
 	{
@@ -116,27 +45,23 @@ void wlf_OnChannelConnectedEventHandler(void* context, ChannelConnectedEventArgs
 	{
 		wlf_cliprdr_init(wlf->clipboard, (CliprdrClientContext*)e->pInterface);
 	}
-	else if (strcmp(e->name, ENCOMSP_SVC_CHANNEL_NAME) == 0)
-	{
-		wlf_encomsp_init(wlf, (EncomspClientContext*)e->pInterface);
-	}
 	else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0)
 	{
 		wlf_disp_init(wlf->disp, (DispClientContext*)e->pInterface);
 	}
+	else
+		freerdp_client_OnChannelConnectedEventHandler(context, e);
 }
 
-void wlf_OnChannelDisconnectedEventHandler(void* context, ChannelDisconnectedEventArgs* e)
+void wlf_OnChannelDisconnectedEventHandler(void* context, const ChannelDisconnectedEventArgs* e)
 {
 	wlfContext* wlf = (wlfContext*)context;
 
-	if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0)
+	WINPR_ASSERT(wlf);
+	WINPR_ASSERT(e);
+
+	if (FALSE)
 	{
-		wlf->rdpei = NULL;
-	}
-	else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
-	{
-		gdi_graphics_pipeline_uninit(wlf->context.gdi, (RdpgfxClientContext*)e->pInterface);
 	}
 	else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
 	{
@@ -145,12 +70,10 @@ void wlf_OnChannelDisconnectedEventHandler(void* context, ChannelDisconnectedEve
 	{
 		wlf_cliprdr_uninit(wlf->clipboard, (CliprdrClientContext*)e->pInterface);
 	}
-	else if (strcmp(e->name, ENCOMSP_SVC_CHANNEL_NAME) == 0)
-	{
-		wlf_encomsp_uninit(wlf, (EncomspClientContext*)e->pInterface);
-	}
 	else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0)
 	{
 		wlf_disp_uninit(wlf->disp, (DispClientContext*)e->pInterface);
 	}
+	else
+		freerdp_client_OnChannelDisconnectedEventHandler(context, e);
 }

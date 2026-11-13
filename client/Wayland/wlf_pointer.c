@@ -18,22 +18,19 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include "wlf_pointer.h"
 #include "wlfreerdp.h"
 
 #define TAG CLIENT_TAG("wayland.pointer")
 
-struct wlf_pointer
+typedef struct
 {
 	rdpPointer pointer;
 	size_t size;
 	void* data;
-};
-typedef struct wlf_pointer wlfPointer;
+} wlfPointer;
 
 static BOOL wlf_Pointer_New(rdpContext* context, rdpPointer* pointer)
 {
@@ -42,8 +39,8 @@ static BOOL wlf_Pointer_New(rdpContext* context, rdpPointer* pointer)
 	if (!ptr)
 		return FALSE;
 
-	ptr->size = pointer->width * pointer->height * 4ULL;
-	ptr->data = _aligned_malloc(ptr->size, 16);
+	ptr->size = 4ULL * pointer->width * pointer->height;
+	ptr->data = winpr_aligned_malloc(ptr->size, 16);
 
 	if (!ptr->data)
 		return FALSE;
@@ -53,7 +50,8 @@ static BOOL wlf_Pointer_New(rdpContext* context, rdpPointer* pointer)
 	        pointer->xorMaskData, pointer->lengthXorMask, pointer->andMaskData,
 	        pointer->lengthAndMask, pointer->xorBpp, &context->gdi->palette))
 	{
-		_aligned_free(ptr->data);
+		winpr_aligned_free(ptr->data);
+		ptr->data = nullptr;
 		return FALSE;
 	}
 
@@ -66,33 +64,32 @@ static void wlf_Pointer_Free(rdpContext* context, rdpPointer* pointer)
 	WINPR_UNUSED(context);
 
 	if (ptr)
-		_aligned_free(ptr->data);
+		winpr_aligned_free(ptr->data);
 }
 
-static BOOL wlf_Pointer_Set(rdpContext* context, const rdpPointer* pointer)
+static BOOL wlf_Pointer_Set(rdpContext* context, rdpPointer* pointer)
 {
 	wlfContext* wlf = (wlfContext*)context;
 	wlfPointer* ptr = (wlfPointer*)pointer;
-	void* data;
-	UINT32 w, h, x, y;
-	size_t size;
-	UwacReturnCode rc;
+	void* data = nullptr;
+	size_t size = 0;
+	UwacReturnCode rc = UWAC_ERROR_INTERNAL;
 	BOOL res = FALSE;
 	RECTANGLE_16 area;
 
 	if (!wlf || !wlf->seat)
 		return FALSE;
 
-	x = pointer->xPos;
-	y = pointer->yPos;
-	w = pointer->width;
-	h = pointer->height;
+	UINT32 x = pointer->xPos;
+	UINT32 y = pointer->yPos;
+	UINT32 w = pointer->width;
+	UINT32 h = pointer->height;
 
 	if (!wlf_scale_coordinates(context, &x, &y, FALSE) ||
 	    !wlf_scale_coordinates(context, &w, &h, FALSE))
 		return FALSE;
 
-	size = w * h * 4ULL;
+	size = 4ULL * w * h;
 	data = malloc(size);
 
 	if (!data)
@@ -103,8 +100,9 @@ static BOOL wlf_Pointer_Set(rdpContext* context, const rdpPointer* pointer)
 	area.right = (UINT16)pointer->width;
 	area.bottom = (UINT16)pointer->height;
 
-	if (!wlf_copy_image(ptr->data, pointer->width * 4, pointer->width, pointer->height, data, w * 4,
-	                    w, h, &area, context->settings->SmartSizing))
+	if (!wlf_copy_image(ptr->data, 4ULL * pointer->width, pointer->width, pointer->height, data,
+	                    4ULL * w, w, h, &area,
+	                    freerdp_settings_get_bool(context->settings, FreeRDP_SmartSizing)))
 		goto fail;
 
 	rc = UwacSeatSetMouseCursor(wlf->seat, data, size, w, h, x, y);
@@ -124,7 +122,7 @@ static BOOL wlf_Pointer_SetNull(rdpContext* context)
 	if (!wlf || !wlf->seat)
 		return FALSE;
 
-	if (UwacSeatSetMouseCursor(wlf->seat, NULL, 0, 0, 0, 0, 0) != UWAC_SUCCESS)
+	if (UwacSeatSetMouseCursor(wlf->seat, nullptr, 0, 0, 0, 0, 0) != UWAC_SUCCESS)
 		return FALSE;
 
 	return TRUE;
@@ -137,34 +135,31 @@ static BOOL wlf_Pointer_SetDefault(rdpContext* context)
 	if (!wlf || !wlf->seat)
 		return FALSE;
 
-	if (UwacSeatSetMouseCursor(wlf->seat, NULL, 1, 0, 0, 0, 0) != UWAC_SUCCESS)
+	if (UwacSeatSetMouseCursor(wlf->seat, nullptr, 1, 0, 0, 0, 0) != UWAC_SUCCESS)
 		return FALSE;
 
 	return TRUE;
 }
 
-static BOOL wlf_Pointer_SetPosition(rdpContext* context, UINT32 x, UINT32 y)
+static BOOL wlf_Pointer_SetPosition(WINPR_ATTR_UNUSED rdpContext* context,
+                                    WINPR_ATTR_UNUSED UINT32 x, WINPR_ATTR_UNUSED UINT32 y)
 {
 	// TODO
-	WLog_WARN(TAG, "%s not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "TODO: implement");
 	return TRUE;
 }
 
 BOOL wlf_register_pointer(rdpGraphics* graphics)
 {
-	rdpPointer* pointer = NULL;
+	rdpPointer pointer = WINPR_C_ARRAY_INIT;
 
-	if (!(pointer = (rdpPointer*)calloc(1, sizeof(rdpPointer))))
-		return FALSE;
-
-	pointer->size = sizeof(wlfPointer);
-	pointer->New = wlf_Pointer_New;
-	pointer->Free = wlf_Pointer_Free;
-	pointer->Set = wlf_Pointer_Set;
-	pointer->SetNull = wlf_Pointer_SetNull;
-	pointer->SetDefault = wlf_Pointer_SetDefault;
-	pointer->SetPosition = wlf_Pointer_SetPosition;
-	graphics_register_pointer(graphics, pointer);
-	free(pointer);
+	pointer.size = sizeof(wlfPointer);
+	pointer.New = wlf_Pointer_New;
+	pointer.Free = wlf_Pointer_Free;
+	pointer.Set = wlf_Pointer_Set;
+	pointer.SetNull = wlf_Pointer_SetNull;
+	pointer.SetDefault = wlf_Pointer_SetDefault;
+	pointer.SetPosition = wlf_Pointer_SetPosition;
+	graphics_register_pointer(graphics, &pointer);
 	return TRUE;
 }

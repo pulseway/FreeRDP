@@ -30,8 +30,7 @@ typedef struct shw_context shwContext;
 
 struct shw_context
 {
-	rdpContext context;
-	DEFINE_RDP_CLIENT_COMMON();
+	rdpClientContext common;
 
 	HANDLE StopEvent;
 	freerdp* instance;
@@ -44,11 +43,11 @@ extern "C"
 {
 #endif
 
-	int win_shadow_rdp_init(winShadowSubsystem* subsystem);
-	int win_shadow_rdp_uninit(winShadowSubsystem* subsystem);
+	WINPR_ATTR_NODISCARD int win_shadow_rdp_init(winShadowSubsystem* subsystem);
+	WINPR_ATTR_NODISCARD int win_shadow_rdp_uninit(winShadowSubsystem* subsystem);
 
-	int win_shadow_rdp_start(winShadowSubsystem* subsystem);
-	int win_shadow_rdp_stop(winShadowSubsystem* subsystem);
+	WINPR_ATTR_NODISCARD int win_shadow_rdp_start(winShadowSubsystem* subsystem);
+	WINPR_ATTR_NODISCARD int win_shadow_rdp_stop(winShadowSubsystem* subsystem);
 
 #ifdef __cplusplus
 }

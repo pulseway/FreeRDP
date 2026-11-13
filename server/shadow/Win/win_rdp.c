@@ -16,34 +16,42 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
+#include <winpr/assert.h>
 #include <winpr/print.h>
+#include <winpr/assert.h>
+
 #include <freerdp/log.h>
 
 #include "win_rdp.h"
 
 #define TAG SERVER_TAG("shadow.win")
 
-static void shw_OnChannelConnectedEventHandler(void* context, ChannelConnectedEventArgs* e)
+static void shw_OnChannelConnectedEventHandler(void* context, const ChannelConnectedEventArgs* e)
 {
 	shwContext* shw = (shwContext*)context;
+	WINPR_ASSERT(e);
 	WLog_INFO(TAG, "OnChannelConnected: %s", e->name);
 }
 
-static void shw_OnChannelDisconnectedEventHandler(void* context, ChannelDisconnectedEventArgs* e)
+static void shw_OnChannelDisconnectedEventHandler(void* context,
+                                                  const ChannelDisconnectedEventArgs* e)
 {
 	shwContext* shw = (shwContext*)context;
+	WINPR_ASSERT(e);
 	WLog_INFO(TAG, "OnChannelDisconnected: %s", e->name);
 }
 
 static BOOL shw_begin_paint(rdpContext* context)
 {
 	shwContext* shw;
-	rdpGdi* gdi = context->gdi;
+	rdpGdi* gdi;
+
+	WINPR_ASSERT(context);
+	gdi = context->gdi;
+	WINPR_ASSERT(gdi);
 	shw = (shwContext*)context;
 	gdi->primary->hdc->hwnd->invalid->null = TRUE;
 	gdi->primary->hdc->hwnd->ninvalid = 0;
@@ -52,7 +60,6 @@ static BOOL shw_begin_paint(rdpContext* context)
 
 static BOOL shw_end_paint(rdpContext* context)
 {
-	int index;
 	int ninvalid;
 	HGDI_RGN cinvalid;
 	RECTANGLE_16 invalidRect;
@@ -63,7 +70,7 @@ static BOOL shw_end_paint(rdpContext* context)
 	ninvalid = gdi->primary->hdc->hwnd->ninvalid;
 	cinvalid = gdi->primary->hdc->hwnd->cinvalid;
 
-	for (index = 0; index < ninvalid; index++)
+	for (int index = 0; index < ninvalid; index++)
 	{
 		invalidRect.left = cinvalid[index].x;
 		invalidRect.top = cinvalid[index].y;
@@ -72,9 +79,9 @@ static BOOL shw_end_paint(rdpContext* context)
 		region16_union_rect(&(surface->invalidRegion), &(surface->invalidRegion), &invalidRect);
 	}
 
-	SetEvent(subsystem->RdpUpdateEnterEvent);
-	WaitForSingleObject(subsystem->RdpUpdateLeaveEvent, INFINITE);
-	ResetEvent(subsystem->RdpUpdateLeaveEvent);
+	(void)SetEvent(subsystem->RdpUpdateEnterEvent);
+	(void)WaitForSingleObject(subsystem->RdpUpdateLeaveEvent, INFINITE);
+	(void)ResetEvent(subsystem->RdpUpdateLeaveEvent);
 	return TRUE;
 }
 
@@ -91,29 +98,25 @@ static BOOL shw_surface_frame_marker(rdpContext* context,
 	return TRUE;
 }
 
-static BOOL shw_authenticate(freerdp* instance, char** username, char** password, char** domain)
+static BOOL shw_authenticate(freerdp* instance, char** username, char** password, char** domain,
+                             rdp_auth_reason reason)
 {
+	WINPR_UNUSED(reason);
 	WLog_WARN(TAG, "Authentication not implemented, access granted to everyone!");
 	return TRUE;
 }
 
-static DWORD shw_verify_certificate(freerdp* instance, const char* common_name, const char* subject,
-                                    const char* issuer, const char* fingerprint, BOOL host_mismatch)
+static int shw_verify_x509_certificate(freerdp* instance, const BYTE* data, size_t length,
+                                       const char* hostname, UINT16 port, DWORD flags)
 {
 	WLog_WARN(TAG, "Certificate checks not implemented, access granted to everyone!");
 	return 1;
 }
 
-static int shw_verify_x509_certificate(freerdp* instance, BYTE* data, int length,
-                                       const char* hostname, int port, DWORD flags)
-{
-	WLog_WARN(TAG, "Certificate checks not implemented, access granted to everyone!");
-	return 1;
-}
-
-static void shw_OnConnectionResultEventHandler(void* context, ConnectionResultEventArgs* e)
+static void shw_OnConnectionResultEventHandler(void* context, const ConnectionResultEventArgs* e)
 {
 	shwContext* shw = (shwContext*)context;
+	WINPR_ASSERT(e);
 	WLog_INFO(TAG, "OnConnectionResult: %d", e->result);
 }
 
@@ -126,9 +129,6 @@ static BOOL shw_pre_connect(freerdp* instance)
 	PubSub_SubscribeChannelConnected(context->pubSub, shw_OnChannelConnectedEventHandler);
 	PubSub_SubscribeChannelDisconnected(context->pubSub, shw_OnChannelDisconnectedEventHandler);
 
-	if (!freerdp_client_load_addins(context->channels, instance->settings))
-		return FALSE;
-
 	return TRUE;
 }
 
@@ -136,40 +136,42 @@ static BOOL shw_post_connect(freerdp* instance)
 {
 	rdpGdi* gdi;
 	shwContext* shw;
+	rdpUpdate* update;
 	rdpSettings* settings;
+
+	WINPR_ASSERT(instance);
+
 	shw = (shwContext*)instance->context;
-	settings = instance->settings;
+	WINPR_ASSERT(shw);
+
+	update = instance->context->update;
+	WINPR_ASSERT(update);
+
+	settings = instance->context->settings;
+	WINPR_ASSERT(settings);
 
 	if (!gdi_init(instance, PIXEL_FORMAT_BGRX32))
 		return FALSE;
 
 	gdi = instance->context->gdi;
-	instance->update->BeginPaint = shw_begin_paint;
-	instance->update->EndPaint = shw_end_paint;
-	instance->update->DesktopResize = shw_desktop_resize;
-	instance->update->SurfaceFrameMarker = shw_surface_frame_marker;
+	update->BeginPaint = shw_begin_paint;
+	update->EndPaint = shw_end_paint;
+	update->DesktopResize = shw_desktop_resize;
+	update->SurfaceFrameMarker = shw_surface_frame_marker;
 	return TRUE;
 }
 
 static DWORD WINAPI shw_client_thread(LPVOID arg)
 {
-	int index;
-	int rcount;
-	int wcount;
-	BOOL bSuccess;
-	void* rfds[32];
-	void* wfds[32];
-	int fds_count;
-	HANDLE fds[64];
-	shwContext* shw;
-	rdpContext* context;
-	rdpChannels* channels;
 	freerdp* instance = (freerdp*)arg;
-	ZeroMemory(rfds, sizeof(rfds));
-	ZeroMemory(wfds, sizeof(wfds));
-	context = (rdpContext*)instance->context;
-	shw = (shwContext*)context;
-	bSuccess = freerdp_connect(instance);
+	WINPR_ASSERT(instance);
+
+	rdpContext* context = (rdpContext*)instance->context;
+	WINPR_ASSERT(context);
+
+	shwContext* shw = (shwContext*)context;
+
+	const BOOL bSuccess = freerdp_connect(instance);
 	WLog_INFO(TAG, "freerdp_connect: %d", bSuccess);
 
 	if (!bSuccess)
@@ -178,34 +180,23 @@ static DWORD WINAPI shw_client_thread(LPVOID arg)
 		return 0;
 	}
 
-	channels = instance->context->channels;
+	rdpChannels* channels = context->channels;
+	WINPR_ASSERT(channels);
 
 	while (1)
 	{
-		rcount = 0;
-		wcount = 0;
+		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = WINPR_C_ARRAY_INIT;
+		DWORD count = freerdp_get_event_handles(instance->context, handles, ARRAYSIZE(handles));
 
-		if (!freerdp_get_fds(instance, rfds, &rcount, wfds, &wcount))
+		if ((count == 0) || (count == MAXIMUM_WAIT_OBJECTS))
 		{
-			WLog_ERR(TAG, "Failed to get FreeRDP file descriptor");
+			WLog_ERR(TAG, "Failed to get FreeRDP event handles");
 			break;
 		}
 
-		if (!freerdp_channels_get_fds(channels, instance, rfds, &rcount, wfds, &wcount))
-		{
-			WLog_ERR(TAG, "Failed to get channels file descriptor");
-			break;
-		}
+		handles[count++] = freerdp_channels_get_event_handle(instance);
 
-		fds_count = 0;
-
-		for (index = 0; index < rcount; index++)
-			fds[fds_count++] = rfds[index];
-
-		for (index = 0; index < wcount; index++)
-			fds[fds_count++] = wfds[index];
-
-		if (MsgWaitForMultipleObjects(fds_count, fds, FALSE, 1000, QS_ALLINPUT) == WAIT_FAILED)
+		if (MsgWaitForMultipleObjects(count, handles, FALSE, 1000, QS_ALLINPUT) == WAIT_FAILED)
 		{
 			WLog_ERR(TAG, "MsgWaitForMultipleObjects failure: 0x%08lX", GetLastError());
 			break;
@@ -217,7 +208,7 @@ static DWORD WINAPI shw_client_thread(LPVOID arg)
 			break;
 		}
 
-		if (freerdp_shall_disconnect(instance))
+		if (freerdp_shall_disconnect_context(instance->context))
 		{
 			break;
 		}
@@ -253,7 +244,7 @@ static int shw_freerdp_client_start(rdpContext* context)
 	freerdp* instance = context->instance;
 	shw = (shwContext*)context;
 
-	if (!(shw->thread = CreateThread(NULL, 0, shw_client_thread, instance, 0, NULL)))
+	if (!(shw->common.thread = CreateThread(nullptr, 0, shw_client_thread, instance, 0, nullptr)))
 	{
 		WLog_ERR(TAG, "Failed to create thread");
 		return -1;
@@ -265,7 +256,7 @@ static int shw_freerdp_client_start(rdpContext* context)
 static int shw_freerdp_client_stop(rdpContext* context)
 {
 	shwContext* shw = (shwContext*)context;
-	SetEvent(shw->StopEvent);
+	(void)SetEvent(shw->StopEvent);
 	return 0;
 }
 
@@ -273,56 +264,99 @@ static BOOL shw_freerdp_client_new(freerdp* instance, rdpContext* context)
 {
 	shwContext* shw;
 	rdpSettings* settings;
-	shw = (shwContext*)instance->context;
 
-	if (!(shw->StopEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
+	WINPR_ASSERT(instance);
+	WINPR_ASSERT(context);
+
+	shw = (shwContext*)instance->context;
+	WINPR_ASSERT(shw);
+
+	if (!(shw->StopEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr)))
 		return FALSE;
 
+	instance->LoadChannels = freerdp_client_load_channels;
 	instance->PreConnect = shw_pre_connect;
 	instance->PostConnect = shw_post_connect;
-	instance->Authenticate = shw_authenticate;
-	instance->VerifyCertificate = shw_verify_certificate;
+	instance->AuthenticateEx = shw_authenticate;
 	instance->VerifyX509Certificate = shw_verify_x509_certificate;
-	settings = instance->settings;
-	shw->settings = instance->context->settings;
-	settings->AsyncChannels = FALSE;
-	settings->AsyncUpdate = FALSE;
-	settings->AsyncInput = FALSE;
-	settings->IgnoreCertificate = TRUE;
-	settings->ExternalCertificateManagement = TRUE;
-	settings->RdpSecurity = TRUE;
-	settings->TlsSecurity = TRUE;
-	settings->NlaSecurity = FALSE;
-	settings->BitmapCacheEnabled = FALSE;
-	settings->BitmapCacheV3Enabled = FALSE;
-	settings->OffscreenSupportLevel = FALSE;
-	settings->GlyphSupportLevel = GLYPH_SUPPORT_NONE;
-	settings->BrushSupportLevel = FALSE;
-	ZeroMemory(settings->OrderSupport, 32);
-	settings->FrameMarkerCommandEnabled = TRUE;
-	settings->SurfaceFrameMarkerEnabled = TRUE;
-	settings->AltSecFrameMarkerSupport = TRUE;
-	settings->ColorDepth = 32;
-	settings->NSCodec = TRUE;
-	settings->RemoteFxCodec = TRUE;
-	settings->FastPathInput = TRUE;
-	settings->FastPathOutput = TRUE;
-	settings->LargePointerFlag = TRUE;
-	settings->CompressionEnabled = FALSE;
-	settings->AutoReconnectionEnabled = FALSE;
-	settings->NetworkAutoDetect = FALSE;
-	settings->SupportHeartbeatPdu = FALSE;
-	settings->SupportMultitransport = FALSE;
-	settings->ConnectionType = CONNECTION_TYPE_LAN;
-	settings->AllowFontSmoothing = TRUE;
-	settings->AllowDesktopComposition = TRUE;
-	settings->DisableWallpaper = FALSE;
-	settings->DisableFullWindowDrag = TRUE;
-	settings->DisableMenuAnims = TRUE;
-	settings->DisableThemes = FALSE;
-	settings->DeviceRedirection = TRUE;
-	settings->RedirectClipboard = TRUE;
-	settings->SupportDynamicChannels = TRUE;
+
+	settings = context->settings;
+	WINPR_ASSERT(settings);
+
+	shw->settings = settings;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_AsyncChannels, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_AsyncUpdate, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_IgnoreCertificate, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_ExternalCertificateManagement, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_RdpSecurity, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_TlsSecurity, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_NlaSecurity, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_BitmapCacheEnabled, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_BitmapCacheV3Enabled, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_uint32(settings, FreeRDP_OffscreenSupportLevel, 0))
+		return FALSE;
+	if (!freerdp_settings_set_uint32(settings, FreeRDP_GlyphSupportLevel, GLYPH_SUPPORT_NONE))
+		return FALSE;
+	if (!freerdp_settings_set_uint32(settings, FreeRDP_BrushSupportLevel, 0))
+		return FALSE;
+	ZeroMemory(freerdp_settings_get_pointer_writable(settings, FreeRDP_OrderSupport), 32);
+	if (!freerdp_settings_set_bool(settings, FreeRDP_FrameMarkerCommandEnabled, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_SurfaceFrameMarkerEnabled, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_AltSecFrameMarkerSupport, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_uint32(settings, FreeRDP_ColorDepth, 32))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_NSCodec, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_RemoteFxCodec, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_FastPathInput, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_FastPathOutput, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_uint32(settings, FreeRDP_LargePointerFlag, 1))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_CompressionEnabled, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_AutoReconnectionEnabled, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_NetworkAutoDetect, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_SupportHeartbeatPdu, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_SupportMultitransport, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_uint32(settings, FreeRDP_ConnectionType, CONNECTION_TYPE_LAN))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_AllowFontSmoothing, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_AllowDesktopComposition, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_DisableWallpaper, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_DisableFullWindowDrag, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_DisableMenuAnims, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_DisableThemes, FALSE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_DeviceRedirection, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_RedirectClipboard, TRUE))
+		return FALSE;
+	if (!freerdp_settings_set_bool(settings, FreeRDP_SupportDynamicChannels, TRUE))
+		return FALSE;
 	return TRUE;
 }
 
@@ -335,7 +369,7 @@ int shw_RdpClientEntry(RDP_CLIENT_ENTRY_POINTS* pEntryPoints)
 {
 	pEntryPoints->Version = 1;
 	pEntryPoints->Size = sizeof(RDP_CLIENT_ENTRY_POINTS_V1);
-	pEntryPoints->settings = NULL;
+	pEntryPoints->settings = nullptr;
 	pEntryPoints->ContextSize = sizeof(shwContext);
 	pEntryPoints->GlobalInit = shw_freerdp_client_global_init;
 	pEntryPoints->GlobalUninit = shw_freerdp_client_global_uninit;
@@ -349,16 +383,16 @@ int shw_RdpClientEntry(RDP_CLIENT_ENTRY_POINTS* pEntryPoints)
 int win_shadow_rdp_init(winShadowSubsystem* subsystem)
 {
 	rdpContext* context;
-	RDP_CLIENT_ENTRY_POINTS clientEntryPoints;
-	ZeroMemory(&clientEntryPoints, sizeof(RDP_CLIENT_ENTRY_POINTS));
+	RDP_CLIENT_ENTRY_POINTS clientEntryPoints = WINPR_C_ARRAY_INIT;
+
 	clientEntryPoints.Size = sizeof(RDP_CLIENT_ENTRY_POINTS);
 	clientEntryPoints.Version = RDP_CLIENT_INTERFACE_VERSION;
 	shw_RdpClientEntry(&clientEntryPoints);
 
-	if (!(subsystem->RdpUpdateEnterEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
+	if (!(subsystem->RdpUpdateEnterEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr)))
 		goto fail_enter_event;
 
-	if (!(subsystem->RdpUpdateLeaveEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
+	if (!(subsystem->RdpUpdateLeaveEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr)))
 		goto fail_leave_event;
 
 	if (!(context = freerdp_client_context_new(&clientEntryPoints)))
@@ -369,9 +403,9 @@ int win_shadow_rdp_init(winShadowSubsystem* subsystem)
 	subsystem->shw->subsystem = subsystem;
 	return 1;
 fail_context:
-	CloseHandle(subsystem->RdpUpdateLeaveEvent);
+	(void)CloseHandle(subsystem->RdpUpdateLeaveEvent);
 fail_leave_event:
-	CloseHandle(subsystem->RdpUpdateEnterEvent);
+	(void)CloseHandle(subsystem->RdpUpdateEnterEvent);
 fail_enter_event:
 	return -1;
 }

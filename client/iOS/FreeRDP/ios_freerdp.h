@@ -2,6 +2,7 @@
  RDP run-loop
 
  Copyright 2013 Thincast Technologies GmbH, Authors: Martin Fleisz, Dorian Johnson
+ Copyright 2023 Iordan Iordanov
 
  This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
  If a copy of the MPL was not distributed with this file, You can obtain one at
@@ -13,6 +14,8 @@
 #import <freerdp/freerdp.h>
 #import <freerdp/channels/channels.h>
 #import "TSXTypes.h"
+#import <winpr/clipboard.h>
+#import <freerdp/client/cliprdr.h>
 
 @class RDPSession, RDPSessionView;
 
@@ -25,6 +28,16 @@ typedef struct mf_context
 
 	mfInfo *mfi;
 	rdpSettings *settings;
+
+	BOOL clipboardSync;
+	BOOL clipboardHasText;
+	wClipboard *clipboard;
+	UINT32 numServerFormats;
+	UINT32 requestedFormatId;
+	HANDLE clipboardRequestEvent;
+	CLIPRDR_FORMAT *serverFormats;
+	CliprdrClientContext *cliprdr;
+	UINT32 clipboardCapabilities;
 } mfContext;
 
 struct mf_info
@@ -41,7 +54,9 @@ struct mf_info
 	CGContextRef bitmap_context;
 
 	// Events
-	int event_pipe_producer, event_pipe_consumer;
+	int event_pipe_producer;
+	int event_pipe_consumer;
+	HANDLE handle;
 
 	// Tracking connection state
 	volatile TSXConnectionState connection_state;
@@ -64,6 +79,9 @@ enum MF_EXIT_CODE
 
 void ios_init_freerdp(void);
 void ios_uninit_freerdp(void);
+
+void ios_freerdp_free(freerdp *instance);
+
+WINPR_ATTR_MALLOC(ios_freerdp_free, 1)
 freerdp *ios_freerdp_new(void);
 int ios_run_freerdp(freerdp *instance);
-void ios_freerdp_free(freerdp *instance);

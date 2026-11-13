@@ -22,14 +22,8 @@
 #ifndef FREERDP_CODEC_REMOTEFX_H
 #define FREERDP_CODEC_REMOTEFX_H
 
-typedef struct _RFX_RECT RFX_RECT;
-typedef struct _RFX_TILE RFX_TILE;
-typedef struct _RFX_MESSAGE RFX_MESSAGE;
-typedef struct _RFX_CONTEXT RFX_CONTEXT;
-
 #include <freerdp/api.h>
 #include <freerdp/types.h>
-#include <freerdp/freerdp.h>
 #include <freerdp/constants.h>
 #include <freerdp/codec/region.h>
 
@@ -40,22 +34,21 @@ extern "C"
 {
 #endif
 
-	enum _RLGR_MODE
+	typedef enum
 	{
 		RLGR1,
 		RLGR3
-	};
-	typedef enum _RLGR_MODE RLGR_MODE;
+	} RLGR_MODE;
 
-	struct _RFX_RECT
+	typedef struct
 	{
 		UINT16 x;
 		UINT16 y;
 		UINT16 width;
 		UINT16 height;
-	};
+	} RFX_RECT;
 
-	struct _RFX_TILE
+	typedef struct
 	{
 		UINT16 x;
 		UINT16 y;
@@ -76,132 +69,144 @@ extern "C"
 		BYTE* CbData;
 		BYTE* CrData;
 		BYTE* YCbCrData;
-	};
+	} RFX_TILE;
 
-	struct _RFX_MESSAGE
-	{
-		UINT32 frameIdx;
+	typedef struct S_RFX_MESSAGE_LIST RFX_MESSAGE_LIST;
+	typedef struct S_RFX_MESSAGE RFX_MESSAGE;
+	typedef struct S_RFX_CONTEXT RFX_CONTEXT;
 
-		/**
-		 * The rects array represents the updated region of the frame. The UI
-		 * requires to clip drawing destination base on the union of the rects.
-		 */
-		UINT16 numRects;
-		RFX_RECT* rects;
-		BOOL freeRects;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL rfx_process_message(RFX_CONTEXT* WINPR_RESTRICT context,
+	                                     const BYTE* WINPR_RESTRICT data, UINT32 length,
+	                                     UINT32 left, UINT32 top, BYTE* WINPR_RESTRICT dst,
+	                                     UINT32 dstFormat, UINT32 dstStride, UINT32 dstHeight,
+	                                     REGION16* WINPR_RESTRICT invalidRegion);
 
-		/**
-		 * The tiles array represents the actual frame data. Each tile is always
-		 * 64x64. Note that only pixels inside the updated region (represented as
-		 * rects described above) are valid. Pixels outside of the region may
-		 * contain arbitrary data.
-		 */
-		UINT16 numTiles;
-		RFX_TILE** tiles;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API UINT32 rfx_message_get_frame_idx(const RFX_MESSAGE* WINPR_RESTRICT message);
 
-		UINT16 numQuant;
-		UINT32* quantVals;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API const UINT32* rfx_message_get_quants(const RFX_MESSAGE* WINPR_RESTRICT message,
+	                                                 UINT16* WINPR_RESTRICT numQuantVals);
 
-		UINT32 tilesDataSize;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API const RFX_TILE** rfx_message_get_tiles(const RFX_MESSAGE* WINPR_RESTRICT message,
+	                                                   UINT16* WINPR_RESTRICT numTiles);
 
-		BOOL freeArray;
-	};
+	WINPR_ATTR_NODISCARD
+	FREERDP_API UINT16 rfx_message_get_tile_count(const RFX_MESSAGE* WINPR_RESTRICT message);
 
-	typedef struct _RFX_CONTEXT_PRIV RFX_CONTEXT_PRIV;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API const RFX_RECT* rfx_message_get_rects(const RFX_MESSAGE* WINPR_RESTRICT message,
+	                                                  UINT16* WINPR_RESTRICT numRects);
 
-	enum _RFX_STATE
-	{
-		RFX_STATE_INITIAL,
-		RFX_STATE_SERVER_UNINITIALIZED,
-		RFX_STATE_SEND_HEADERS,
-		RFX_STATE_SEND_FRAME_DATA,
-		RFX_STATE_FRAME_DATA_SENT,
-		RFX_STATE_FINAL
-	};
-	typedef enum _RFX_STATE RFX_STATE;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API UINT16 rfx_message_get_rect_count(const RFX_MESSAGE* WINPR_RESTRICT message);
 
-#define _RFX_DECODED_SYNC 0x00000001
-#define _RFX_DECODED_CONTEXT 0x00000002
-#define _RFX_DECODED_VERSIONS 0x00000004
-#define _RFX_DECODED_CHANNELS 0x00000008
-#define _RFX_DECODED_HEADERS 0x0000000F
+	FREERDP_API void rfx_message_free(RFX_CONTEXT* WINPR_RESTRICT context,
+	                                  RFX_MESSAGE* WINPR_RESTRICT message);
 
-	struct _RFX_CONTEXT
-	{
-		RFX_STATE state;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL rfx_compose_message(RFX_CONTEXT* WINPR_RESTRICT context,
+	                                     wStream* WINPR_RESTRICT s,
+	                                     const RFX_RECT* WINPR_RESTRICT rects, size_t numRects,
+	                                     const BYTE* WINPR_RESTRICT data, UINT32 width,
+	                                     UINT32 height, UINT32 scanline);
 
-		BOOL encoder;
-		UINT16 flags;
-		UINT16 properties;
-		UINT16 width;
-		UINT16 height;
-		RLGR_MODE mode;
-		UINT32 version;
-		UINT32 codec_id;
-		UINT32 codec_version;
-		UINT32 pixel_format;
-		BYTE bits_per_pixel;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API RFX_MESSAGE* rfx_encode_message(RFX_CONTEXT* WINPR_RESTRICT context,
+	                                            const RFX_RECT* WINPR_RESTRICT rects,
+	                                            size_t numRects, const BYTE* WINPR_RESTRICT data,
+	                                            UINT32 width, UINT32 height, size_t scanline);
 
-		/* color palette allocated by the application */
-		const BYTE* palette;
+	FREERDP_API void rfx_message_list_free(RFX_MESSAGE_LIST* messages);
 
-		/* temporary data within a frame */
-		UINT32 frameIdx;
-		BYTE numQuant;
-		UINT32* quants;
-		BYTE quantIdxY;
-		BYTE quantIdxCb;
-		BYTE quantIdxCr;
+	WINPR_ATTR_MALLOC(rfx_message_list_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_API RFX_MESSAGE_LIST*
+	rfx_encode_messages(RFX_CONTEXT* WINPR_RESTRICT context, const RFX_RECT* WINPR_RESTRICT rects,
+	                    size_t numRects, const BYTE* WINPR_RESTRICT data, UINT32 width,
+	                    UINT32 height, UINT32 scanline, size_t* WINPR_RESTRICT numMessages,
+	                    size_t maxDataSize);
 
-		/* decoded header blocks */
-		UINT32 decodedHeaderBlocks;
-		UINT16 expectedDataBlockType;
-		RFX_MESSAGE currentMessage;
+	WINPR_ATTR_NODISCARD
+	FREERDP_API const RFX_MESSAGE*
+	rfx_message_list_get(const RFX_MESSAGE_LIST* WINPR_RESTRICT messages, size_t idx);
 
-		/* routines */
-		void (*quantization_decode)(INT16* buffer, const UINT32* quantization_values);
-		void (*quantization_encode)(INT16* buffer, const UINT32* quantization_values);
-		void (*dwt_2d_decode)(INT16* buffer, INT16* dwt_buffer);
-		void (*dwt_2d_encode)(INT16* buffer, INT16* dwt_buffer);
-		int (*rlgr_decode)(RLGR_MODE mode, const BYTE* data, UINT32 data_size, INT16* buffer,
-		                   UINT32 buffer_size);
-		int (*rlgr_encode)(RLGR_MODE mode, const INT16* data, UINT32 data_size, BYTE* buffer,
-		                   UINT32 buffer_size);
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL rfx_write_message(RFX_CONTEXT* WINPR_RESTRICT context,
+	                                   wStream* WINPR_RESTRICT s,
+	                                   const RFX_MESSAGE* WINPR_RESTRICT message);
 
-		/* private definitions */
-		RFX_CONTEXT_PRIV* priv;
-	};
-
-	FREERDP_API void rfx_context_set_pixel_format(RFX_CONTEXT* context, UINT32 pixel_format);
-
-	FREERDP_API BOOL rfx_process_message(RFX_CONTEXT* context, const BYTE* data, UINT32 length,
-	                                     UINT32 left, UINT32 top, BYTE* dst, UINT32 dstFormat,
-	                                     UINT32 dstStride, UINT32 dstHeight,
-	                                     REGION16* invalidRegion);
-	FREERDP_API UINT16 rfx_message_get_tile_count(RFX_MESSAGE* message);
-	FREERDP_API UINT16 rfx_message_get_rect_count(RFX_MESSAGE* message);
-	FREERDP_API void rfx_message_free(RFX_CONTEXT* context, RFX_MESSAGE* message);
-
-	FREERDP_API BOOL rfx_compose_message(RFX_CONTEXT* context, wStream* s, const RFX_RECT* rects,
-	                                     size_t num_rects, const BYTE* image_data, UINT32 width,
-	                                     UINT32 height, UINT32 rowstride);
-
-	FREERDP_API RFX_MESSAGE* rfx_encode_message(RFX_CONTEXT* context, const RFX_RECT* rects,
-	                                            size_t numRects, const BYTE* data, UINT32 width,
-	                                            UINT32 height, size_t scanline);
-
-	FREERDP_API RFX_MESSAGE* rfx_encode_messages(RFX_CONTEXT* context, const RFX_RECT* rects,
-	                                             size_t numRects, const BYTE* data, UINT32 width,
-	                                             UINT32 height, UINT32 scanline,
-	                                             size_t* numMessages, size_t maxDataSize);
-	FREERDP_API BOOL rfx_write_message(RFX_CONTEXT* context, wStream* s,
-	                                   const RFX_MESSAGE* message);
-
-	FREERDP_API BOOL rfx_context_reset(RFX_CONTEXT* context, UINT32 width, UINT32 height);
-
-	FREERDP_API RFX_CONTEXT* rfx_context_new_ex(BOOL encoder, UINT32 ThreadingFlags);
-	FREERDP_API RFX_CONTEXT* rfx_context_new(BOOL encoder);
 	FREERDP_API void rfx_context_free(RFX_CONTEXT* context);
+
+	WINPR_ATTR_MALLOC(rfx_context_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_API RFX_CONTEXT* rfx_context_new_ex(BOOL encoder, UINT32 ThreadingFlags);
+
+	WINPR_ATTR_MALLOC(rfx_context_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_API RFX_CONTEXT* rfx_context_new(BOOL encoder);
+
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL rfx_context_reset(RFX_CONTEXT* WINPR_RESTRICT context, UINT32 width,
+	                                   UINT32 height);
+
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL rfx_context_set_mode(RFX_CONTEXT* WINPR_RESTRICT context, RLGR_MODE mode);
+
+	/** Getter for RFX mode
+	 *  @param context The RFX context to query
+	 *
+	 *  @since version 3.0.0
+	 *
+	 *  @return The RFX mode that is currently in use
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API RLGR_MODE rfx_context_get_mode(RFX_CONTEXT* WINPR_RESTRICT context);
+
+	FREERDP_API void rfx_context_set_pixel_format(RFX_CONTEXT* WINPR_RESTRICT context,
+	                                              UINT32 pixel_format);
+
+	/** Getter for RFX pixel format
+	 *  @param context The RFX context to query
+	 *
+	 *  @since version 3.0.0
+	 *
+	 *  @return The RFX pixel format that is currently in use
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API UINT32 rfx_context_get_pixel_format(RFX_CONTEXT* WINPR_RESTRICT context);
+
+	FREERDP_API void rfx_context_set_palette(RFX_CONTEXT* WINPR_RESTRICT context,
+	                                         const BYTE* WINPR_RESTRICT palette);
+
+	/** Getter for RFX palette
+	 *  @param context The RFX context to query
+	 *
+	 *  @since version 3.0.0
+	 *
+	 *  @return The RFX palette that is currently in use or \b nullptr
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API const BYTE* rfx_context_get_palette(RFX_CONTEXT* WINPR_RESTRICT context);
+
+	WINPR_ATTR_NODISCARD
+	FREERDP_API UINT32 rfx_context_get_frame_idx(const RFX_CONTEXT* WINPR_RESTRICT context);
+
+	/** Write a RFX message as simple progressive message to a stream.
+	 *
+	 *  @param rfx The RFX codec context
+	 *  @param s The stream to write to
+	 *  @param msg The message to encode
+	 *
+	 *  @since version 3.0.0
+	 *  @return \b TRUE in case of success, \b FALSE for any error
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL rfx_write_message_progressive_simple(RFX_CONTEXT* WINPR_RESTRICT rfx,
+	                                                      wStream* WINPR_RESTRICT s,
+	                                                      const RFX_MESSAGE* WINPR_RESTRICT msg);
 
 #ifdef __cplusplus
 }

@@ -25,56 +25,77 @@
 
 #include <freerdp/channels/rdpdr.h>
 
-typedef struct rdp_printer_driver rdpPrinterDriver;
-typedef struct rdp_printer rdpPrinter;
-typedef struct rdp_print_job rdpPrintJob;
-
-typedef void (*pcReferencePrinterDriver)(rdpPrinterDriver* driver);
-typedef rdpPrinter** (*pcEnumPrinters)(rdpPrinterDriver* driver);
-typedef void (*pcReleaseEnumPrinters)(rdpPrinter** printers);
-
-typedef rdpPrinter* (*pcGetPrinter)(rdpPrinterDriver* driver, const char* name,
-                                    const char* driverName);
-typedef void (*pcReferencePrinter)(rdpPrinter* printer);
-
-struct rdp_printer_driver
+#ifdef __cplusplus
+extern "C"
 {
-	pcEnumPrinters EnumPrinters;
-	pcReleaseEnumPrinters ReleaseEnumPrinters;
-	pcGetPrinter GetPrinter;
+#endif
 
-	pcReferencePrinterDriver AddRef;
-	pcReferencePrinterDriver ReleaseRef;
-};
+	typedef struct rdp_printer_driver rdpPrinterDriver;
+	typedef struct rdp_printer rdpPrinter;
+	typedef struct rdp_print_job rdpPrintJob;
 
-typedef rdpPrintJob* (*pcCreatePrintJob)(rdpPrinter* printer, UINT32 id);
-typedef rdpPrintJob* (*pcFindPrintJob)(rdpPrinter* printer, UINT32 id);
+	typedef void (*pcSetDeviceForPrinterDriver)(rdpPrinterDriver* driver,
+	                                            const RDPDR_PRINTER* device);
+	typedef void (*pcReferencePrinterDriver)(rdpPrinterDriver* driver);
+	typedef rdpPrinter** (*pcEnumPrinters)(rdpPrinterDriver* driver);
+	typedef void (*pcReleaseEnumPrinters)(rdpPrinter** printers);
 
-struct rdp_printer
-{
-	size_t id;
-	char* name;
-	char* driver;
-	BOOL is_default;
+	typedef rdpPrinter* (*pcGetPrinter)(rdpPrinterDriver* driver, const char* name,
+	                                    const char* driverName, BOOL isDefault);
+	typedef void (*pcReferencePrinter)(rdpPrinter* printer);
 
-	size_t references;
-	rdpPrinterDriver* backend;
-	pcCreatePrintJob CreatePrintJob;
-	pcFindPrintJob FindPrintJob;
-	pcReferencePrinter AddRef;
-	pcReferencePrinter ReleaseRef;
-};
+	struct rdp_printer_driver
+	{
+		ALIGN64 WINPR_ATTR_NODISCARD pcEnumPrinters EnumPrinters;
+		ALIGN64 pcReleaseEnumPrinters ReleaseEnumPrinters;
+		ALIGN64 WINPR_ATTR_NODISCARD pcGetPrinter GetPrinter;
 
-typedef UINT (*pcWritePrintJob)(rdpPrintJob* printjob, const BYTE* data, size_t size);
-typedef void (*pcClosePrintJob)(rdpPrintJob* printjob);
+		ALIGN64 pcReferencePrinterDriver AddRef;
+		ALIGN64 pcReferencePrinterDriver ReleaseRef;
 
-struct rdp_print_job
-{
-	UINT32 id;
-	rdpPrinter* printer;
+		/** @brief Function allowing to set a context for a backend.
+		 *  @since version 3.27.0
+		 */
+		ALIGN64 pcSetDeviceForPrinterDriver SetDeviceContext;
 
-	pcWritePrintJob Write;
-	pcClosePrintJob Close;
-};
+		UINT64 reserved[58];
+	};
+
+	typedef rdpPrintJob* (*pcCreatePrintJob)(rdpPrinter* printer, UINT32 id);
+	typedef rdpPrintJob* (*pcFindPrintJob)(rdpPrinter* printer, UINT32 id);
+
+	struct rdp_printer
+	{
+		ALIGN64 size_t id;
+		ALIGN64 char* name;
+		ALIGN64 char* driver;
+		ALIGN64 BOOL is_default;
+
+		ALIGN64 size_t references;
+		ALIGN64 rdpPrinterDriver* backend;
+		ALIGN64 WINPR_ATTR_NODISCARD pcCreatePrintJob CreatePrintJob;
+		ALIGN64 WINPR_ATTR_NODISCARD pcFindPrintJob FindPrintJob;
+		ALIGN64 pcReferencePrinter AddRef;
+		ALIGN64 pcReferencePrinter ReleaseRef;
+		UINT64 reserved[54];
+	};
+
+	typedef UINT (*pcWritePrintJob)(rdpPrintJob* printjob, const BYTE* data, size_t size);
+	typedef void (*pcClosePrintJob)(rdpPrintJob* printjob);
+
+	struct rdp_print_job
+	{
+		ALIGN64 UINT32 id;
+		ALIGN64 rdpPrinter* printer;
+
+		ALIGN64 WINPR_ATTR_NODISCARD pcWritePrintJob Write;
+		ALIGN64 pcClosePrintJob Close;
+
+		UINT64 reserved[60];
+	};
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_CHANNEL_PRINTER_CLIENT_PRINTER_H */

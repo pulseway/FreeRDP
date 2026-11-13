@@ -6,10 +6,12 @@
 
 int TestVersion(int argc, char* argv[])
 {
-	const char* version;
-	const char* git;
-	const char* build;
-	int major = 0, minor = 0, revision = 0;
+	const char* version = nullptr;
+	const char* git = nullptr;
+	const char* build = nullptr;
+	int major = 0;
+	int minor = 0;
+	int revision = 0;
 	WINPR_UNUSED(argc);
 	WINPR_UNUSED(argv);
 	winpr_get_version(&major, &minor, &revision);
@@ -33,7 +35,7 @@ int TestVersion(int argc, char* argv[])
 	if (!git)
 		return -1;
 
-	if (strncmp(git, GIT_REVISION, sizeof(GIT_REVISION)))
+	if (strncmp(git, WINPR_GIT_REVISION, sizeof(WINPR_GIT_REVISION)) != 0)
 		return -1;
 
 	build = winpr_get_build_config();

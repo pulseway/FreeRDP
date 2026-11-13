@@ -21,21 +21,23 @@
 #define FREERDP_HEARTBEAT_H
 
 #include <freerdp/types.h>
-
-typedef struct rdp_heartbeat rdpHeartbeat;
-
-typedef BOOL (*pServerHeartbeat)(freerdp* instance, BYTE period, BYTE count1, BYTE count2);
-
-struct rdp_heartbeat
-{
-	pServerHeartbeat ServerHeartbeat;
-};
+#include <freerdp/api.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
+	typedef struct rdp_heartbeat rdpHeartbeat;
+
+	typedef BOOL (*pServerHeartbeat)(freerdp* instance, BYTE period, BYTE count1, BYTE count2);
+
+	struct rdp_heartbeat
+	{
+		WINPR_ATTR_NODISCARD pServerHeartbeat ServerHeartbeat;
+	};
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API BOOL freerdp_heartbeat_send_heartbeat_pdu(freerdp_peer* peer, BYTE period,
 	                                                      BYTE count1, BYTE count2);
 

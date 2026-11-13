@@ -18,10 +18,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
+#include <winpr/atexit.h>
 #include <winpr/crt.h>
 #include <winpr/synch.h>
 #include <winpr/ssl.h>
@@ -33,10 +32,20 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#if defined(OPENSSL_VERSION_MAJOR) && (OPENSSL_VERSION_MAJOR >= 3)
+#include <openssl/provider.h>
+#endif
+
 #include "../log.h"
 #define TAG WINPR_TAG("utils.ssl")
 
 static BOOL g_winpr_openssl_initialized_by_winpr = FALSE;
+
+#if defined(OPENSSL_VERSION_MAJOR) && (OPENSSL_VERSION_MAJOR >= 3)
+static OSSL_PROVIDER* s_winpr_openssl_provider_fips = nullptr;
+static OSSL_PROVIDER* s_winpr_openssl_provider_legacy = nullptr;
+static OSSL_PROVIDER* s_winpr_openssl_provider_default = nullptr;
+#endif
 
 /**
  * Note from OpenSSL 1.1.0 "CHANGES":
@@ -49,7 +58,7 @@ static BOOL g_winpr_openssl_initialized_by_winpr = FALSE;
 #define WINPR_OPENSSL_LOCKING_REQUIRED 1
 
 static int g_winpr_openssl_num_locks = 0;
-static HANDLE* g_winpr_openssl_locks = NULL;
+static HANDLE* g_winpr_openssl_locks = nullptr;
 
 struct CRYPTO_dynlock_value
 {
@@ -67,11 +76,11 @@ static void _winpr_openssl_locking(int mode, int type, const char* file, int lin
 {
 	if (mode & CRYPTO_LOCK)
 	{
-		WaitForSingleObject(g_winpr_openssl_locks[type], INFINITE);
+		(void)WaitForSingleObject(g_winpr_openssl_locks[type], INFINITE);
 	}
 	else
 	{
-		ReleaseMutex(g_winpr_openssl_locks[type]);
+		(void)ReleaseMutex(g_winpr_openssl_locks[type]);
 	}
 }
 
@@ -80,12 +89,12 @@ static struct CRYPTO_dynlock_value* _winpr_openssl_dynlock_create(const char* fi
 	struct CRYPTO_dynlock_value* dynlock;
 
 	if (!(dynlock = (struct CRYPTO_dynlock_value*)malloc(sizeof(struct CRYPTO_dynlock_value))))
-		return NULL;
+		return nullptr;
 
-	if (!(dynlock->mutex = CreateMutex(NULL, FALSE, NULL)))
+	if (!(dynlock->mutex = CreateMutex(nullptr, FALSE, nullptr)))
 	{
 		free(dynlock);
-		return NULL;
+		return nullptr;
 	}
 
 	return dynlock;
@@ -96,24 +105,24 @@ static void _winpr_openssl_dynlock_lock(int mode, struct CRYPTO_dynlock_value* d
 {
 	if (mode & CRYPTO_LOCK)
 	{
-		WaitForSingleObject(dynlock->mutex, INFINITE);
+		(void)WaitForSingleObject(dynlock->mutex, INFINITE);
 	}
 	else
 	{
-		ReleaseMutex(dynlock->mutex);
+		(void)ReleaseMutex(dynlock->mutex);
 	}
 }
 
 static void _winpr_openssl_dynlock_destroy(struct CRYPTO_dynlock_value* dynlock, const char* file,
                                            int line)
 {
-	CloseHandle(dynlock->mutex);
+	(void)CloseHandle(dynlock->mutex);
 	free(dynlock);
 }
 
 static BOOL _winpr_openssl_initialize_locking(void)
 {
-	int i, count;
+	int count;
 
 	/* OpenSSL static locking */
 
@@ -133,16 +142,16 @@ static BOOL _winpr_openssl_initialize_locking(void)
 				return FALSE;
 			}
 
-			for (i = 0; i < count; i++)
+			for (int i = 0; i < count; i++)
 			{
-				if (!(locks[i] = CreateMutex(NULL, FALSE, NULL)))
+				if (!(locks[i] = CreateMutex(nullptr, FALSE, nullptr)))
 				{
 					WLog_ERR(TAG, "error creating lock #%d", i);
 
 					while (i--)
 					{
 						if (locks[i])
-							CloseHandle(locks[i]);
+							(void)CloseHandle(locks[i]);
 					}
 
 					free(locks);
@@ -191,41 +200,40 @@ static BOOL _winpr_openssl_cleanup_locking(void)
 	/* undo our static locking modifications */
 	if (CRYPTO_get_locking_callback() == _winpr_openssl_locking)
 	{
-		int i;
-		CRYPTO_set_locking_callback(NULL);
+		CRYPTO_set_locking_callback(nullptr);
 
-		for (i = 0; i < g_winpr_openssl_num_locks; i++)
+		for (int i = 0; i < g_winpr_openssl_num_locks; i++)
 		{
-			CloseHandle(g_winpr_openssl_locks[i]);
+			(void)CloseHandle(g_winpr_openssl_locks[i]);
 		}
 
 		g_winpr_openssl_num_locks = 0;
 		free(g_winpr_openssl_locks);
-		g_winpr_openssl_locks = NULL;
+		g_winpr_openssl_locks = nullptr;
 	}
 
 	/* unset our dynamic locking callbacks */
 
 	if (CRYPTO_get_dynlock_create_callback() == _winpr_openssl_dynlock_create)
 	{
-		CRYPTO_set_dynlock_create_callback(NULL);
+		CRYPTO_set_dynlock_create_callback(nullptr);
 	}
 
 	if (CRYPTO_get_dynlock_lock_callback() == _winpr_openssl_dynlock_lock)
 	{
-		CRYPTO_set_dynlock_lock_callback(NULL);
+		CRYPTO_set_dynlock_lock_callback(nullptr);
 	}
 
 	if (CRYPTO_get_dynlock_destroy_callback() == _winpr_openssl_dynlock_destroy)
 	{
-		CRYPTO_set_dynlock_destroy_callback(NULL);
+		CRYPTO_set_dynlock_destroy_callback(nullptr);
 	}
 
 #if (OPENSSL_VERSION_NUMBER < 0x10000000L) || defined(LIBRESSL_VERSION_NUMBER)
 
 	if (CRYPTO_get_id_callback() == _winpr_openssl_id)
 	{
-		CRYPTO_set_id_callback(NULL);
+		CRYPTO_set_id_callback(nullptr);
 	}
 
 #endif
@@ -242,15 +250,28 @@ static BOOL winpr_enable_fips(DWORD flags)
 		WLog_ERR(TAG, "Openssl fips mode not available on openssl versions less than 1.0.1!");
 		return FALSE;
 #else
-		WLog_DBG(TAG, "Ensuring openssl fips mode is ENabled");
+		WLog_DBG(TAG, "Ensuring openssl fips mode is enabled");
 
-		if (FIPS_mode() != 1)
+#if defined(OPENSSL_VERSION_MAJOR) && (OPENSSL_VERSION_MAJOR >= 3)
+		s_winpr_openssl_provider_fips = OSSL_PROVIDER_load(nullptr, "fips");
+		if (s_winpr_openssl_provider_fips == nullptr)
 		{
+			WLog_WARN(TAG, "OpenSSL FIPS provider failed to load");
+		}
+		if (!EVP_default_properties_is_fips_enabled(nullptr))
+#else
+		if (FIPS_mode() != 1)
+#endif
+		{
+#if defined(OPENSSL_VERSION_MAJOR) && (OPENSSL_VERSION_MAJOR >= 3)
+			if (EVP_set_default_properties(nullptr, "fips=yes"))
+#else
 			if (FIPS_mode_set(1))
-				WLog_INFO(TAG, "Openssl fips mode ENabled!");
+#endif
+				WLog_INFO(TAG, "Openssl fips mode enabled!");
 			else
 			{
-				WLog_ERR(TAG, "Openssl fips mode ENable failed!");
+				WLog_ERR(TAG, "Openssl fips mode enable failed!");
 				return FALSE;
 			}
 		}
@@ -261,7 +282,13 @@ static BOOL winpr_enable_fips(DWORD flags)
 	return TRUE;
 }
 
-static BOOL CALLBACK _winpr_openssl_initialize(PINIT_ONCE once, PVOID param, PVOID* context)
+static void winpr_openssl_cleanup(void)
+{
+	winpr_CleanupSSL(WINPR_SSL_INIT_DEFAULT);
+}
+
+static BOOL CALLBACK winpr_openssl_initialize(WINPR_ATTR_UNUSED PINIT_ONCE once, PVOID param,
+                                              WINPR_ATTR_UNUSED PVOID* context)
 {
 	DWORD flags = param ? *(PDWORD)param : WINPR_SSL_INIT_DEFAULT;
 
@@ -293,12 +320,31 @@ static BOOL CALLBACK _winpr_openssl_initialize(PINIT_ONCE once, PVOID param, PVO
 	if (OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS |
 	                         OPENSSL_INIT_ADD_ALL_CIPHERS | OPENSSL_INIT_ADD_ALL_DIGESTS |
 	                         OPENSSL_INIT_ENGINE_ALL_BUILTIN,
-	                     NULL) != 1)
+	                     nullptr) != 1)
 		return FALSE;
 
 #endif
+
+#if defined(OPENSSL_VERSION_MAJOR) && (OPENSSL_VERSION_MAJOR >= 3)
+	/* The legacy provider has MD4 and RC4, which are needed unless WinPR uses
+	 * its own implementations of both (WITH_INTERNAL_MD4, WITH_INTERNAL_RC4). */
+	s_winpr_openssl_provider_legacy = OSSL_PROVIDER_load(nullptr, "legacy");
+#if !defined(WITH_INTERNAL_MD4) || !defined(WITH_INTERNAL_RC4)
+	if (s_winpr_openssl_provider_legacy == nullptr)
+	{
+		WLog_WARN(TAG, "OpenSSL LEGACY provider failed to load, no md4/rc4 support available!");
+	}
+#endif
+	s_winpr_openssl_provider_default = OSSL_PROVIDER_load(nullptr, "default");
+	if (s_winpr_openssl_provider_default == nullptr)
+	{
+		WLog_WARN(TAG, "OpenSSL DEFAULT provider failed to load");
+	}
+#endif
+
+	(void)winpr_atexit(winpr_openssl_cleanup);
 	g_winpr_openssl_initialized_by_winpr = TRUE;
-	return winpr_enable_fips(flags);
+	return TRUE;
 }
 
 /* exported functions */
@@ -307,11 +353,29 @@ BOOL winpr_InitializeSSL(DWORD flags)
 {
 	static INIT_ONCE once = INIT_ONCE_STATIC_INIT;
 
-	if (!InitOnceExecuteOnce(&once, _winpr_openssl_initialize, &flags, NULL))
+	if (!InitOnceExecuteOnce(&once, winpr_openssl_initialize, &flags, nullptr))
 		return FALSE;
 
 	return winpr_enable_fips(flags);
 }
+
+#if defined(OPENSSL_VERSION_MAJOR) && (OPENSSL_VERSION_MAJOR >= 3)
+static int unload(OSSL_PROVIDER* provider, WINPR_ATTR_UNUSED void* data)
+{
+	if (!provider)
+		return 1;
+	const char* name = OSSL_PROVIDER_get0_name(provider);
+	if (!name)
+		return 1;
+
+	OSSL_LIB_CTX* ctx = OSSL_LIB_CTX_get0_global_default();
+	const int rc = OSSL_PROVIDER_available(ctx, name);
+	if (rc < 1)
+		return 1;
+	OSSL_PROVIDER_unload(provider);
+	return 1;
+}
+#endif
 
 BOOL winpr_CleanupSSL(DWORD flags)
 {
@@ -344,11 +408,17 @@ BOOL winpr_CleanupSSL(DWORD flags)
 #if (OPENSSL_VERSION_NUMBER < 0x10000000L) || defined(LIBRESSL_VERSION_NUMBER)
 		ERR_remove_state(0);
 #else
-		ERR_remove_thread_state(NULL);
+		ERR_remove_thread_state(nullptr);
 #endif
 	}
 
 #endif
+#if defined(OPENSSL_VERSION_MAJOR) && (OPENSSL_VERSION_MAJOR >= 3)
+	OSSL_LIB_CTX* ctx = OSSL_LIB_CTX_get0_global_default();
+	if (ctx)
+		OSSL_PROVIDER_do_all(ctx, unload, nullptr);
+#endif
+
 	return TRUE;
 }
 
@@ -356,6 +426,8 @@ BOOL winpr_FIPSMode(void)
 {
 #if (OPENSSL_VERSION_NUMBER < 0x10001000L) || defined(LIBRESSL_VERSION_NUMBER)
 	return FALSE;
+#elif defined(OPENSSL_VERSION_MAJOR) && (OPENSSL_VERSION_MAJOR >= 3)
+	return (EVP_default_properties_is_fips_enabled(nullptr) == 1);
 #else
 	return (FIPS_mode() == 1);
 #endif

@@ -16,12 +16,12 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
+#include <winpr/assert.h>
 #include <winpr/crt.h>
 #include <winpr/print.h>
+#include <winpr/library.h>
 #include <freerdp/log.h>
 
 #include "win_dxgi.h"
@@ -43,7 +43,7 @@ static D3D_FEATURE_LEVEL FeatureLevels[] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE
 
 static UINT NumFeatureLevels = ARRAYSIZE(FeatureLevels);
 
-static HMODULE d3d11_module = NULL;
+static HMODULE d3d11_module = nullptr;
 
 typedef HRESULT(WINAPI* fnD3D11CreateDevice)(IDXGIAdapter* pAdapter, D3D_DRIVER_TYPE DriverType,
                                              HMODULE Software, UINT Flags,
@@ -53,7 +53,7 @@ typedef HRESULT(WINAPI* fnD3D11CreateDevice)(IDXGIAdapter* pAdapter, D3D_DRIVER_
                                              D3D_FEATURE_LEVEL* pFeatureLevel,
                                              ID3D11DeviceContext** ppImmediateContext);
 
-static fnD3D11CreateDevice pfnD3D11CreateDevice = NULL;
+static fnD3D11CreateDevice pfnD3D11CreateDevice = nullptr;
 
 #undef DEFINE_GUID
 #define INITGUID
@@ -197,6 +197,7 @@ DEFINE_GUID(IID_IDXGIAdapter2, 0x0AA1AE0A, 0xFA0E, 0x4B84, 0x86, 0x44, 0xE0, 0x5
 DEFINE_GUID(IID_IDXGIOutput1, 0x00cddea8, 0x939b, 0x4b83, 0xa3, 0x40, 0xa6, 0x85, 0x22, 0x66, 0x66,
             0xcc);
 
+WINPR_ATTR_NODISCARD
 const char* GetDxgiErrorString(HRESULT hr)
 {
 	switch (hr)
@@ -273,8 +274,8 @@ const char* GetDxgiErrorString(HRESULT hr)
 			return "DXGI_DDI_ERR_UNSUPPORTED";
 		case DXGI_DDI_ERR_NONEXCLUSIVE:
 			return "DXGI_DDI_ERR_NONEXCLUSIVE";
-		case 0x80070005:
-			return "DXGI_ERROR_ACCESS_DENIED";
+		case E_ACCESSDENIED:
+			return "E_ACCESSDENIED";
 	}
 
 	return "DXGI_ERROR_UNKNOWN";
@@ -290,21 +291,86 @@ static void win_shadow_d3d11_module_init()
 	if (!d3d11_module)
 		return;
 
-	pfnD3D11CreateDevice = (fnD3D11CreateDevice)GetProcAddress(d3d11_module, "D3D11CreateDevice");
+	pfnD3D11CreateDevice = GetProcAddressAs(d3d11_module, "D3D11CreateDevice", fnD3D11CreateDevice);
 }
 
-int win_shadow_dxgi_init_duplication(winShadowSubsystem* subsystem)
+WINPR_ATTR_NODISCARD
+static int win_shadow_dxgi_release_frame_data(winShadowSubsystem* subsystem);
+
+/* How often a paused capture tries to duplicate the output again */
+#define WIN_SHADOW_DXGI_DENIED_RETRY_MS 250
+
+/* How often the capture tries again after a failure which does not recover by
+ * itself (no D3D11 device, no output of the adapter duplicatable at all):
+ * unlike a refused desktop, that state does not go away on its own */
+#define WIN_SHADOW_DXGI_INIT_RETRY_MS 60000
+
+/* The input desktop is one this process may not capture: the secure desktop (logon, lock
+ * screen, UAC) for a process in the user's session. DuplicateOutput says E_ACCESSDENIED,
+ * AcquireNextFrame and Map DXGI_ERROR_ACCESS_DENIED. */
+WINPR_ATTR_NODISCARD
+static BOOL win_shadow_dxgi_is_denied(HRESULT hr)
+{
+	return (hr == DXGI_ERROR_ACCESS_DENIED) || (hr == E_ACCESSDENIED);
+}
+
+/* Pause the capture: said once, then quiet until it resumes; the capture loop tries again
+ * after WIN_SHADOW_DXGI_DENIED_RETRY_MS (and at once when the input desktop changes) */
+static void win_shadow_dxgi_pause(winShadowSubsystem* subsystem, const char* what, HRESULT hr)
+{
+	WINPR_ASSERT(subsystem);
+	WINPR_ASSERT(what);
+
+	if (!subsystem->dxgiDenied)
+		WLog_WARN(TAG,
+		          "%s: %s (0x%08lX): this process may not capture the current desktop (the "
+		          "secure desktop?), capture paused until it can",
+		          what, GetDxgiErrorString(hr), hr);
+	subsystem->dxgiDenied = TRUE;
+	subsystem->dxgiRetryTime = GetTickCount64() + WIN_SHADOW_DXGI_DENIED_RETRY_MS;
+}
+
+static void win_shadow_dxgi_drop_duplication(winShadowSubsystem* subsystem)
+{
+	WINPR_ASSERT(subsystem);
+
+	(void)win_shadow_dxgi_release_frame_data(subsystem);
+
+	if (subsystem->dxgiDesktopImage)
+	{
+		subsystem->dxgiDesktopImage->lpVtbl->Release(subsystem->dxgiDesktopImage);
+		subsystem->dxgiDesktopImage = nullptr;
+	}
+
+	if (subsystem->dxgiOutputDuplication)
+	{
+		subsystem->dxgiOutputDuplication->lpVtbl->Release(subsystem->dxgiOutputDuplication);
+		subsystem->dxgiOutputDuplication = nullptr;
+	}
+
+	if (subsystem->dxgiStage)
+	{
+		subsystem->dxgiStage->lpVtbl->Release(subsystem->dxgiStage);
+		subsystem->dxgiStage = nullptr;
+	}
+}
+
+WINPR_ATTR_NODISCARD
+static int win_shadow_dxgi_init_duplication(winShadowSubsystem* subsystem)
 {
 	HRESULT hr;
-	UINT dTop, i = 0;
-	IDXGIOutput* pOutput;
-	DXGI_OUTPUT_DESC outputDesc;
-	DXGI_OUTPUT_DESC* pOutputDesc;
+	HRESULT refusedHr = E_FAIL;
+	HRESULT deniedHr = E_FAIL;
+	BOOL denied = FALSE;
+	BOOL refused = FALSE;
+	BOOL duplicated = FALSE;
+	UINT refusedIndex = 0;
+	UINT duplicatedIndex = 0;
 	D3D11_TEXTURE2D_DESC textureDesc;
-	IDXGIDevice* dxgiDevice = NULL;
-	IDXGIAdapter* dxgiAdapter = NULL;
-	IDXGIOutput* dxgiOutput = NULL;
-	IDXGIOutput1* dxgiOutput1 = NULL;
+	IDXGIDevice* dxgiDevice = nullptr;
+	IDXGIAdapter* dxgiAdapter = nullptr;
+
+	WINPR_ASSERT(subsystem);
 
 	hr = subsystem->dxgiDevice->lpVtbl->QueryInterface(subsystem->dxgiDevice, &IID_IDXGIDevice,
 	                                                   (void**)&dxgiDevice);
@@ -321,7 +387,7 @@ int win_shadow_dxgi_init_duplication(winShadowSubsystem* subsystem)
 	if (dxgiDevice)
 	{
 		dxgiDevice->lpVtbl->Release(dxgiDevice);
-		dxgiDevice = NULL;
+		dxgiDevice = nullptr;
 	}
 
 	if (FAILED(hr))
@@ -331,75 +397,132 @@ int win_shadow_dxgi_init_duplication(winShadowSubsystem* subsystem)
 		return -1;
 	}
 
-	pOutput = NULL;
-	ZeroMemory(&outputDesc, sizeof(outputDesc));
-
-	while (dxgiAdapter->lpVtbl->EnumOutputs(dxgiAdapter, i, &pOutput) != DXGI_ERROR_NOT_FOUND)
+	/* Two passes over the adapter's outputs: the primary one first (its top
+	 * left corner is the desktop origin, the monitor win_shadow_enum_monitors()
+	 * describes), then the remaining attached ones. One output refusing the
+	 * duplication must not end the search: an output of a virtual or an
+	 * indirect display adapter does so for good while another output of the
+	 * same adapter may duplicate fine, and any output does so while this
+	 * process may not see the desktop. Only an adapter without a single
+	 * duplicatable output fails the initialization. */
+	for (UINT pass = 0; !duplicated && (pass < 2); pass++)
 	{
-		pOutputDesc = &outputDesc;
-
-		hr = pOutput->lpVtbl->GetDesc(pOutput, pOutputDesc);
-
-		if (FAILED(hr))
+		for (UINT index = 0; !duplicated; index++)
 		{
-			WLog_ERR(TAG, "IDXGIOutput::GetDesc failure: %s (0x%08lX)", GetDxgiErrorString(hr), hr);
-			return -1;
+			IDXGIOutput* output = nullptr;
+			IDXGIOutput1* output1 = nullptr;
+			DXGI_OUTPUT_DESC desc = WINPR_C_ARRAY_INIT;
+			BOOL primary;
+
+			hr = dxgiAdapter->lpVtbl->EnumOutputs(dxgiAdapter, index, &output);
+
+			/* DXGI_ERROR_NOT_FOUND: no (more) output at this index */
+			if (FAILED(hr))
+				break;
+
+			hr = output->lpVtbl->GetDesc(output, &desc);
+
+			if (FAILED(hr))
+			{
+				WLog_WARN(TAG, "IDXGIOutput %u::GetDesc failure: %s (0x%08lX)", index,
+				          GetDxgiErrorString(hr), hr);
+				output->lpVtbl->Release(output);
+				continue;
+			}
+
+			if (!desc.AttachedToDesktop)
+			{
+				output->lpVtbl->Release(output);
+				continue;
+			}
+
+			primary = (desc.DesktopCoordinates.left == 0) && (desc.DesktopCoordinates.top == 0);
+
+			/* the first pass takes the primary output, the second the others */
+			if (primary != (pass == 0))
+			{
+				output->lpVtbl->Release(output);
+				continue;
+			}
+
+			hr = output->lpVtbl->QueryInterface(output, &IID_IDXGIOutput1, (void**)&output1);
+			output->lpVtbl->Release(output);
+
+			if (FAILED(hr))
+			{
+				WLog_WARN(TAG, "IDXGIOutput %u::QueryInterface(IDXGIOutput1) failure: %s (0x%08lX)",
+				          index, GetDxgiErrorString(hr), hr);
+				continue;
+			}
+
+			hr = output1->lpVtbl->DuplicateOutput(output1, (IUnknown*)subsystem->dxgiDevice,
+			                                      &(subsystem->dxgiOutputDuplication));
+			output1->lpVtbl->Release(output1);
+
+			if (SUCCEEDED(hr))
+			{
+				duplicated = TRUE;
+				duplicatedIndex = index;
+				WLog_INFO(TAG, "duplicating output %u (%ldx%ld at %ld,%ld)", index,
+				          desc.DesktopCoordinates.right - desc.DesktopCoordinates.left,
+				          desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top,
+				          desc.DesktopCoordinates.left, desc.DesktopCoordinates.top);
+				break;
+			}
+
+			WLog_DBG(TAG, "IDXGIOutput %u::DuplicateOutput failure: %s (0x%08lX)", index,
+			         GetDxgiErrorString(hr), hr);
+
+			if (!refused)
+			{
+				refused = TRUE;
+				refusedIndex = index;
+				refusedHr = hr;
+			}
+
+			if (win_shadow_dxgi_is_denied(hr))
+			{
+				denied = TRUE;
+				deniedHr = hr;
+			}
 		}
-
-		if (pOutputDesc->AttachedToDesktop)
-			dTop = i;
-
-		pOutput->lpVtbl->Release(pOutput);
-		i++;
 	}
-
-	dTop = 0; /* screen id */
-
-	hr = dxgiAdapter->lpVtbl->EnumOutputs(dxgiAdapter, dTop, &dxgiOutput);
 
 	if (dxgiAdapter)
 	{
 		dxgiAdapter->lpVtbl->Release(dxgiAdapter);
-		dxgiAdapter = NULL;
+		dxgiAdapter = nullptr;
 	}
 
-	if (FAILED(hr))
+	if (!duplicated)
 	{
-		WLog_ERR(TAG, "IDXGIAdapter::EnumOutputs failure: %s (0x%08lX)", GetDxgiErrorString(hr),
-		         hr);
+		if (denied)
+		{
+			/* the outputs deny the duplication while this process may not see
+			 * the desktop: the capture loop tries again from dxgiRetryTime on */
+			win_shadow_dxgi_pause(subsystem, "IDXGIOutput1::DuplicateOutput", deniedHr);
+			return -1;
+		}
+
+		/* this does not recover by itself (only virtual or indirect display
+		 * adapter outputs, or none at all): the capture loop tries again at a
+		 * low rate */
+		WLog_ERR(TAG, "no output of the adapter can be duplicated, next attempt in %u ms",
+		         WIN_SHADOW_DXGI_INIT_RETRY_MS);
+		subsystem->dxgiRetryTime = GetTickCount64() + WIN_SHADOW_DXGI_INIT_RETRY_MS;
 		return -1;
 	}
 
-	hr = dxgiOutput->lpVtbl->QueryInterface(dxgiOutput, &IID_IDXGIOutput1, (void**)&dxgiOutput1);
+	if (refused)
+		WLog_WARN(TAG,
+		          "IDXGIOutput %u refused the duplication: %s (0x%08lX), duplicating output "
+		          "%u instead",
+		          refusedIndex, GetDxgiErrorString(refusedHr), refusedHr, duplicatedIndex);
 
-	if (dxgiOutput)
-	{
-		dxgiOutput->lpVtbl->Release(dxgiOutput);
-		dxgiOutput = NULL;
-	}
-
-	if (FAILED(hr))
-	{
-		WLog_ERR(TAG, "IDXGIOutput::QueryInterface(IDXGIOutput1) failure: %s (0x%08lX)",
-		         GetDxgiErrorString(hr), hr);
+	/* the staging texture must match the current desktop size; a fatal
+	 * resize error fails the duplication, the caller retries next tick */
+	if (win_shadow_check_resize(subsystem) < 0)
 		return -1;
-	}
-
-	hr = dxgiOutput1->lpVtbl->DuplicateOutput(dxgiOutput1, (IUnknown*)subsystem->dxgiDevice,
-	                                          &(subsystem->dxgiOutputDuplication));
-
-	if (dxgiOutput1)
-	{
-		dxgiOutput1->lpVtbl->Release(dxgiOutput1);
-		dxgiOutput1 = NULL;
-	}
-
-	if (FAILED(hr))
-	{
-		WLog_ERR(TAG, "IDXGIOutput1::DuplicateOutput failure: %s (0x%08lX)", GetDxgiErrorString(hr),
-		         hr);
-		return -1;
-	}
 
 	textureDesc.Width = subsystem->width;
 	textureDesc.Height = subsystem->height;
@@ -413,8 +536,8 @@ int win_shadow_dxgi_init_duplication(winShadowSubsystem* subsystem)
 	textureDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 	textureDesc.MiscFlags = 0;
 
-	hr = subsystem->dxgiDevice->lpVtbl->CreateTexture2D(subsystem->dxgiDevice, &textureDesc, NULL,
-	                                                    &(subsystem->dxgiStage));
+	hr = subsystem->dxgiDevice->lpVtbl->CreateTexture2D(subsystem->dxgiDevice, &textureDesc,
+	                                                    nullptr, &(subsystem->dxgiStage));
 
 	if (FAILED(hr))
 	{
@@ -423,6 +546,11 @@ int win_shadow_dxgi_init_duplication(winShadowSubsystem* subsystem)
 		return -1;
 	}
 
+	if (subsystem->dxgiDenied)
+	{
+		WLog_INFO(TAG, "capture resumed");
+		subsystem->dxgiDenied = FALSE;
+	}
 	return 1;
 }
 
@@ -432,19 +560,26 @@ int win_shadow_dxgi_init(winShadowSubsystem* subsystem)
 	HRESULT hr;
 	int status;
 	UINT DriverTypeIndex;
-	IDXGIDevice* DxgiDevice = NULL;
-	IDXGIAdapter* DxgiAdapter = NULL;
-	IDXGIOutput* DxgiOutput = NULL;
-	IDXGIOutput1* DxgiOutput1 = NULL;
+	IDXGIDevice* DxgiDevice = nullptr;
+	IDXGIAdapter* DxgiAdapter = nullptr;
+	IDXGIOutput* DxgiOutput = nullptr;
+	IDXGIOutput1* DxgiOutput1 = nullptr;
 
 	win_shadow_d3d11_module_init();
 
 	if (!pfnD3D11CreateDevice)
+	{
+		/* this does not recover by itself: the capture loop tries again at a
+		 * low rate */
+		WLog_ERR(TAG, "d3d11.dll did not provide D3D11CreateDevice, next attempt in %u ms",
+		         WIN_SHADOW_DXGI_INIT_RETRY_MS);
+		subsystem->dxgiRetryTime = GetTickCount64() + WIN_SHADOW_DXGI_INIT_RETRY_MS;
 		return -1;
+	}
 
 	for (DriverTypeIndex = 0; DriverTypeIndex < NumDriverTypes; ++DriverTypeIndex)
 	{
-		hr = pfnD3D11CreateDevice(NULL, DriverTypes[DriverTypeIndex], NULL, 0, FeatureLevels,
+		hr = pfnD3D11CreateDevice(nullptr, DriverTypes[DriverTypeIndex], nullptr, 0, FeatureLevels,
 		                          NumFeatureLevels, D3D11_SDK_VERSION, &(subsystem->dxgiDevice),
 		                          &(subsystem->featureLevel), &(subsystem->dxgiDeviceContext));
 
@@ -454,7 +589,11 @@ int win_shadow_dxgi_init(winShadowSubsystem* subsystem)
 
 	if (FAILED(hr))
 	{
-		WLog_ERR(TAG, "D3D11CreateDevice failure: 0x%08lX", hr);
+		/* this does not recover by itself: the capture loop tries again at a
+		 * low rate */
+		WLog_ERR(TAG, "D3D11CreateDevice failure: 0x%08lX, next attempt in %u ms", hr,
+		         WIN_SHADOW_DXGI_INIT_RETRY_MS);
+		subsystem->dxgiRetryTime = GetTickCount64() + WIN_SHADOW_DXGI_INIT_RETRY_MS;
 		return -1;
 	}
 
@@ -468,31 +607,31 @@ int win_shadow_dxgi_uninit(winShadowSubsystem* subsystem)
 	if (subsystem->dxgiStage)
 	{
 		subsystem->dxgiStage->lpVtbl->Release(subsystem->dxgiStage);
-		subsystem->dxgiStage = NULL;
+		subsystem->dxgiStage = nullptr;
 	}
 
 	if (subsystem->dxgiDesktopImage)
 	{
 		subsystem->dxgiDesktopImage->lpVtbl->Release(subsystem->dxgiDesktopImage);
-		subsystem->dxgiDesktopImage = NULL;
+		subsystem->dxgiDesktopImage = nullptr;
 	}
 
 	if (subsystem->dxgiOutputDuplication)
 	{
 		subsystem->dxgiOutputDuplication->lpVtbl->Release(subsystem->dxgiOutputDuplication);
-		subsystem->dxgiOutputDuplication = NULL;
+		subsystem->dxgiOutputDuplication = nullptr;
 	}
 
 	if (subsystem->dxgiDeviceContext)
 	{
 		subsystem->dxgiDeviceContext->lpVtbl->Release(subsystem->dxgiDeviceContext);
-		subsystem->dxgiDeviceContext = NULL;
+		subsystem->dxgiDeviceContext = nullptr;
 	}
 
 	if (subsystem->dxgiDevice)
 	{
 		subsystem->dxgiDevice->lpVtbl->Release(subsystem->dxgiDevice);
-		subsystem->dxgiDevice = NULL;
+		subsystem->dxgiDevice = nullptr;
 	}
 
 	return 1;
@@ -509,8 +648,21 @@ int win_shadow_dxgi_fetch_frame_data(winShadowSubsystem* subsystem, BYTE** ppDst
 	if ((width * height) < 1)
 		return 0;
 
-	Box.top = x;
-	Box.left = y;
+	{
+		/* The shadow surface may be a pixel larger than the desktop image
+		 * (exclusive vs inclusive rect edges); clamp the requested region to
+		 * the source texture, otherwise the out-of-bounds copy trips
+		 * DXGI_ERROR_DEVICE_REMOVED and capture silently dies. */
+		D3D11_TEXTURE2D_DESC srcDesc;
+		subsystem->dxgiDesktopImage->lpVtbl->GetDesc(subsystem->dxgiDesktopImage, &srcDesc);
+		if (x + width > (int)srcDesc.Width)
+			width = (int)srcDesc.Width - x;
+		if (y + height > (int)srcDesc.Height)
+			height = (int)srcDesc.Height - y;
+	}
+
+	Box.top = y;
+	Box.left = x;
 	Box.right = x + width;
 	Box.bottom = y + height;
 	Box.front = 0;
@@ -519,6 +671,12 @@ int win_shadow_dxgi_fetch_frame_data(winShadowSubsystem* subsystem, BYTE** ppDst
 	subsystem->dxgiDeviceContext->lpVtbl->CopySubresourceRegion(
 	    subsystem->dxgiDeviceContext, (ID3D11Resource*)subsystem->dxgiStage, 0, 0, 0, 0,
 	    (ID3D11Resource*)subsystem->dxgiDesktopImage, 0, &Box);
+
+	if (subsystem->dxgiSurface)
+	{
+		subsystem->dxgiSurface->lpVtbl->Release(subsystem->dxgiSurface);
+		subsystem->dxgiSurface = nullptr;
+	}
 
 	hr = subsystem->dxgiStage->lpVtbl->QueryInterface(subsystem->dxgiStage, &IID_IDXGISurface,
 	                                                  (void**)&(subsystem->dxgiSurface));
@@ -534,6 +692,13 @@ int win_shadow_dxgi_fetch_frame_data(winShadowSubsystem* subsystem, BYTE** ppDst
 
 	if (FAILED(hr))
 	{
+		if (win_shadow_dxgi_is_denied(hr))
+		{
+			win_shadow_dxgi_pause(subsystem, "IDXGISurface::Map", hr);
+			win_shadow_dxgi_drop_duplication(subsystem);
+			return 0;
+		}
+
 		WLog_ERR(TAG, "IDXGISurface::Map failure: %s 0x%08lX", GetDxgiErrorString(hr), hr);
 
 		if (hr == DXGI_ERROR_DEVICE_REMOVED)
@@ -546,6 +711,43 @@ int win_shadow_dxgi_fetch_frame_data(winShadowSubsystem* subsystem, BYTE** ppDst
 				return -1;
 
 			return 0;
+		}
+		else if (hr == DXGI_ERROR_ACCESS_DENIED)
+		{
+			/* The console desktop switched to the secure desktop (lock
+			 * screen, UAC prompt, ...). Re-create the duplication with a
+			 * bounded retry loop instead of killing the capture thread. */
+			if (subsystem->dxgiSurface)
+			{
+				subsystem->dxgiSurface->lpVtbl->Release(subsystem->dxgiSurface);
+				subsystem->dxgiSurface = nullptr;
+				subsystem->dxgiSurfaceMapped = FALSE;
+			}
+
+			if (subsystem->dxgiStage)
+			{
+				subsystem->dxgiStage->lpVtbl->Release(subsystem->dxgiStage);
+				subsystem->dxgiStage = nullptr;
+			}
+
+			if (subsystem->dxgiOutputDuplication)
+			{
+				subsystem->dxgiOutputDuplication->lpVtbl->Release(subsystem->dxgiOutputDuplication);
+				subsystem->dxgiOutputDuplication = nullptr;
+			}
+
+			for (int attempt = 0; attempt < 240; ++attempt)
+			{
+				if (WaitForSingleObject(subsystem->base.server->StopEvent, 0) == WAIT_OBJECT_0)
+					return -1;
+
+				Sleep(500);
+				status = win_shadow_dxgi_init_duplication(subsystem);
+				if (status >= 0)
+					return 0;
+			}
+
+			return -1;
 		}
 
 		return -1;
@@ -570,7 +772,7 @@ int win_shadow_dxgi_release_frame_data(winShadowSubsystem* subsystem)
 		}
 
 		subsystem->dxgiSurface->lpVtbl->Release(subsystem->dxgiSurface);
-		subsystem->dxgiSurface = NULL;
+		subsystem->dxgiSurface = nullptr;
 	}
 
 	if (subsystem->dxgiOutputDuplication)
@@ -588,14 +790,29 @@ int win_shadow_dxgi_release_frame_data(winShadowSubsystem* subsystem)
 	return 1;
 }
 
+/* A new duplication of the output, on the calling thread's desktop: after a
+ * switch between the user's desktop and the secure one (logon, lock screen,
+ * UAC), or when an earlier attempt failed. The device is kept when there is
+ * one. */
+int win_shadow_dxgi_restart_duplication(winShadowSubsystem* subsystem)
+{
+	WINPR_ASSERT(subsystem);
+
+	if (!subsystem->dxgiDevice)
+		return win_shadow_dxgi_init(subsystem);
+
+	win_shadow_dxgi_drop_duplication(subsystem);
+	return win_shadow_dxgi_init_duplication(subsystem);
+}
+
 int win_shadow_dxgi_get_next_frame(winShadowSubsystem* subsystem)
 {
 	UINT i = 0;
 	int status;
 	HRESULT hr = 0;
-	UINT timeout = 15;
+	UINT timeout = 1;
 	UINT DataBufferSize = 0;
-	BYTE* DataBuffer = NULL;
+	BYTE* DataBuffer = nullptr;
 
 	if (subsystem->dxgiFrameAcquired)
 	{
@@ -605,7 +822,7 @@ int win_shadow_dxgi_get_next_frame(winShadowSubsystem* subsystem)
 	if (subsystem->dxgiDesktopImage)
 	{
 		subsystem->dxgiDesktopImage->lpVtbl->Release(subsystem->dxgiDesktopImage);
-		subsystem->dxgiDesktopImage = NULL;
+		subsystem->dxgiDesktopImage = nullptr;
 	}
 
 	hr = subsystem->dxgiOutputDuplication->lpVtbl->AcquireNextFrame(
@@ -623,6 +840,15 @@ int win_shadow_dxgi_get_next_frame(winShadowSubsystem* subsystem)
 
 	if (FAILED(hr))
 	{
+		if (win_shadow_dxgi_is_denied(hr))
+		{
+			/* the duplication is no good any more: drop it, the capture loop makes a new one
+			 * (on the new input desktop when this process may open it) */
+			win_shadow_dxgi_pause(subsystem, "IDXGIOutputDuplication::AcquireNextFrame", hr);
+			win_shadow_dxgi_drop_duplication(subsystem);
+			return 0;
+		}
+
 		WLog_ERR(TAG, "IDXGIOutputDuplication::AcquireNextFrame failure: %s (0x%08lX)",
 		         GetDxgiErrorString(hr), hr);
 
@@ -633,13 +859,19 @@ int win_shadow_dxgi_get_next_frame(winShadowSubsystem* subsystem)
 			if (subsystem->dxgiDesktopImage)
 			{
 				subsystem->dxgiDesktopImage->lpVtbl->Release(subsystem->dxgiDesktopImage);
-				subsystem->dxgiDesktopImage = NULL;
+				subsystem->dxgiDesktopImage = nullptr;
+			}
+
+			if (subsystem->dxgiStage)
+			{
+				subsystem->dxgiStage->lpVtbl->Release(subsystem->dxgiStage);
+				subsystem->dxgiStage = nullptr;
 			}
 
 			if (subsystem->dxgiOutputDuplication)
 			{
 				subsystem->dxgiOutputDuplication->lpVtbl->Release(subsystem->dxgiOutputDuplication);
-				subsystem->dxgiOutputDuplication = NULL;
+				subsystem->dxgiOutputDuplication = nullptr;
 			}
 
 			status = win_shadow_dxgi_init_duplication(subsystem);
@@ -648,6 +880,45 @@ int win_shadow_dxgi_get_next_frame(winShadowSubsystem* subsystem)
 				return -1;
 
 			return 0;
+		}
+		else if (hr == DXGI_ERROR_ACCESS_DENIED)
+		{
+			/* The console desktop switched to the secure desktop (lock
+			 * screen, UAC prompt, ...); the duplication stays denied while
+			 * that desktop is active. Release it and re-create with a
+			 * bounded retry loop instead of killing the capture thread. */
+			win_shadow_dxgi_release_frame_data(subsystem);
+
+			if (subsystem->dxgiDesktopImage)
+			{
+				subsystem->dxgiDesktopImage->lpVtbl->Release(subsystem->dxgiDesktopImage);
+				subsystem->dxgiDesktopImage = nullptr;
+			}
+
+			if (subsystem->dxgiStage)
+			{
+				subsystem->dxgiStage->lpVtbl->Release(subsystem->dxgiStage);
+				subsystem->dxgiStage = nullptr;
+			}
+
+			if (subsystem->dxgiOutputDuplication)
+			{
+				subsystem->dxgiOutputDuplication->lpVtbl->Release(subsystem->dxgiOutputDuplication);
+				subsystem->dxgiOutputDuplication = nullptr;
+			}
+
+			for (int attempt = 0; attempt < 240; ++attempt)
+			{
+				if (WaitForSingleObject(subsystem->base.server->StopEvent, 0) == WAIT_OBJECT_0)
+					return -1;
+
+				Sleep(500);
+				status = win_shadow_dxgi_init_duplication(subsystem);
+				if (status >= 0)
+					return 0;
+			}
+
+			return -1;
 		}
 		else if (hr == DXGI_ERROR_INVALID_CALL)
 		{
@@ -670,7 +941,7 @@ int win_shadow_dxgi_get_next_frame(winShadowSubsystem* subsystem)
 	if (subsystem->dxgiResource)
 	{
 		subsystem->dxgiResource->lpVtbl->Release(subsystem->dxgiResource);
-		subsystem->dxgiResource = NULL;
+		subsystem->dxgiResource = nullptr;
 	}
 
 	if (FAILED(hr))
@@ -685,7 +956,6 @@ int win_shadow_dxgi_get_next_frame(winShadowSubsystem* subsystem)
 
 int win_shadow_dxgi_get_invalid_region(winShadowSubsystem* subsystem)
 {
-	UINT i;
 	HRESULT hr;
 	POINT* pSrcPt;
 	RECT* pDstRect;
@@ -700,7 +970,12 @@ int win_shadow_dxgi_get_invalid_region(winShadowSubsystem* subsystem)
 	RECT* pDirtyRectsBuffer;
 	DXGI_OUTDUPL_MOVE_RECT* pMoveRect;
 	DXGI_OUTDUPL_MOVE_RECT* pMoveRectBuffer;
-	rdpShadowSurface* surface = subsystem->server->surface;
+	rdpShadowSurface* surface = nullptr;
+
+	WINPR_ASSERT(subsystem);
+	WINPR_ASSERT(subsystem->base.server);
+	surface = subsystem->base.server->surface;
+	WINPR_ASSERT(surface);
 
 	if (subsystem->dxgiFrameInfo.AccumulatedFrames == 0)
 		return 0;
@@ -764,7 +1039,7 @@ int win_shadow_dxgi_get_invalid_region(winShadowSubsystem* subsystem)
 
 	numMoveRects = MoveRectsBufferSize / sizeof(DXGI_OUTDUPL_MOVE_RECT);
 
-	for (i = 0; i < numMoveRects; i++)
+	for (UINT i = 0; i < numMoveRects; i++)
 	{
 		pMoveRect = &pMoveRectBuffer[i];
 		pSrcPt = &(pMoveRect->SourcePoint);
@@ -780,7 +1055,7 @@ int win_shadow_dxgi_get_invalid_region(winShadowSubsystem* subsystem)
 
 	numDirtyRects = DirtyRectsBufferSize / sizeof(RECT);
 
-	for (i = 0; i < numDirtyRects; i++)
+	for (UINT i = 0; i < numDirtyRects; i++)
 	{
 		pDirtyRect = &pDirtyRectsBuffer[i];
 

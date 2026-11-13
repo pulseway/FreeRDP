@@ -1,15 +1,23 @@
+#include <errno.h>
+
 #include <winpr/wtypes.h>
 #include <winpr/crt.h>
+#include <winpr/string.h>
 #include <winpr/path.h>
 #include <winpr/image.h>
 #include <winpr/print.h>
 #include <winpr/wlog.h>
-#include <winpr/image.h>
 #include <winpr/sysinfo.h>
+#include <winpr/file.h>
 
 #include <freerdp/codec/region.h>
 
+#include <freerdp/codecs.h>
+#include <freerdp/utils/gfx.h>
+
 #include <freerdp/codec/progressive.h>
+#include <freerdp/channels/rdpgfx.h>
+#include <freerdp/crypto/crypto.h>
 
 #include "../progressive.h"
 
@@ -127,17 +135,16 @@
  * 	dec_2_3_100_sampleimage3.bmp
  */
 
-struct _EGFX_SAMPLE_FILE
+typedef struct
 {
 	BYTE* buffer;
 	size_t size;
-};
-typedef struct _EGFX_SAMPLE_FILE EGFX_SAMPLE_FILE;
+} EGFX_SAMPLE_FILE;
 
 static int g_Width = 0;
 static int g_Height = 0;
 static int g_DstStep = 0;
-static BYTE* g_DstData = NULL;
+static BYTE* g_DstData = nullptr;
 
 static void sample_file_free(EGFX_SAMPLE_FILE* file)
 {
@@ -145,20 +152,19 @@ static void sample_file_free(EGFX_SAMPLE_FILE* file)
 		return;
 
 	free(file->buffer);
-	file->buffer = NULL;
+	file->buffer = nullptr;
 	file->size = 0;
 }
 
-static void test_fill_image_alpha_channel(BYTE* data, int width, int height, BYTE value)
+static void test_fill_image_alpha_channel(BYTE* data, UINT32 width, UINT32 height, BYTE value)
 {
-	int i, j;
-	UINT32* pixel;
+	UINT32* pixel = nullptr;
 
-	for (i = 0; i < height; i++)
+	for (UINT32 i = 0; i < height; i++)
 	{
-		for (j = 0; j < width; j++)
+		for (UINT32 j = 0; j < width; j++)
 		{
-			pixel = (UINT32*)&data[((i * width) + j) * 4];
+			pixel = (UINT32*)&data[((1ULL * i * width) + j) * 4ULL];
 			*pixel = ((*pixel & 0x00FFFFFF) | (value << 24));
 		}
 	}
@@ -174,16 +180,15 @@ static void* test_image_memset32(UINT32* ptr, UINT32 fill, size_t length)
 	return (void*)ptr;
 }
 
-static int test_image_fill(BYTE* pDstData, int nDstStep, int nXDst, int nYDst, int nWidth,
-                           int nHeight, UINT32 color)
+static int test_image_fill(BYTE* pDstData, UINT32 nDstStep, UINT32 nXDst, UINT32 nYDst,
+                           UINT32 nWidth, UINT32 nHeight, UINT32 color)
 {
-	int y;
-	UINT32* pDstPixel;
+	UINT32* pDstPixel = nullptr;
 
 	if (nDstStep < 0)
 		nDstStep = 4 * nWidth;
 
-	for (y = 0; y < nHeight; y++)
+	for (UINT32 y = 0; y < nHeight; y++)
 	{
 		pDstPixel = (UINT32*)&pDstData[((nYDst + y) * nDstStep) + (nXDst * 4)];
 		test_image_memset32(pDstPixel, color, nWidth);
@@ -192,13 +197,13 @@ static int test_image_fill(BYTE* pDstData, int nDstStep, int nXDst, int nYDst, i
 	return 1;
 }
 
-static int test_image_fill_quarter(BYTE* pDstData, int nDstStep, int nWidth, int nHeight,
-                                   UINT32 color, int quarter)
+static int test_image_fill_quarter(BYTE* pDstData, UINT32 nDstStep, UINT32 nWidth, UINT32 nHeight,
+                                   UINT32 color, UINT32 quarter)
 {
-	int x = 0;
-	int y = 0;
-	int width = 0;
-	int height = 0;
+	UINT32 x = 0;
+	UINT32 y = 0;
+	UINT32 width = 0;
+	UINT32 height = 0;
 
 	switch (quarter)
 	{
@@ -229,14 +234,16 @@ static int test_image_fill_quarter(BYTE* pDstData, int nDstStep, int nWidth, int
 			width = nWidth / 2;
 			height = nHeight / 2;
 			break;
+		default:
+			return -1;
 	}
 
 	test_image_fill(pDstData, nDstStep, x, y, width, height, 0xFF000000);
 	return 1;
 }
 
-static int test_image_fill_unused_quarters(BYTE* pDstData, int nDstStep, int nWidth, int nHeight,
-                                           UINT32 color, int quarter)
+static int test_image_fill_unused_quarters(BYTE* pDstData, UINT32 nDstStep, UINT32 nWidth,
+                                           UINT32 nHeight, UINT32 color, UINT32 quarter)
 {
 	return 1;
 
@@ -270,39 +277,39 @@ static int test_image_fill_unused_quarters(BYTE* pDstData, int nDstStep, int nWi
 
 static BYTE* test_progressive_load_file(const char* path, const char* file, size_t* size)
 {
-	FILE* fp;
-	BYTE* buffer;
-	char* filename;
-	filename = GetCombinedPath(path, file);
+	char* filename = GetCombinedPath(path, file);
 
 	if (!filename)
-		return NULL;
+		return nullptr;
 
-	fp = fopen(filename, "r");
+	FILE* fp = winpr_fopen(filename, "r");
 	free(filename);
 
 	if (!fp)
-		return NULL;
+		return nullptr;
 
-	_fseeki64(fp, 0, SEEK_END);
-	*size = _ftelli64(fp);
-	_fseeki64(fp, 0, SEEK_SET);
-	buffer = (BYTE*)malloc(*size);
+	(void)_fseeki64(fp, 0, SEEK_END);
+	const INT64 pos = _ftelli64(fp);
+	WINPR_ASSERT(pos >= 0);
+	WINPR_ASSERT(pos <= SIZE_MAX);
+	*size = (size_t)pos;
+	(void)_fseeki64(fp, 0, SEEK_SET);
+	BYTE* buffer = (BYTE*)malloc(*size);
 
 	if (!buffer)
 	{
-		fclose(fp);
-		return NULL;
+		(void)fclose(fp);
+		return nullptr;
 	}
 
 	if (fread(buffer, *size, 1, fp) != 1)
 	{
 		free(buffer);
-		fclose(fp);
-		return NULL;
+		(void)fclose(fp);
+		return nullptr;
 	}
 
-	fclose(fp);
+	(void)fclose(fp);
 	return buffer;
 }
 
@@ -536,27 +543,27 @@ static int test_progressive_load_files(char* ms_sample_path, EGFX_SAMPLE_FILE fi
 
 static BYTE* test_progressive_load_bitmap(char* path, char* file, size_t* size, int quarter)
 {
-	int status;
-	BYTE* buffer;
-	wImage* image;
-	char* filename;
+	int status = 0;
+	BYTE* buffer = nullptr;
+	wImage* image = nullptr;
+	char* filename = nullptr;
 	filename = GetCombinedPath(path, file);
 
 	if (!filename)
-		return NULL;
+		return nullptr;
 
 	image = winpr_image_new();
 
 	if (!image)
-		return NULL;
+		return nullptr;
 
 	status = winpr_image_read(image, filename);
 
 	if (status < 0)
-		return NULL;
+		return nullptr;
 
 	buffer = image->data;
-	*size = image->height * image->scanline;
+	*size = 1ULL * image->height * image->scanline;
 	test_fill_image_alpha_channel(image->data, image->width, image->height, 0xFF);
 	test_image_fill_unused_quarters(image->data, image->scanline, image->width, image->height,
 	                                quarter, 0xFF000000);
@@ -793,17 +800,15 @@ static int test_progressive_load_bitmaps(char* ms_sample_path, EGFX_SAMPLE_FILE 
 	return 1;
 }
 
-static int test_memcmp_count(const BYTE* mem1, const BYTE* mem2, int size, int margin)
+static size_t test_memcmp_count(const BYTE* mem1, const BYTE* mem2, size_t size, int margin)
 {
-	int error;
-	int count = 0;
-	int index = 0;
+	size_t count = 0;
 
-	for (index = 0; index < size; index++)
+	for (size_t index = 0; index < size; index++)
 	{
 		if (*mem1 != *mem2)
 		{
-			error = (*mem1 > *mem2) ? *mem1 - *mem2 : *mem2 - *mem1;
+			const int error = (*mem1 > *mem2) ? *mem1 - *mem2 : *mem2 - *mem1;
 
 			if (error > margin)
 				count++;
@@ -819,31 +824,20 @@ static int test_memcmp_count(const BYTE* mem1, const BYTE* mem2, int size, int m
 static int test_progressive_decode(PROGRESSIVE_CONTEXT* progressive, EGFX_SAMPLE_FILE files[4],
                                    EGFX_SAMPLE_FILE bitmaps[4], int quarter, int count)
 {
-	int cnt;
-	int pass;
-	int size;
-	int index;
-	int status;
-	int nXSrc, nYSrc;
-	int nXDst, nYDst;
-	int nWidth, nHeight;
-	RECTANGLE_16 tileRect;
-	RECTANGLE_16 updateRect;
-	RECTANGLE_16 clippingRect;
-	RFX_PROGRESSIVE_TILE* tile;
-	PROGRESSIVE_BLOCK_REGION* region;
-	clippingRect.left = 0;
-	clippingRect.top = 0;
+	int nXSrc = 0;
+	int nYSrc = 0;
+
+	RECTANGLE_16 clippingRect = WINPR_C_ARRAY_INIT;
 	clippingRect.right = g_Width;
 	clippingRect.bottom = g_Height;
 
-	for (pass = 0; pass < count; pass++)
+	for (int pass = 0; pass < count; pass++)
 	{
-		status =
+		const int status =
 		    progressive_decompress(progressive, files[pass].buffer, files[pass].size, g_DstData,
-		                           PIXEL_FORMAT_XRGB32, g_DstStep, 0, 0, NULL, 0, 0);
+		                           PIXEL_FORMAT_XRGB32, g_DstStep, 0, 0, nullptr, 0, 0);
 		printf("ProgressiveDecompress: status: %d pass: %d\n", status, pass + 1);
-		region = &(progressive->region);
+		PROGRESSIVE_BLOCK_REGION* region = &(progressive->region);
 
 		switch (quarter)
 		{
@@ -874,39 +868,43 @@ static int test_progressive_decode(PROGRESSIVE_CONTEXT* progressive, EGFX_SAMPLE
 				clippingRect.right = g_Width;
 				clippingRect.bottom = g_Height / 2;
 				break;
+			default:
+				return -1;
 		}
 
-		for (index = 0; index < region->numTiles; index++)
+		for (UINT16 index = 0; index < region->numTiles; index++)
 		{
-			tile = region->tiles[index];
-			tileRect.left = tile->x;
-			tileRect.top = tile->y;
-			tileRect.right = tile->x + tile->width;
-			tileRect.bottom = tile->y + tile->height;
-			rectangles_intersection(&tileRect, &clippingRect, &updateRect);
-			nXDst = updateRect.left;
-			nYDst = updateRect.top;
-			nWidth = updateRect.right - updateRect.left;
-			nHeight = updateRect.bottom - updateRect.top;
+			RFX_PROGRESSIVE_TILE* tile = region->tiles[index];
+
+			const RECTANGLE_16 tileRect = { tile->x, tile->y, tile->x + tile->width,
+				                            tile->y + tile->height };
+			RECTANGLE_16 updateRect = WINPR_C_ARRAY_INIT;
+			if (!rectangles_intersection(&tileRect, &clippingRect, &updateRect))
+				return -1;
+			const UINT16 nXDst = updateRect.left;
+			const UINT16 nYDst = updateRect.top;
+			const UINT16 nWidth = updateRect.right - updateRect.left;
+			const UINT16 nHeight = updateRect.bottom - updateRect.top;
 
 			if ((nWidth <= 0) || (nHeight <= 0))
 				continue;
 
-			nXSrc = nXDst - tile->x;
-			nYSrc = nYDst - tile->y;
-			freerdp_image_copy(g_DstData, PIXEL_FORMAT_XRGB32, g_DstStep, nXDst, nYDst, nWidth,
-			                   nHeight, tile->data, PIXEL_FORMAT_XRGB32, 64 * 4, nXSrc, nYSrc, NULL,
-			                   FREERDP_FLIP_NONE);
+			nXSrc = nXDst - WINPR_ASSERTING_INT_CAST(int, tile->x);
+			nYSrc = nYDst - WINPR_ASSERTING_INT_CAST(int, tile->y);
+			if (!freerdp_image_copy(g_DstData, PIXEL_FORMAT_XRGB32, g_DstStep, nXDst, nYDst, nWidth,
+			                        nHeight, tile->data, PIXEL_FORMAT_XRGB32, 64 * 4, nXSrc, nYSrc,
+			                        nullptr, FREERDP_FLIP_NONE))
+				return -1;
 		}
 
-		size = bitmaps[pass].size;
-		cnt = test_memcmp_count(g_DstData, bitmaps[pass].buffer, size, 1);
+		const size_t size = bitmaps[pass].size;
+		const size_t cnt = test_memcmp_count(g_DstData, bitmaps[pass].buffer, size, 1);
 
 		if (cnt)
 		{
-			float rate = ((float)cnt) / ((float)size) * 100.0f;
+			const float rate = ((float)cnt) / ((float)size) * 100.0f;
 			printf("Progressive RemoteFX decompression failure\n");
-			printf("Actual, Expected (%d/%d = %.3f%%):\n", cnt, size, rate);
+			printf("Actual, Expected (%" PRIuz "/%" PRIuz " = %.3f%%):\n", cnt, size, rate);
 		}
 
 		// WLog_Image(progressive->log, WLOG_TRACE, g_DstData, g_Width, g_Height, 32);
@@ -917,26 +915,23 @@ static int test_progressive_decode(PROGRESSIVE_CONTEXT* progressive, EGFX_SAMPLE
 
 static int test_progressive_ms_sample(char* ms_sample_path)
 {
-	int i, j, k;
-	int count;
-	int status;
-	EGFX_SAMPLE_FILE files[3][4][4];
-	EGFX_SAMPLE_FILE bitmaps[3][4][4];
-	PROGRESSIVE_CONTEXT* progressive;
+	int count = 0;
+	int status = 0;
+	EGFX_SAMPLE_FILE files[3][4][4] = WINPR_C_ARRAY_INIT;
+	EGFX_SAMPLE_FILE bitmaps[3][4][4] = WINPR_C_ARRAY_INIT;
+	PROGRESSIVE_CONTEXT* progressive = nullptr;
 	g_Width = 1920;
 	g_Height = 1080;
 	g_DstStep = g_Width * 4;
-	ZeroMemory(files, sizeof(files));
-	ZeroMemory(bitmaps, sizeof(bitmaps));
 	status = test_progressive_load_files(ms_sample_path, files);
 
 	if (status < 0)
 	{
-		for (i = 0; i < 3; i++)
+		for (int i = 0; i < 3; i++)
 		{
-			for (j = 0; j < 4; j++)
+			for (int j = 0; j < 4; j++)
 			{
-				for (k = 0; k < 4; k++)
+				for (int k = 0; k < 4; k++)
 					sample_file_free(&files[i][j][k]);
 			}
 		}
@@ -948,11 +943,11 @@ static int test_progressive_ms_sample(char* ms_sample_path)
 
 	if (status < 0)
 	{
-		for (i = 0; i < 3; i++)
+		for (int i = 0; i < 3; i++)
 		{
-			for (j = 0; j < 4; j++)
+			for (int j = 0; j < 4; j++)
 			{
-				for (k = 0; k < 4; k++)
+				for (int k = 0; k < 4; k++)
 					sample_file_free(&files[i][j][k]);
 			}
 		}
@@ -962,8 +957,12 @@ static int test_progressive_ms_sample(char* ms_sample_path)
 
 	count = 4;
 	progressive = progressive_context_new(FALSE);
-	g_DstData = _aligned_malloc(g_DstStep * g_Height, 16);
-	progressive_create_surface_context(progressive, 0, g_Width, g_Height);
+	g_DstData = winpr_aligned_calloc(g_DstStep, g_Height, 16);
+	WINPR_ASSERT(g_DstData);
+
+	const int rc = progressive_create_surface_context(progressive, 0, g_Width, g_Height);
+	if (rc < 0)
+		return rc;
 
 	/* image 1 */
 
@@ -1003,11 +1002,11 @@ static int test_progressive_ms_sample(char* ms_sample_path)
 
 	progressive_context_free(progressive);
 
-	for (i = 0; i < 3; i++)
+	for (int i = 0; i < 3; i++)
 	{
-		for (j = 0; j < 4; j++)
+		for (int j = 0; j < 4; j++)
 		{
-			for (k = 0; k < 4; k++)
+			for (int k = 0; k < 4; k++)
 			{
 				sample_file_free(&bitmaps[i][j][k]);
 				sample_file_free(&files[i][j][k]);
@@ -1015,7 +1014,7 @@ static int test_progressive_ms_sample(char* ms_sample_path)
 		}
 	}
 
-	_aligned_free(g_DstData);
+	winpr_aligned_free(g_DstData);
 	return 0;
 }
 
@@ -1023,32 +1022,33 @@ static BOOL diff(BYTE a, BYTE b)
 {
 	BYTE big = MAX(a, b);
 	BYTE little = MIN(a, b);
-	if (big - little <= 0x25)
-		return TRUE;
-	return FALSE;
+	return (big - little <= 0x25);
 }
 
 static BOOL colordiff(UINT32 format, UINT32 a, UINT32 b)
 {
-	BYTE ar, ag, ab, aa;
-	BYTE br, bg, bb, ba;
-	SplitColor(a, format, &ar, &ag, &ab, &aa, NULL);
-	SplitColor(b, format, &br, &bg, &bb, &ba, NULL);
-	if (!diff(aa, ba) || !diff(ar, br) || !diff(ag, bg) || !diff(ab, bb))
-		return FALSE;
-	return TRUE;
+	BYTE ar = 0;
+	BYTE ag = 0;
+	BYTE ab = 0;
+	BYTE aa = 0;
+	BYTE br = 0;
+	BYTE bg = 0;
+	BYTE bb = 0;
+	BYTE ba = 0;
+	FreeRDPSplitColor(a, format, &ar, &ag, &ab, &aa, nullptr);
+	FreeRDPSplitColor(b, format, &br, &bg, &bb, &ba, nullptr);
+	return !(!diff(aa, ba) || !diff(ar, br) || !diff(ag, bg) || !diff(ab, bb));
 }
 
 static BOOL test_encode_decode(const char* path)
 {
-	int x, y;
 	BOOL res = FALSE;
-	int rc;
-	BYTE* resultData = NULL;
-	BYTE* dstData = NULL;
+	int rc = 0;
+	BYTE* resultData = nullptr;
+	BYTE* dstData = nullptr;
 	UINT32 dstSize = 0;
 	UINT32 ColorFormat = PIXEL_FORMAT_BGRX32;
-	REGION16 invalidRegion = { 0 };
+	REGION16 invalidRegion = WINPR_C_ARRAY_INIT;
 	wImage* image = winpr_image_new();
 	wImage* dstImage = winpr_image_new();
 	char* name = GetCombinedPath(path, "progressive.bmp");
@@ -1069,8 +1069,10 @@ static BOOL test_encode_decode(const char* path)
 
 	// Progressive encode
 	rc = progressive_compress(progressiveEnc, image->data, image->scanline * image->height,
-	                          ColorFormat, image->width, image->height, image->scanline, NULL,
+	                          ColorFormat, image->width, image->height, image->scanline, nullptr,
 	                          &dstData, &dstSize);
+	if (rc < 0)
+		goto fail;
 
 	// Progressive decode
 	rc = progressive_create_surface_context(progressiveDec, 0, image->width, image->height);
@@ -1087,22 +1089,24 @@ static BOOL test_encode_decode(const char* path)
 	{
 		*dstImage = *image;
 		dstImage->data = resultData;
-		winpr_image_write(dstImage, "/tmp/test.bmp");
+		if (winpr_image_write(dstImage, "/tmp/test.bmp") < 0)
+			goto fail;
 	}
-	for (y = 0; y < image->height; y++)
+	for (size_t y = 0; y < image->height; y++)
 	{
 		const BYTE* orig = &image->data[y * image->scanline];
 		const BYTE* dec = &resultData[y * image->scanline];
-		for (x = 0; x < image->width; x++)
+		for (size_t x = 0; x < image->width; x++)
 		{
 			const BYTE* po = &orig[x * 4];
 			const BYTE* pd = &dec[x * 4];
 
-			const DWORD a = ReadColor(po, ColorFormat);
-			const DWORD b = ReadColor(pd, ColorFormat);
+			const DWORD a = FreeRDPReadColor(po, ColorFormat);
+			const DWORD b = FreeRDPReadColor(pd, ColorFormat);
 			if (!colordiff(ColorFormat, a, b))
 			{
-				printf("xxxxxxx [%u:%u] %08X != %08X\n", x, y, a, b);
+				printf("xxxxxxx [%" PRIuz ":%" PRIuz "] [%s] %08X != %08X\n", x, y,
+				       FreeRDPGetColorFormatName(ColorFormat), a, b);
 				goto fail;
 			}
 		}
@@ -1119,21 +1123,372 @@ fail:
 	return res;
 }
 
+static BOOL readUInt(FILE* fp, const char* prefix, const char* postfix, UINT32* pval)
+{
+	WINPR_ASSERT(fp);
+	WINPR_ASSERT(prefix);
+	WINPR_ASSERT(postfix);
+	WINPR_ASSERT(pval);
+
+	BOOL rc = FALSE;
+	const size_t plen = strlen(prefix);
+	const size_t polen = strlen(postfix);
+
+	char* str = nullptr;
+	size_t len = SIZE_MAX;
+	const INT64 res = GetLine(&str, &len, fp);
+	if ((res < plen + polen) || !str)
+		goto fail;
+
+	if (strncmp(str, prefix, plen) != 0)
+		goto fail;
+
+	char* start = &str[plen];
+	char* end = strstr(start, postfix);
+	if (!end)
+		goto fail;
+	*end = '\0';
+
+	errno = 0;
+	unsigned long val = strtoul(start, nullptr, 0);
+	if ((errno != 0) || (val > UINT32_MAX))
+		goto fail;
+
+	*pval = val;
+	rc = TRUE;
+
+fail:
+	free(str);
+	return rc;
+}
+
+static BOOL read_cmd(FILE* fp, RDPGFX_SURFACE_COMMAND* cmd, UINT32* frameId)
+{
+	WINPR_ASSERT(fp);
+	WINPR_ASSERT(cmd);
+	WINPR_ASSERT(frameId);
+
+	if (!readUInt(fp, "frameid: ", "\n", frameId))
+		return FALSE;
+	if (!readUInt(fp, "surfaceId: ", "\n", &cmd->surfaceId))
+		return FALSE;
+	if (!readUInt(fp, "codecId: ", "\n", &cmd->codecId))
+		return FALSE;
+	if (!readUInt(fp, "contextId: ", "\n", &cmd->contextId))
+		return FALSE;
+	if (!readUInt(fp, "format: ", "\n", &cmd->format))
+		return FALSE;
+	if (!readUInt(fp, "left: ", "\n", &cmd->left))
+		return FALSE;
+	if (!readUInt(fp, "top: ", "\n", &cmd->top))
+		return FALSE;
+	if (!readUInt(fp, "right: ", "\n", &cmd->right))
+		return FALSE;
+	if (!readUInt(fp, "bottom: ", "\n", &cmd->bottom))
+		return FALSE;
+	if (!readUInt(fp, "width: ", "\n", &cmd->width))
+		return FALSE;
+	if (!readUInt(fp, "height: ", "\n", &cmd->height))
+		return FALSE;
+	if (!readUInt(fp, "length: ", "\n", &cmd->length))
+		return FALSE;
+
+	char* data = nullptr;
+	size_t dlen = SIZE_MAX;
+	INT64 slen = GetLine(&data, &dlen, fp);
+	if (slen < 0)
+		return FALSE;
+
+	if (slen >= 7)
+	{
+		const char* b64 = &data[6];
+		slen -= 7;
+		crypto_base64_decode(b64, slen, &cmd->data, &dlen);
+	}
+	free(data);
+
+	return cmd->length == dlen;
+}
+
+static void free_cmd(RDPGFX_SURFACE_COMMAND* cmd)
+{
+	free(cmd->data);
+}
+
+WINPR_NORETURN(static void usage(const char* name))
+{
+	FILE* fp = stdout;
+	(void)fprintf(fp, "%s <directory> <width> <height>\n", name);
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
+	exit(-1);
+}
+
+static void print_codec_stats(const char* name, UINT64 timeNS)
+{
+	const double dectimeMS = (double)timeNS / 1000.0 / 1000.0;
+	(void)fprintf(stderr, "[%s] took %lf ms to decode\n", name, dectimeMS);
+}
+
+static UINT64 measure_diff_and_print(const char* cname, UINT32 frameId, UINT64 start)
+{
+	const UINT64 end = winpr_GetTickCount64NS();
+	const UINT64 diff = end - start;
+	const double ddiff = (double)diff / 1000000.0;
+	(void)fprintf(stderr, "frame [%s] %" PRIu32 " took %lf ms\n", cname, frameId, ddiff);
+	return diff;
+}
+
+static int test_dump(int argc, char* argv[])
+{
+	int success = -1;
+	UINT32 count = 0;
+
+	UINT64 CAPROGRESSIVE_dectime = 0;
+	UINT64 UNCOMPRESSED_dectime = 0;
+	UINT64 CAVIDEO_dectime = 0;
+	UINT64 CLEARCODEC_dectime = 0;
+	UINT64 PLANAR_dectime = 0;
+	UINT64 AVC420_dectime = 0;
+	UINT64 ALPHA_dectime = 0;
+	UINT64 AVC444_dectime = 0;
+	UINT64 AVC444v2_dectime = 0;
+	UINT64 copytime = 0;
+
+	if (argc < 4)
+		usage(argv[0]);
+
+	const char* path = argv[1];
+	errno = 0;
+	const unsigned long width = strtoul(argv[2], nullptr, 0);
+	if ((errno != 0) || (width <= 0))
+		usage(argv[0]);
+	const unsigned long height = strtoul(argv[3], nullptr, 0);
+	if ((errno != 0) || (height <= 0))
+		usage(argv[0]);
+
+	rdpCodecs* codecs = freerdp_client_codecs_new(0);
+	if (!codecs)
+		return -2;
+
+	UINT32 DstFormat = PIXEL_FORMAT_BGRA32;
+	const UINT32 stride = (width + 16) * FreeRDPGetBytesPerPixel(DstFormat);
+
+	BYTE* dst = calloc(stride, height);
+	BYTE* output = calloc(stride, height);
+	if (!dst || !output)
+		goto fail;
+
+	if (!freerdp_client_codecs_prepare(codecs, FREERDP_CODEC_ALL, width, height))
+		goto fail;
+
+	success = 0;
+	while (success >= 0)
+	{
+		char* fname = nullptr;
+		size_t flen = 0;
+		winpr_asprintf(&fname, &flen, "%s/%08" PRIx32 ".raw", path, count++);
+		FILE* fp = fopen(fname, "r");
+		free(fname);
+
+		if (!fp)
+			break;
+
+		UINT32 frameId = 0;
+		RDPGFX_SURFACE_COMMAND cmd = WINPR_C_ARRAY_INIT;
+
+		if (read_cmd(fp, &cmd, &frameId))
+		{
+			REGION16 invalid = WINPR_C_ARRAY_INIT;
+			region16_init(&invalid);
+
+			const char* cname = rdpgfx_get_codec_id_string(cmd.codecId);
+			switch (cmd.codecId)
+			{
+				case RDPGFX_CODECID_CAPROGRESSIVE:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+					success = progressive_create_surface_context(codecs->progressive, cmd.surfaceId,
+					                                             width, height);
+					if (success >= 0)
+						success = progressive_decompress(codecs->progressive, cmd.data, cmd.length,
+						                                 dst, DstFormat, 0, cmd.left, cmd.top,
+						                                 &invalid, cmd.surfaceId, frameId);
+					CAPROGRESSIVE_dectime += measure_diff_and_print(cname, frameId, start);
+				}
+				break;
+
+				case RDPGFX_CODECID_UNCOMPRESSED:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+					if (!freerdp_image_copy_no_overlap(dst, DstFormat, stride, cmd.left, cmd.top,
+					                                   cmd.width, cmd.height, cmd.data, cmd.format,
+					                                   0, 0, 0, nullptr, FREERDP_FLIP_NONE))
+						success = -1;
+
+					RECTANGLE_16 invalidRect = { .left = (UINT16)MIN(UINT16_MAX, cmd.left),
+						                         .top = (UINT16)MIN(UINT16_MAX, cmd.top),
+						                         .right = (UINT16)MIN(UINT16_MAX, cmd.right),
+						                         .bottom = (UINT16)MIN(UINT16_MAX, cmd.bottom) };
+					if (!region16_union_rect(&invalid, &invalid, &invalidRect))
+						success = -1;
+					UNCOMPRESSED_dectime += measure_diff_and_print(cname, frameId, start);
+				}
+				break;
+				case RDPGFX_CODECID_CAVIDEO:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+					if (!rfx_process_message(codecs->rfx, cmd.data, cmd.length, cmd.left, cmd.top,
+					                         dst, DstFormat, stride, height, &invalid))
+						success = -1;
+
+					CAVIDEO_dectime += measure_diff_and_print(cname, frameId, start);
+				}
+				break;
+				case RDPGFX_CODECID_CLEARCODEC:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+					success = clear_decompress(codecs->clear, cmd.data, cmd.length, cmd.width,
+					                           cmd.height, dst, DstFormat, stride, cmd.left,
+					                           cmd.top, width, height, nullptr);
+
+					const RECTANGLE_16 invalidRect = { .left = (UINT16)MIN(UINT16_MAX, cmd.left),
+						                               .top = (UINT16)MIN(UINT16_MAX, cmd.top),
+						                               .right = (UINT16)MIN(UINT16_MAX, cmd.right),
+						                               .bottom =
+						                                   (UINT16)MIN(UINT16_MAX, cmd.bottom) };
+					if (!region16_union_rect(&invalid, &invalid, &invalidRect))
+						success = -1;
+					CLEARCODEC_dectime += measure_diff_and_print(cname, frameId, start);
+				}
+				break;
+				case RDPGFX_CODECID_PLANAR:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+
+					if (!freerdp_bitmap_decompress_planar(
+					        codecs->planar, cmd.data, cmd.length, cmd.width, cmd.height, dst,
+					        DstFormat, stride, cmd.left, cmd.top, cmd.width, cmd.height, FALSE))
+						success = -1;
+
+					const RECTANGLE_16 invalidRect = { .left = (UINT16)MIN(UINT16_MAX, cmd.left),
+						                               .top = (UINT16)MIN(UINT16_MAX, cmd.top),
+						                               .right = (UINT16)MIN(UINT16_MAX, cmd.right),
+						                               .bottom =
+						                                   (UINT16)MIN(UINT16_MAX, cmd.bottom) };
+					if (!region16_union_rect(&invalid, &invalid, &invalidRect))
+						success = -1;
+
+					PLANAR_dectime += measure_diff_and_print(cname, frameId, start);
+				}
+				break;
+				case RDPGFX_CODECID_AVC420:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+
+					AVC420_dectime += measure_diff_and_print(cname, frameId, start);
+					success = -1;
+				}
+				break;
+				case RDPGFX_CODECID_ALPHA:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+
+					ALPHA_dectime += measure_diff_and_print(cname, frameId, start);
+					success = -1;
+				}
+				break;
+				case RDPGFX_CODECID_AVC444:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+
+					AVC444_dectime += measure_diff_and_print(cname, frameId, start);
+					success = -1;
+				}
+				break;
+				case RDPGFX_CODECID_AVC444v2:
+				{
+					const UINT64 start = winpr_GetTickCount64NS();
+
+					AVC444v2_dectime += measure_diff_and_print(cname, frameId, start);
+					success = -1;
+				}
+				break;
+				default:
+					(void)fprintf(stderr, "unexpected codec %s [0x%08" PRIx32 "]",
+					              rdpgfx_get_codec_id_string(cmd.codecId), cmd.codecId);
+					success = -1;
+					break;
+			}
+
+			if (success >= 0)
+			{
+				UINT32 nbRects = 0;
+				const UINT64 start = winpr_GetTickCount64NS();
+
+				const RECTANGLE_16* rects = region16_rects(&invalid, &nbRects);
+				for (size_t x = 0; x < nbRects; x++)
+				{
+					const RECTANGLE_16* rect = &rects[x];
+					const UINT32 w = rect->right - rect->left;
+					const UINT32 h = rect->bottom - rect->top;
+					if (!freerdp_image_copy_no_overlap(output, DstFormat, stride, rect->left,
+					                                   rect->top, w, h, dst, DstFormat, stride,
+					                                   rect->left, rect->top, nullptr, 0))
+						success = -42;
+				}
+				copytime += measure_diff_and_print(cname, frameId, start);
+			}
+			region16_clear(&invalid);
+		}
+		free_cmd(&cmd);
+		(void)fclose(fp);
+	}
+
+fail:
+	freerdp_client_codecs_free(codecs);
+	free(output);
+	free(dst);
+
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_UNCOMPRESSED),
+	                  UNCOMPRESSED_dectime);
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_CAPROGRESSIVE),
+	                  CAPROGRESSIVE_dectime);
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_CAVIDEO), CAVIDEO_dectime);
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_CLEARCODEC), CLEARCODEC_dectime);
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_PLANAR), PLANAR_dectime);
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_AVC420), AVC420_dectime);
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_AVC444), AVC444_dectime);
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_AVC444v2), AVC444v2_dectime);
+	print_codec_stats(rdpgfx_get_codec_id_string(RDPGFX_CODECID_ALPHA), ALPHA_dectime);
+
+	const UINT64 decodetime = UNCOMPRESSED_dectime + CAPROGRESSIVE_dectime + CAVIDEO_dectime +
+	                          CLEARCODEC_dectime + PLANAR_dectime + AVC420_dectime +
+	                          AVC444_dectime + AVC444v2_dectime + ALPHA_dectime;
+	print_codec_stats("surface copy", copytime);
+	print_codec_stats("total decode", decodetime);
+	print_codec_stats("total", decodetime + copytime);
+
+	return success;
+}
+
 int TestFreeRDPCodecProgressive(int argc, char* argv[])
 {
+	if (argc > 1)
+		return test_dump(argc, argv);
+
 	int rc = -1;
-	char* ms_sample_path;
+	char* ms_sample_path = nullptr;
 	char name[8192];
 	SYSTEMTIME systemTime;
 	WINPR_UNUSED(argc);
 	WINPR_UNUSED(argv);
 
 	GetSystemTime(&systemTime);
-	sprintf_s(name, sizeof(name),
-	          "EGFX_PROGRESSIVE_MS_SAMPLE-%04" PRIu16 "%02" PRIu16 "%02" PRIu16 "%02" PRIu16
-	          "%02" PRIu16 "%02" PRIu16 "%04" PRIu16,
-	          systemTime.wYear, systemTime.wMonth, systemTime.wDay, systemTime.wHour,
-	          systemTime.wMinute, systemTime.wSecond, systemTime.wMilliseconds);
+	(void)sprintf_s(name, sizeof(name),
+	                "EGFX_PROGRESSIVE_MS_SAMPLE-%04" PRIu16 "%02" PRIu16 "%02" PRIu16 "%02" PRIu16
+	                "%02" PRIu16 "%02" PRIu16 "%04" PRIu16,
+	                systemTime.wYear, systemTime.wMonth, systemTime.wDay, systemTime.wHour,
+	                systemTime.wMinute, systemTime.wSecond, systemTime.wMilliseconds);
 	ms_sample_path = _strdup(CMAKE_CURRENT_SOURCE_DIR);
 
 	if (!ms_sample_path)
@@ -1142,7 +1497,7 @@ int TestFreeRDPCodecProgressive(int argc, char* argv[])
 		goto fail;
 	}
 
-	if (PathFileExistsA(ms_sample_path))
+	if (winpr_PathFileExists(ms_sample_path))
 	{
 		/*
 		if (test_progressive_ms_sample(ms_sample_path) < 0)

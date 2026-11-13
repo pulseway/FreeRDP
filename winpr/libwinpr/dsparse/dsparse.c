@@ -17,11 +17,10 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/dsparse.h>
+#include <winpr/assert.h>
 
 /**
  * dsparse.dll:
@@ -45,34 +44,83 @@
 
 #if !defined(_WIN32) || defined(_UWP)
 
-DWORD DsCrackSpnW(LPCWSTR pszSpn, DWORD* pcServiceClass, LPWSTR ServiceClass, DWORD* pcServiceName,
-                  LPWSTR ServiceName, DWORD* pcInstanceName, LPWSTR InstanceName,
-                  USHORT* pInstancePort)
-{
-	return 0;
-}
-
-DWORD DsCrackSpnA(LPCSTR pszSpn, LPDWORD pcServiceClass, LPSTR ServiceClass, LPDWORD pcServiceName,
-                  LPSTR ServiceName, LPDWORD pcInstanceName, LPSTR InstanceName,
-                  USHORT* pInstancePort)
-{
-	return 0;
-}
-
 DWORD DsMakeSpnW(LPCWSTR ServiceClass, LPCWSTR ServiceName, LPCWSTR InstanceName,
                  USHORT InstancePort, LPCWSTR Referrer, DWORD* pcSpnLength, LPWSTR pszSpn)
 {
-	return 0;
+	DWORD res = ERROR_OUTOFMEMORY;
+	char* ServiceClassA = nullptr;
+	char* ServiceNameA = nullptr;
+	char* InstanceNameA = nullptr;
+	char* ReferrerA = nullptr;
+	char* pszSpnA = nullptr;
+	size_t length = 0;
+
+	WINPR_ASSERT(ServiceClass);
+	WINPR_ASSERT(ServiceName);
+	WINPR_ASSERT(pcSpnLength);
+
+	length = *pcSpnLength;
+	if ((length > 0) && pszSpn)
+		pszSpnA = calloc(length + 1, sizeof(char));
+
+	if (ServiceClass)
+	{
+		ServiceClassA = ConvertWCharToUtf8Alloc(ServiceClass, nullptr);
+		if (!ServiceClassA)
+			goto fail;
+	}
+	if (ServiceName)
+	{
+		ServiceNameA = ConvertWCharToUtf8Alloc(ServiceName, nullptr);
+		if (!ServiceNameA)
+			goto fail;
+	}
+	if (InstanceName)
+	{
+		InstanceNameA = ConvertWCharToUtf8Alloc(InstanceName, nullptr);
+		if (!InstanceNameA)
+			goto fail;
+	}
+	if (Referrer)
+	{
+		ReferrerA = ConvertWCharToUtf8Alloc(Referrer, nullptr);
+		if (!ReferrerA)
+			goto fail;
+	}
+	res = DsMakeSpnA(ServiceClassA, ServiceNameA, InstanceNameA, InstancePort, ReferrerA,
+	                 pcSpnLength, pszSpnA);
+
+	if (res == ERROR_SUCCESS)
+	{
+		if (ConvertUtf8NToWChar(pszSpnA, *pcSpnLength, pszSpn, length) < 0)
+			res = ERROR_OUTOFMEMORY;
+	}
+
+fail:
+	free(ServiceClassA);
+	free(ServiceNameA);
+	free(InstanceNameA);
+	free(ReferrerA);
+	free(pszSpnA);
+	return res;
 }
 
 DWORD DsMakeSpnA(LPCSTR ServiceClass, LPCSTR ServiceName, LPCSTR InstanceName, USHORT InstancePort,
                  LPCSTR Referrer, DWORD* pcSpnLength, LPSTR pszSpn)
 {
-	DWORD SpnLength;
-	DWORD ServiceClassLength;
-	DWORD ServiceNameLength;
+	DWORD SpnLength = 0;
+	DWORD ServiceClassLength = 0;
+	DWORD ServiceNameLength = 0;
 
-	if ((*pcSpnLength != 0) && (pszSpn == NULL))
+	WINPR_ASSERT(ServiceClass);
+	WINPR_ASSERT(ServiceName);
+	WINPR_ASSERT(pcSpnLength);
+
+	WINPR_UNUSED(InstanceName);
+	WINPR_UNUSED(InstancePort);
+	WINPR_UNUSED(Referrer);
+
+	if ((*pcSpnLength != 0) && (pszSpn == nullptr))
 		return ERROR_INVALID_PARAMETER;
 
 	ServiceClassLength = (DWORD)strlen(ServiceClass);
@@ -86,7 +134,7 @@ DWORD DsMakeSpnA(LPCSTR ServiceClass, LPCSTR ServiceName, LPCSTR InstanceName, U
 		return ERROR_BUFFER_OVERFLOW;
 	}
 
-	sprintf_s(pszSpn, *pcSpnLength, "%s/%s", ServiceClass, ServiceName);
+	(void)sprintf_s(pszSpn, *pcSpnLength, "%s/%s", ServiceClass, ServiceName);
 
 	return ERROR_SUCCESS;
 }

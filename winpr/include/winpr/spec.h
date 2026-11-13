@@ -22,6 +22,10 @@
 
 #include <winpr/platform.h>
 
+WINPR_PRAGMA_DIAG_PUSH
+WINPR_PRAGMA_DIAG_IGNORED_RESERVED_ID_MACRO
+WINPR_PRAGMA_DIAG_IGNORED_RESERVED_IDENTIFIER
+
 #ifdef _WIN32
 
 #include <specstrings.h>
@@ -31,6 +35,7 @@
 
 #else
 
+#if defined(NONAMELESSUNION)
 #define DUMMYUNIONNAME u
 #define DUMMYUNIONNAME1 u1
 #define DUMMYUNIONNAME2 u2
@@ -47,8 +52,27 @@
 #define DUMMYSTRUCTNAME3 s3
 #define DUMMYSTRUCTNAME4 s4
 #define DUMMYSTRUCTNAME5 s5
+#else
+#define DUMMYUNIONNAME
+#define DUMMYUNIONNAME1
+#define DUMMYUNIONNAME2
+#define DUMMYUNIONNAME3
+#define DUMMYUNIONNAME4
+#define DUMMYUNIONNAME5
+#define DUMMYUNIONNAME6
+#define DUMMYUNIONNAME7
+#define DUMMYUNIONNAME8
+
+#define DUMMYSTRUCTNAME
+#define DUMMYSTRUCTNAME1
+#define DUMMYSTRUCTNAME2
+#define DUMMYSTRUCTNAME3
+#define DUMMYSTRUCTNAME4
+#define DUMMYSTRUCTNAME5
+#endif
 
 #if (defined(_M_AMD64) || defined(_M_ARM)) && !defined(_WIN32)
+// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 #define _UNALIGNED __unaligned
 #else
 #define _UNALIGNED
@@ -58,7 +82,13 @@
 #if defined(_MSC_VER) && (_MSC_VER >= 1300) && !defined(MIDL_PASS)
 #define DECLSPEC_ALIGN(x) __declspec(align(x))
 #elif defined(__GNUC__)
+#if defined(__cplusplus) && (__cplusplus >= 201703L)
+#define DECLSPEC_ALIGN(x) [[gnu::aligned(x)]]
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 202311L)
+#define DECLSPEC_ALIGN(x) [[gnu::aligned(x)]]
+#else
 #define DECLSPEC_ALIGN(x) __attribute__((__aligned__(x)))
+#endif
 #else
 #define DECLSPEC_ALIGN(x)
 #endif
@@ -72,16 +102,13 @@
 
 #ifdef __GNUC__
 #ifndef __declspec
+// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 #define __declspec(e) __attribute__((e))
 #endif
 #endif
 
 #ifndef DECLSPEC_NORETURN
-#if (defined(__GNUC__) || defined(_MSC_VER) || defined(__clang__))
-#define DECLSPEC_NORETURN __declspec(noreturn)
-#else
-#define DECLSPEC_NORETURN
-#endif
+#define DECLSPEC_NORETURN WINPR_DECLSPEC_NORETURN
 #endif /* DECLSPEC_NORETURN */
 
 /**
@@ -89,6 +116,7 @@
  * http://msdn.microsoft.com/en-us/library/windows/desktop/aa383701/
  */
 
+// NOLINTBEGIN(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 #define __field_bcount(size) __notnull __byte_writableTo(size)
 #define __field_ecount(size) __notnull __elem_writableTo(size)
 #define __post_invalid _Post_ __notvalid
@@ -320,7 +348,7 @@
 #define _In_count_(size)
 #define _In_count_c_(size)
 #define _In_count_x_(size)
-#define _In_defensive_(annotes)
+#define _In_defensive_(annotates)
 #define _In_opt_
 #define _In_opt_bytecount_(size)
 #define _In_opt_bytecount_c_(size)
@@ -365,7 +393,7 @@
 #define _Inout_count_(size)
 #define _Inout_count_c_(size)
 #define _Inout_count_x_(size)
-#define _Inout_defensive_(annotes)
+#define _Inout_defensive_(annotates)
 #define _Inout_opt_
 #define _Inout_opt_bytecap_(size)
 #define _Inout_opt_bytecap_c_(size)
@@ -446,7 +474,7 @@
 #define _Out_cap_x_(size)
 #define _Out_capcount_(capcount)
 #define _Out_capcount_x_(capcount)
-#define _Out_defensive_(annotes)
+#define _Out_defensive_(annotates)
 #define _Out_opt_
 #define _Out_opt_bytecap_(size)
 #define _Out_opt_bytecap_c_(size)
@@ -832,7 +860,7 @@
 #define __deref_out_opt
 #define __ecount(size)
 #define __ecount_opt(size)
-//#define __in			/* Conflicts with libstdc++ header macros */
+// #define __in			/* Conflicts with libstdc++ header macros */
 #define __in_bcount(size)
 #define __in_bcount_opt(size)
 #define __in_ecount(size)
@@ -852,7 +880,7 @@
 #define __inout_ecount_part(size, length)
 #define __inout_ecount_part_opt(size, length)
 #define __inout_opt
-//#define __out			/* Conflicts with libstdc++ header macros */
+// #define __out			/* Conflicts with libstdc++ header macros */
 #define __out_bcount(size)
 #define __out_bcount_full(size)
 #define __out_bcount_full_opt(size)
@@ -876,9 +904,11 @@
 #define __nullterminated
 #define __out_awcount(expr, size)
 #define __override
-//#define __reserved			/* Conflicts with header included by CarbonCore.h on OS X */
+// #define __reserved			/* Conflicts with header included by CarbonCore.h on OS X */
 #define __success(expr)
 #define __typefix(ctype)
+
+// NOLINTEND(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 
 #ifndef _countof
 #ifndef __cplusplus
@@ -930,6 +960,7 @@ extern "C++"
 #define RTL_NUMBER_OF(A) RTL_NUMBER_OF_V1(A)
 
 #define ARRAYSIZE(A) RTL_NUMBER_OF_V2(A)
+// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 #define _ARRAYSIZE(A) RTL_NUMBER_OF_V1(A)
 
 #define RTL_FIELD_TYPE(type, field) (((type*)0)->field)
@@ -959,19 +990,29 @@ extern "C++"
 #if defined(_WIN32) || defined(__CYGWIN__)
 #ifdef __GNUC__
 #define DECLSPEC_EXPORT __attribute__((dllexport))
+#ifndef DECLSPEC_IMPORT
 #define DECLSPEC_IMPORT __attribute__((dllimport))
+#endif /* DECLSPEC_IMPORT */
 #else
 #define DECLSPEC_EXPORT __declspec(dllexport)
 #define DECLSPEC_IMPORT __declspec(dllimport)
-#endif
+#endif /* __GNUC__ */
 #else
 #if defined(__GNUC__) && __GNUC__ >= 4
+#if defined(__cplusplus) && (__cplusplus >= 201703L)
+#define DECLSPEC_EXPORT [[gnu::visibility("default")]]
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 202311L)
+#define DECLSPEC_EXPORT [[gnu::visibility("default")]]
+#else
 #define DECLSPEC_EXPORT __attribute__((visibility("default")))
+#endif
 #define DECLSPEC_IMPORT
 #else
 #define DECLSPEC_EXPORT
 #define DECLSPEC_IMPORT
 #endif
 #endif
+
+WINPR_PRAGMA_DIAG_POP
 
 #endif /* WINPR_SPEC_H */

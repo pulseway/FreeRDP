@@ -18,17 +18,13 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 
 #include <freerdp/log.h>
 
 #include "errinfo.h"
-
-#define TAG FREERDP_TAG("core")
 
 #define ERRBASE_DEFINE(_code)                                            \
 	{                                                                    \
@@ -47,18 +43,14 @@ static const ERRINFO ERRBASE_CODES[] = { ERRBASE_DEFINE(SUCCESS),
 
 const char* freerdp_get_error_base_string(UINT32 code)
 {
-	const ERRINFO* errInfo;
-
-	errInfo = &ERRBASE_CODES[0];
-
-	while (errInfo->code != ERRBASE_NONE)
+	for (size_t x = 0; x < ARRAYSIZE(ERRBASE_CODES); x++)
 	{
+		const ERRINFO* errInfo = &ERRBASE_CODES[x];
+
 		if (code == errInfo->code)
 		{
 			return errInfo->info;
 		}
-
-		errInfo++;
 	}
 
 	return "ERRBASE_UNKNOWN";
@@ -66,18 +58,13 @@ const char* freerdp_get_error_base_string(UINT32 code)
 
 const char* freerdp_get_error_base_category(UINT32 code)
 {
-	const ERRINFO* errInfo;
-
-	errInfo = &ERRBASE_CODES[0];
-
-	while (errInfo->code != ERRBASE_NONE)
+	for (size_t x = 0; x < ARRAYSIZE(ERRBASE_CODES); x++)
 	{
+		const ERRINFO* errInfo = &ERRBASE_CODES[x];
 		if (code == errInfo->code)
 		{
 			return errInfo->category;
 		}
-
-		errInfo++;
 	}
 
 	return "ERRBASE_UNKNOWN";
@@ -85,18 +72,13 @@ const char* freerdp_get_error_base_category(UINT32 code)
 
 const char* freerdp_get_error_base_name(UINT32 code)
 {
-	const ERRINFO* errInfo;
-
-	errInfo = &ERRBASE_CODES[0];
-
-	while (errInfo->code != ERRBASE_NONE)
+	for (size_t x = 0; x < ARRAYSIZE(ERRBASE_CODES); x++)
 	{
+		const ERRINFO* errInfo = &ERRBASE_CODES[x];
 		if (code == errInfo->code)
 		{
 			return errInfo->name;
 		}
-
-		errInfo++;
 	}
 
 	return "ERRBASE_UNKNOWN";

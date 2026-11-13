@@ -22,19 +22,18 @@
 #ifndef FREERDP_GRAPHICS_H
 #define FREERDP_GRAPHICS_H
 
-typedef struct rdp_bitmap rdpBitmap;
-typedef struct rdp_pointer rdpPointer;
-typedef struct rdp_glyph rdpGlyph;
-
 #include <stdlib.h>
 #include <freerdp/api.h>
 #include <freerdp/types.h>
-#include <freerdp/freerdp.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
+
+	typedef struct rdp_bitmap rdpBitmap;
+	typedef struct rdp_pointer rdpPointer;
+	typedef struct rdp_glyph rdpGlyph;
 
 	/* Bitmap Class */
 	typedef BOOL (*pBitmap_New)(rdpContext* context, rdpBitmap* bitmap);
@@ -48,11 +47,11 @@ extern "C"
 	struct rdp_bitmap
 	{
 		size_t size;                   /* 0 */
-		pBitmap_New New;               /* 1 */
-		pBitmap_Free Free;             /* 2 */
-		pBitmap_Paint Paint;           /* 3 */
-		pBitmap_Decompress Decompress; /* 4 */
-		pBitmap_SetSurface SetSurface; /* 5 */
+		WINPR_ATTR_NODISCARD pBitmap_New New;               /* 1 */
+		pBitmap_Free Free;                                  /* 2 */
+		WINPR_ATTR_NODISCARD pBitmap_Paint Paint;           /* 3 */
+		WINPR_ATTR_NODISCARD pBitmap_Decompress Decompress; /* 4 */
+		WINPR_ATTR_NODISCARD pBitmap_SetSurface SetSurface; /* 5 */
 		UINT32 paddingA[16 - 6];       /* 6 */
 
 		UINT32 left;              /* 16 */
@@ -65,7 +64,8 @@ extern "C"
 		UINT32 flags;             /* 23 */
 		UINT32 length;            /* 24 */
 		BYTE* data;               /* 25 */
-		UINT32 paddingB[32 - 26]; /* 26 */
+		UINT64 key64;             /* 26 */
+		UINT32 paddingB[32 - 27]; /* 27 */
 
 		BOOL compressed;          /* 32 */
 		BOOL ephemeral;           /* 33 */
@@ -81,7 +81,7 @@ extern "C"
 
 	typedef BOOL (*pPointer_New)(rdpContext* context, rdpPointer* pointer);
 	typedef void (*pPointer_Free)(rdpContext* context, rdpPointer* pointer);
-	typedef BOOL (*pPointer_Set)(rdpContext* context, const rdpPointer* pointer);
+	typedef BOOL (*pPointer_Set)(rdpContext* context, rdpPointer* pointer);
 	typedef BOOL (*pPointer_SetNull)(rdpContext* context);
 	typedef BOOL (*pPointer_SetDefault)(rdpContext* context);
 	typedef BOOL (*pPointer_SetPosition)(rdpContext* context, UINT32 x, UINT32 y);
@@ -89,12 +89,12 @@ extern "C"
 	struct rdp_pointer
 	{
 		size_t size;                      /* 0 */
-		pPointer_New New;                 /* 1 */
+		WINPR_ATTR_NODISCARD pPointer_New New; /* 1 */
 		pPointer_Free Free;               /* 2 */
-		pPointer_Set Set;                 /* 3 */
-		pPointer_SetNull SetNull;         /* 4*/
-		pPointer_SetDefault SetDefault;   /* 5 */
-		pPointer_SetPosition SetPosition; /* 6 */
+		WINPR_ATTR_NODISCARD pPointer_Set Set;                 /* 3 */
+		WINPR_ATTR_NODISCARD pPointer_SetNull SetNull;         /* 4*/
+		WINPR_ATTR_NODISCARD pPointer_SetDefault SetDefault;   /* 5 */
+		WINPR_ATTR_NODISCARD pPointer_SetPosition SetPosition; /* 6 */
 		UINT32 paddingA[16 - 7];          /* 7 */
 
 		UINT32 xPos;              /* 16 */
@@ -112,7 +112,7 @@ extern "C"
 	FREERDP_API rdpPointer* Pointer_Alloc(rdpContext* context);
 
 	/* Glyph Class */
-	typedef BOOL (*pGlyph_New)(rdpContext* context, const rdpGlyph* glyph);
+	typedef BOOL (*pGlyph_New)(rdpContext* context, rdpGlyph* glyph);
 	typedef void (*pGlyph_Free)(rdpContext* context, rdpGlyph* glyph);
 	typedef BOOL (*pGlyph_Draw)(rdpContext* context, const rdpGlyph* glyph, INT32 x, INT32 y,
 	                            INT32 w, INT32 h, INT32 sx, INT32 sy, BOOL fOpRedundant);
@@ -127,12 +127,12 @@ extern "C"
 	struct rdp_glyph
 	{
 		size_t size;                /* 0 */
-		pGlyph_New New;             /* 1 */
+		WINPR_ATTR_NODISCARD pGlyph_New New; /* 1 */
 		pGlyph_Free Free;           /* 2 */
-		pGlyph_Draw Draw;           /* 3 */
-		pGlyph_BeginDraw BeginDraw; /* 4 */
-		pGlyph_EndDraw EndDraw;     /* 5 */
-		pGlyph_SetBounds SetBounds; /* 6 */
+		WINPR_ATTR_NODISCARD pGlyph_Draw Draw;           /* 3 */
+		WINPR_ATTR_NODISCARD pGlyph_BeginDraw BeginDraw; /* 4 */
+		WINPR_ATTR_NODISCARD pGlyph_EndDraw EndDraw;     /* 5 */
+		WINPR_ATTR_NODISCARD pGlyph_SetBounds SetBounds; /* 6 */
 		UINT32 paddingA[16 - 7];    /* 7 */
 
 		INT32 x;                  /* 16 */
@@ -157,13 +157,17 @@ extern "C"
 		rdpGlyph* Glyph_Prototype;     /* 3 */
 		UINT32 paddingA[16 - 4];       /* 4 */
 	};
+	typedef struct rdp_graphics rdpGraphics;
 
-	FREERDP_API void graphics_register_bitmap(rdpGraphics* graphics, rdpBitmap* bitmap);
-	FREERDP_API void graphics_register_pointer(rdpGraphics* graphics, rdpPointer* pointer);
-	FREERDP_API void graphics_register_glyph(rdpGraphics* graphics, rdpGlyph* glyph);
+	FREERDP_API void graphics_register_bitmap(rdpGraphics* graphics, const rdpBitmap* bitmap);
+	FREERDP_API void graphics_register_pointer(rdpGraphics* graphics, const rdpPointer* pointer);
+	FREERDP_API void graphics_register_glyph(rdpGraphics* graphics, const rdpGlyph* glyph);
 
-	FREERDP_API rdpGraphics* graphics_new(rdpContext* context);
 	FREERDP_API void graphics_free(rdpGraphics* graphics);
+
+	WINPR_ATTR_MALLOC(graphics_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_API rdpGraphics* graphics_new(rdpContext* context);
 
 #ifdef __cplusplus
 }

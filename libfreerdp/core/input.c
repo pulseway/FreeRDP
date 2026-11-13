@@ -17,11 +17,11 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <time.h>
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
+#include <winpr/assert.h>
 
 #include <freerdp/input.h>
 #include <freerdp/log.h>
@@ -38,86 +38,161 @@
 #define INPUT_EVENT_UNICODE 0x0005
 #define INPUT_EVENT_MOUSE 0x8001
 #define INPUT_EVENT_MOUSEX 0x8002
+#define INPUT_EVENT_MOUSEREL 0x8004
 
-#define RDP_CLIENT_INPUT_PDU_HEADER_LENGTH 4
+static const char* SyncEventFlag2Str(uint32_t flag)
+{
+	if (flag == KBD_SYNC_SCROLL_LOCK)
+		return "SYNC_SCROLL_LOCK";
+	if (flag == KBD_SYNC_NUM_LOCK)
+		return "SYNC_NUM_LOCK";
+	if (flag == KBD_SYNC_CAPS_LOCK)
+		return "SYNC_CAPS_LOCK";
+	if (flag == KBD_SYNC_KANA_LOCK)
+		return "SYNC_KANA_LOCK";
+	return "SYNC_UNKNOWN";
+}
+
+static const char* SyncEventFlags2Str(const char* prefix, uint32_t flags, char* buffer, size_t len)
+{
+	const uint32_t tflags[] = { KBD_SYNC_SCROLL_LOCK, KBD_SYNC_NUM_LOCK, KBD_SYNC_CAPS_LOCK,
+		                        KBD_SYNC_KANA_LOCK };
+
+	if (len <= 2)
+		return nullptr;
+
+	if (!winpr_str_append("{", buffer, len, ""))
+		return nullptr;
+
+	/* Strip initial symbol so we do not get duplicate separators */
+	for (size_t x = 0; x < ARRAYSIZE(tflags); x++)
+	{
+		const uint32_t flag = tflags[x];
+		if (flags & flag)
+		{
+			char ibuffer[64] = WINPR_C_ARRAY_INIT;
+			(void)_snprintf(ibuffer, sizeof(ibuffer), "%s%s", prefix, SyncEventFlag2Str(flag));
+			if (!winpr_str_append(ibuffer, &buffer[1], len - 2, "|"))
+				return nullptr;
+		}
+	}
+	if (!winpr_str_append("}", &buffer[1], len - 2, ""))
+		return nullptr;
+
+	return buffer;
+}
+
+const char* freerdp_input_keyboard_flags_string(uint32_t flags, char* buffer, size_t len)
+{
+	return SyncEventFlags2Str("KBD_", flags, buffer, len);
+}
 
 static void rdp_write_client_input_pdu_header(wStream* s, UINT16 number)
 {
-	Stream_Write_UINT16(s, 1); /* numberEvents (2 bytes) */
-	Stream_Write_UINT16(s, 0); /* pad2Octets (2 bytes) */
+	WINPR_ASSERT(s);
+	WINPR_ASSERT(Stream_GetRemainingCapacity(s) >= 4);
+	Stream_Write_UINT16(s, number); /* numberEvents (2 bytes) */
+	Stream_Write_UINT16(s, 0);      /* pad2Octets (2 bytes) */
 }
 
 static void rdp_write_input_event_header(wStream* s, UINT32 time, UINT16 type)
 {
+	WINPR_ASSERT(s);
+	WINPR_ASSERT(Stream_GetRemainingCapacity(s) >= 6);
 	Stream_Write_UINT32(s, time); /* eventTime (4 bytes) */
 	Stream_Write_UINT16(s, type); /* messageType (2 bytes) */
 }
 
-static wStream* rdp_client_input_pdu_init(rdpRdp* rdp, UINT16 type)
+static wStream* rdp_client_input_pdu_init(rdpRdp* rdp, UINT16 type, UINT16* sec_flags)
 {
-	wStream* s;
-	s = rdp_data_pdu_init(rdp);
+	wStream* s = rdp_data_pdu_init(rdp, sec_flags);
 
 	if (!s)
-		return NULL;
+		return nullptr;
 
 	rdp_write_client_input_pdu_header(s, 1);
 	rdp_write_input_event_header(s, 0, type);
 	return s;
 }
 
-static BOOL rdp_send_client_input_pdu(rdpRdp* rdp, wStream* s)
+static BOOL rdp_send_client_input_pdu(rdpRdp* rdp, wStream* s, UINT16 sec_flags)
 {
-	return rdp_send_data_pdu(rdp, s, DATA_PDU_TYPE_INPUT, rdp->mcs->userId);
+	WINPR_ASSERT(rdp);
+	WINPR_ASSERT(rdp->mcs);
+	return rdp_send_data_pdu(rdp, s, DATA_PDU_TYPE_INPUT, rdp->mcs->userId, sec_flags);
 }
 
 static void input_write_synchronize_event(wStream* s, UINT32 flags)
 {
+	WINPR_ASSERT(s);
+	WINPR_ASSERT(Stream_GetRemainingCapacity(s) >= 6);
 	Stream_Write_UINT16(s, 0);     /* pad2Octets (2 bytes) */
 	Stream_Write_UINT32(s, flags); /* toggleFlags (4 bytes) */
 }
 
+static BOOL input_ensure_client_running(rdpInput* input)
+{
+	WINPR_ASSERT(input);
+	if (freerdp_shall_disconnect_context(input->context))
+	{
+		WLog_WARN(TAG, "[APPLICATION BUG] input functions called after the session terminated");
+		return FALSE;
+	}
+	return TRUE;
+}
+
 static BOOL input_send_synchronize_event(rdpInput* input, UINT32 flags)
 {
-	wStream* s;
-	rdpRdp* rdp;
+	UINT16 sec_flags = 0;
 
 	if (!input || !input->context)
 		return FALSE;
 
-	rdp = input->context->rdp;
-	s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_SYNC);
+	rdpRdp* rdp = input->context->rdp;
+
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	wStream* s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_SYNC, &sec_flags);
 
 	if (!s)
 		return FALSE;
 
 	input_write_synchronize_event(s, flags);
-	return rdp_send_client_input_pdu(rdp, s);
+	return rdp_send_client_input_pdu(rdp, s, sec_flags);
 }
 
 static void input_write_keyboard_event(wStream* s, UINT16 flags, UINT16 code)
 {
+	WINPR_ASSERT(s);
+	WINPR_ASSERT(code <= UINT8_MAX);
+
 	Stream_Write_UINT16(s, flags); /* keyboardFlags (2 bytes) */
 	Stream_Write_UINT16(s, code);  /* keyCode (2 bytes) */
 	Stream_Write_UINT16(s, 0);     /* pad2Octets (2 bytes) */
 }
 
-static BOOL input_send_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
+static BOOL input_send_keyboard_event(rdpInput* input, UINT16 flags, UINT8 code)
 {
-	wStream* s;
-	rdpRdp* rdp;
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
+	rdpRdp* rdp = nullptr;
 
 	if (!input || !input->context)
 		return FALSE;
 
 	rdp = input->context->rdp;
-	s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_SCANCODE);
+
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_SCANCODE, &sec_flags);
 
 	if (!s)
 		return FALSE;
 
 	input_write_keyboard_event(s, flags, code);
-	return rdp_send_client_input_pdu(rdp, s);
+	return rdp_send_client_input_pdu(rdp, s, sec_flags);
 }
 
 static void input_write_unicode_keyboard_event(wStream* s, UINT16 flags, UINT16 code)
@@ -129,26 +204,30 @@ static void input_write_unicode_keyboard_event(wStream* s, UINT16 flags, UINT16 
 
 static BOOL input_send_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
 {
-	wStream* s;
-	rdpRdp* rdp;
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
+	rdpRdp* rdp = nullptr;
 
 	if (!input || !input->context)
 		return FALSE;
 
-	if (!input->context->settings->UnicodeInput)
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_UnicodeInput))
 	{
 		WLog_WARN(TAG, "Unicode input not supported by server.");
 		return FALSE;
 	}
 
 	rdp = input->context->rdp;
-	s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_UNICODE);
+	s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_UNICODE, &sec_flags);
 
 	if (!s)
 		return FALSE;
 
 	input_write_unicode_keyboard_event(s, flags, code);
-	return rdp_send_client_input_pdu(rdp, s);
+	return rdp_send_client_input_pdu(rdp, s, sec_flags);
 }
 
 static void input_write_mouse_event(wStream* s, UINT16 flags, UINT16 x, UINT16 y)
@@ -160,15 +239,17 @@ static void input_write_mouse_event(wStream* s, UINT16 flags, UINT16 x, UINT16 y
 
 static BOOL input_send_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
 {
-	wStream* s;
-	rdpRdp* rdp;
+	UINT16 sec_flags = 0;
 
 	if (!input || !input->context || !input->context->settings)
 		return FALSE;
 
-	rdp = input->context->rdp;
+	rdpRdp* rdp = input->context->rdp;
 
-	if (!input->context->settings->HasHorizontalWheel)
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasHorizontalWheel))
 	{
 		if (flags & PTR_FLAGS_HWHEEL)
 		{
@@ -180,13 +261,45 @@ static BOOL input_send_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT
 		}
 	}
 
-	s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_MOUSE);
+	wStream* s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_MOUSE, &sec_flags);
 
 	if (!s)
 		return FALSE;
 
 	input_write_mouse_event(s, flags, x, y);
-	return rdp_send_client_input_pdu(rdp, s);
+	return rdp_send_client_input_pdu(rdp, s, sec_flags);
+}
+
+static BOOL input_send_relmouse_event(rdpInput* input, UINT16 flags, INT16 xDelta, INT16 yDelta)
+{
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
+	rdpRdp* rdp = nullptr;
+
+	if (!input || !input->context || !input->context->settings)
+		return FALSE;
+
+	rdp = input->context->rdp;
+
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasRelativeMouseEvent))
+	{
+		WLog_ERR(TAG, "Sending relative mouse event, but no support for that");
+		return FALSE;
+	}
+
+	s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_MOUSEREL, &sec_flags);
+
+	if (!s)
+		return FALSE;
+
+	Stream_Write_UINT16(s, flags); /* pointerFlags (2 bytes) */
+	Stream_Write_INT16(s, xDelta); /* xDelta (2 bytes) */
+	Stream_Write_INT16(s, yDelta); /* yDelta (2 bytes) */
+
+	return rdp_send_client_input_pdu(rdp, s, sec_flags);
 }
 
 static void input_write_extended_mouse_event(wStream* s, UINT16 flags, UINT16 x, UINT16 y)
@@ -198,13 +311,19 @@ static void input_write_extended_mouse_event(wStream* s, UINT16 flags, UINT16 x,
 
 static BOOL input_send_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
 {
-	wStream* s;
-	rdpRdp* rdp;
+	UINT16 sec_flags = 0;
 
-	if (!input || !input->context)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
+	WINPR_ASSERT(input->context->settings);
+
+	rdpRdp* rdp = input->context->rdp;
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
 		return FALSE;
 
-	if (!input->context->settings->HasExtendedMouseEvent)
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasExtendedMouseEvent))
 	{
 		WLog_WARN(TAG,
 		          "skip extended mouse event %" PRIu16 "x%" PRIu16 " flags=0x%04" PRIX16
@@ -213,14 +332,13 @@ static BOOL input_send_extended_mouse_event(rdpInput* input, UINT16 flags, UINT1
 		return TRUE;
 	}
 
-	rdp = input->context->rdp;
-	s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_MOUSEX);
+	wStream* s = rdp_client_input_pdu_init(rdp, INPUT_EVENT_MOUSEX, &sec_flags);
 
 	if (!s)
 		return FALSE;
 
 	input_write_extended_mouse_event(s, flags, x, y);
-	return rdp_send_client_input_pdu(rdp, s);
+	return rdp_send_client_input_pdu(rdp, s, sec_flags);
 }
 
 static BOOL input_send_focus_in_event(rdpInput* input, UINT16 toggleStates)
@@ -265,81 +383,117 @@ static BOOL input_send_keyboard_pause_event(rdpInput* input)
 
 static BOOL input_send_fastpath_synchronize_event(rdpInput* input, UINT32 flags)
 {
-	wStream* s;
-	rdpRdp* rdp;
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
 
-	if (!input || !input->context)
+	/* The FastPath Synchronization eventFlags has identical values as SlowPath,
+	 * but the field is only 5 bits wide. Drop everything else, a value with
+	 * undefined bits set may have been received from a peer (proxy) */
+	const UINT32 mask =
+	    KBD_SYNC_SCROLL_LOCK | KBD_SYNC_NUM_LOCK | KBD_SYNC_CAPS_LOCK | KBD_SYNC_KANA_LOCK;
+	if (flags & ~mask)
+		WLog_WARN(TAG,
+		          "Problematic [MS-RDPBCGR] 2.2.8.1.2.2.5 Fast-Path Synchronize Event "
+		          "(TS_FP_SYNC_EVENT) flags=0x%08" PRIx32 ", ignoring undefined bits.",
+		          flags);
+	rdpRdp* rdp = input->context->rdp;
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
 		return FALSE;
 
-	rdp = input->context->rdp;
 	/* The FastPath Synchronization eventFlags has identical values as SlowPath */
-	s = fastpath_input_pdu_init(rdp->fastpath, (BYTE)flags, FASTPATH_INPUT_EVENT_SYNC);
+	UINT16 sec_flags = 0;
+	wStream* s =
+	    fastpath_input_pdu_init(rdp->fastpath, (BYTE)flags, FASTPATH_INPUT_EVENT_SYNC, &sec_flags);
 
 	if (!s)
 		return FALSE;
 
-	return fastpath_send_input_pdu(rdp->fastpath, s);
+	return fastpath_send_input_pdu(rdp->fastpath, s, sec_flags);
 }
 
-static BOOL input_send_fastpath_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
+static BOOL input_send_fastpath_keyboard_event(rdpInput* input, UINT16 flags, UINT8 code)
 {
-	wStream* s;
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
 	BYTE eventFlags = 0;
-	rdpRdp* rdp;
+	rdpRdp* rdp = nullptr;
 
-	if (!input || !input->context)
-		return FALSE;
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
 
 	rdp = input->context->rdp;
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
 	eventFlags |= (flags & KBD_FLAGS_RELEASE) ? FASTPATH_INPUT_KBDFLAGS_RELEASE : 0;
 	eventFlags |= (flags & KBD_FLAGS_EXTENDED) ? FASTPATH_INPUT_KBDFLAGS_EXTENDED : 0;
 	eventFlags |= (flags & KBD_FLAGS_EXTENDED1) ? FASTPATH_INPUT_KBDFLAGS_PREFIX_E1 : 0;
-	s = fastpath_input_pdu_init(rdp->fastpath, eventFlags, FASTPATH_INPUT_EVENT_SCANCODE);
+	s = fastpath_input_pdu_init(rdp->fastpath, eventFlags, FASTPATH_INPUT_EVENT_SCANCODE,
+	                            &sec_flags);
 
 	if (!s)
 		return FALSE;
 
+	WINPR_ASSERT(code <= UINT8_MAX);
 	Stream_Write_UINT8(s, code); /* keyCode (1 byte) */
-	return fastpath_send_input_pdu(rdp->fastpath, s);
+	return fastpath_send_input_pdu(rdp->fastpath, s, sec_flags);
 }
 
 static BOOL input_send_fastpath_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
 {
-	wStream* s;
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
 	BYTE eventFlags = 0;
-	rdpRdp* rdp;
+	rdpRdp* rdp = nullptr;
 
-	if (!input || !input->context)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
+	WINPR_ASSERT(input->context->settings);
+
+	rdp = input->context->rdp;
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
 		return FALSE;
 
-	if (!input->context->settings->UnicodeInput)
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_UnicodeInput))
 	{
 		WLog_WARN(TAG, "Unicode input not supported by server.");
 		return FALSE;
 	}
 
-	rdp = input->context->rdp;
 	eventFlags |= (flags & KBD_FLAGS_RELEASE) ? FASTPATH_INPUT_KBDFLAGS_RELEASE : 0;
-	s = fastpath_input_pdu_init(rdp->fastpath, eventFlags, FASTPATH_INPUT_EVENT_UNICODE);
+	s = fastpath_input_pdu_init(rdp->fastpath, eventFlags, FASTPATH_INPUT_EVENT_UNICODE,
+	                            &sec_flags);
 
 	if (!s)
 		return FALSE;
 
 	Stream_Write_UINT16(s, code); /* unicodeCode (2 bytes) */
-	return fastpath_send_input_pdu(rdp->fastpath, s);
+	return fastpath_send_input_pdu(rdp->fastpath, s, sec_flags);
 }
 
 static BOOL input_send_fastpath_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
 {
-	wStream* s;
-	rdpRdp* rdp;
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
+	rdpRdp* rdp = nullptr;
 
-	if (!input || !input->context || !input->context->settings)
-		return FALSE;
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
+	WINPR_ASSERT(input->context->settings);
 
 	rdp = input->context->rdp;
+	WINPR_ASSERT(rdp);
 
-	if (!input->context->settings->HasHorizontalWheel)
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasHorizontalWheel))
 	{
 		if (flags & PTR_FLAGS_HWHEEL)
 		{
@@ -351,25 +505,32 @@ static BOOL input_send_fastpath_mouse_event(rdpInput* input, UINT16 flags, UINT1
 		}
 	}
 
-	s = fastpath_input_pdu_init(rdp->fastpath, 0, FASTPATH_INPUT_EVENT_MOUSE);
+	s = fastpath_input_pdu_init(rdp->fastpath, 0, FASTPATH_INPUT_EVENT_MOUSE, &sec_flags);
 
 	if (!s)
 		return FALSE;
 
 	input_write_mouse_event(s, flags, x, y);
-	return fastpath_send_input_pdu(rdp->fastpath, s);
+	return fastpath_send_input_pdu(rdp->fastpath, s, sec_flags);
 }
 
 static BOOL input_send_fastpath_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x,
                                                      UINT16 y)
 {
-	wStream* s;
-	rdpRdp* rdp;
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
+	rdpRdp* rdp = nullptr;
 
-	if (!input || !input->context)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
+
+	rdp = input->context->rdp;
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
 		return FALSE;
 
-	if (!input->context->settings->HasExtendedMouseEvent)
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasExtendedMouseEvent))
 	{
 		WLog_WARN(TAG,
 		          "skip extended mouse event %" PRIu16 "x%" PRIu16 " flags=0x%04" PRIX16
@@ -378,27 +539,100 @@ static BOOL input_send_fastpath_extended_mouse_event(rdpInput* input, UINT16 fla
 		return TRUE;
 	}
 
-	rdp = input->context->rdp;
-	s = fastpath_input_pdu_init(rdp->fastpath, 0, FASTPATH_INPUT_EVENT_MOUSEX);
+	s = fastpath_input_pdu_init(rdp->fastpath, 0, FASTPATH_INPUT_EVENT_MOUSEX, &sec_flags);
 
 	if (!s)
 		return FALSE;
 
 	input_write_extended_mouse_event(s, flags, x, y);
-	return fastpath_send_input_pdu(rdp->fastpath, s);
+	return fastpath_send_input_pdu(rdp->fastpath, s, sec_flags);
+}
+
+static BOOL input_send_fastpath_relmouse_event(rdpInput* input, UINT16 flags, INT16 xDelta,
+                                               INT16 yDelta)
+{
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
+	rdpRdp* rdp = nullptr;
+
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
+	WINPR_ASSERT(input->context->settings);
+
+	rdp = input->context->rdp;
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasRelativeMouseEvent))
+	{
+		WLog_ERR(TAG, "Sending relative fastpath mouse event, but no support for that announced");
+		return FALSE;
+	}
+
+	s = fastpath_input_pdu_init(rdp->fastpath, 0, TS_FP_RELPOINTER_EVENT, &sec_flags);
+
+	if (!s)
+		return FALSE;
+
+	Stream_Write_UINT16(s, flags); /* pointerFlags (2 bytes) */
+	Stream_Write_INT16(s, xDelta); /* xDelta (2 bytes) */
+	Stream_Write_INT16(s, yDelta); /* yDelta (2 bytes) */
+	return fastpath_send_input_pdu(rdp->fastpath, s, sec_flags);
+}
+
+static BOOL input_send_fastpath_qoe_event(rdpInput* input, UINT32 timestampMS)
+{
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
+	WINPR_ASSERT(input->context->settings);
+
+	rdpRdp* rdp = input->context->rdp;
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasQoeEvent))
+	{
+		WLog_ERR(TAG, "Sending qoe event, but no support for that announced");
+		return FALSE;
+	}
+
+	UINT16 sec_flags = 0;
+	wStream* s = fastpath_input_pdu_init(rdp->fastpath, 0, TS_FP_QOETIMESTAMP_EVENT, &sec_flags);
+
+	if (!s)
+		return FALSE;
+
+	if (!Stream_EnsureRemainingCapacity(s, 4))
+	{
+		Stream_Free(s, TRUE);
+		return FALSE;
+	}
+
+	Stream_Write_UINT32(s, timestampMS);
+	return fastpath_send_input_pdu(rdp->fastpath, s, sec_flags);
 }
 
 static BOOL input_send_fastpath_focus_in_event(rdpInput* input, UINT16 toggleStates)
 {
-	wStream* s;
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
 	BYTE eventFlags = 0;
-	rdpRdp* rdp;
+	rdpRdp* rdp = nullptr;
 
-	if (!input || !input->context)
-		return FALSE;
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
 
 	rdp = input->context->rdp;
-	s = fastpath_input_pdu_init_header(rdp->fastpath);
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	s = fastpath_input_pdu_init_header(rdp->fastpath, &sec_flags);
 
 	if (!s)
 		return FALSE;
@@ -414,7 +648,7 @@ static BOOL input_send_fastpath_focus_in_event(rdpInput* input, UINT16 toggleSta
 	eventFlags = FASTPATH_INPUT_KBDFLAGS_RELEASE | FASTPATH_INPUT_EVENT_SCANCODE << 5;
 	Stream_Write_UINT8(s, eventFlags); /* Key Release event (1 byte) */
 	Stream_Write_UINT8(s, 0x0f);       /* keyCode (1 byte) */
-	return fastpath_send_multiple_input_pdu(rdp->fastpath, s, 3);
+	return fastpath_send_multiple_input_pdu(rdp->fastpath, s, 3, sec_flags);
 }
 
 static BOOL input_send_fastpath_keyboard_pause_event(rdpInput* input)
@@ -423,16 +657,22 @@ static BOOL input_send_fastpath_keyboard_pause_event(rdpInput* input)
 	 * and pause-up sent nothing.  However, reverse engineering mstsc shows
 	 * it sending the following sequence:
 	 */
-	wStream* s;
+	UINT16 sec_flags = 0;
+	wStream* s = nullptr;
 	const BYTE keyDownEvent = FASTPATH_INPUT_EVENT_SCANCODE << 5;
 	const BYTE keyUpEvent = (FASTPATH_INPUT_EVENT_SCANCODE << 5) | FASTPATH_INPUT_KBDFLAGS_RELEASE;
-	rdpRdp* rdp;
+	rdpRdp* rdp = nullptr;
 
-	if (!input || !input->context)
-		return FALSE;
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
 
 	rdp = input->context->rdp;
-	s = fastpath_input_pdu_init_header(rdp->fastpath);
+	WINPR_ASSERT(rdp);
+
+	if (!input_ensure_client_running(input))
+		return FALSE;
+
+	s = fastpath_input_pdu_init_header(rdp->fastpath, &sec_flags);
 
 	if (!s)
 		return FALSE;
@@ -449,59 +689,68 @@ static BOOL input_send_fastpath_keyboard_pause_event(rdpInput* input)
 	/* Numlock down (0x45) */
 	Stream_Write_UINT8(s, keyUpEvent);
 	Stream_Write_UINT8(s, RDP_SCANCODE_CODE(RDP_SCANCODE_NUMLOCK));
-	return fastpath_send_multiple_input_pdu(rdp->fastpath, s, 4);
+	return fastpath_send_multiple_input_pdu(rdp->fastpath, s, 4, sec_flags);
 }
 
 static BOOL input_recv_sync_event(rdpInput* input, wStream* s)
 {
-	UINT32 toggleFlags;
+	UINT32 toggleFlags = 0;
 
-	if (Stream_GetRemainingLength(s) < 6)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 6))
 		return FALSE;
 
 	Stream_Seek(s, 2);                  /* pad2Octets (2 bytes) */
 	Stream_Read_UINT32(s, toggleFlags); /* toggleFlags (4 bytes) */
+
+	/* only pass input if we are actually connected */
+	if (!rdp_has_reached_state(input->context->rdp, CONNECTION_STATE_ACTIVE))
+		return TRUE;
 	return IFCALLRESULT(TRUE, input->SynchronizeEvent, input, toggleFlags);
 }
 
 static BOOL input_recv_keyboard_event(rdpInput* input, wStream* s)
 {
-	UINT16 keyboardFlags, keyCode;
+	UINT16 keyboardFlags = 0;
+	UINT16 keyCode = 0;
 
-	if (Stream_GetRemainingLength(s) < 6)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 6))
 		return FALSE;
 
 	Stream_Read_UINT16(s, keyboardFlags); /* keyboardFlags (2 bytes) */
 	Stream_Read_UINT16(s, keyCode);       /* keyCode (2 bytes) */
 	Stream_Seek(s, 2);                    /* pad2Octets (2 bytes) */
 
-	/**
-	 * Note: A lot of code in FreeRDP and in dependent projects checks the
-	 * KBDFLAGS_DOWN flag in order to detect a key press.
-	 * According to the specs only the absence of the slow-path
-	 * KBDFLAGS_RELEASE flag indicates a key-down event.
-	 * The slow-path KBDFLAGS_DOWN flag merely indicates that the key was
-	 * down prior to this event.
-	 * The checks for KBDFLAGS_DOWN only work successfully because the code
-	 * handling the fast-path keyboard input sets the KBDFLAGS_DOWN flag if
-	 * the FASTPATH_INPUT_KBDFLAGS_RELEASE flag is missing.
-	 * Since the same input callback is used for slow- and fast-path events
-	 * we have to follow that "convention" here.
-	 */
-
 	if (keyboardFlags & KBD_FLAGS_RELEASE)
 		keyboardFlags &= ~KBD_FLAGS_DOWN;
-	else
-		keyboardFlags |= KBD_FLAGS_DOWN;
 
-	return IFCALLRESULT(TRUE, input->KeyboardEvent, input, keyboardFlags, keyCode);
+	if (keyCode & 0xFF00)
+		WLog_WARN(TAG,
+		          "Problematic [MS-RDPBCGR] 2.2.8.1.1.3.1.1.1 Keyboard Event (TS_KEYBOARD_EVENT) "
+		          "keyCode=0x%04" PRIx16
+		          ", high byte values should be sent in keyboardFlags field, ignoring.",
+		          keyCode);
+
+	/* only pass input if we are actually connected */
+	if (!rdp_has_reached_state(input->context->rdp, CONNECTION_STATE_ACTIVE))
+		return TRUE;
+	return IFCALLRESULT(TRUE, input->KeyboardEvent, input, keyboardFlags, keyCode & 0xFF);
 }
 
 static BOOL input_recv_unicode_keyboard_event(rdpInput* input, wStream* s)
 {
-	UINT16 keyboardFlags, unicodeCode;
+	UINT16 keyboardFlags = 0;
+	UINT16 unicodeCode = 0;
 
-	if (Stream_GetRemainingLength(s) < 6)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 6))
 		return FALSE;
 
 	Stream_Read_UINT16(s, keyboardFlags); /* keyboardFlags (2 bytes) */
@@ -512,43 +761,106 @@ static BOOL input_recv_unicode_keyboard_event(rdpInput* input, wStream* s)
 
 	if (keyboardFlags & KBD_FLAGS_RELEASE)
 		keyboardFlags &= ~KBD_FLAGS_DOWN;
-	else
-		keyboardFlags |= KBD_FLAGS_DOWN;
 
+	/* only pass input if we are actually connected */
+	if (!rdp_has_reached_state(input->context->rdp, CONNECTION_STATE_ACTIVE))
+		return TRUE;
 	return IFCALLRESULT(TRUE, input->UnicodeKeyboardEvent, input, keyboardFlags, unicodeCode);
 }
 
 static BOOL input_recv_mouse_event(rdpInput* input, wStream* s)
 {
-	UINT16 pointerFlags, xPos, yPos;
+	UINT16 pointerFlags = 0;
+	UINT16 xPos = 0;
+	UINT16 yPos = 0;
 
-	if (Stream_GetRemainingLength(s) < 6)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 6))
 		return FALSE;
 
 	Stream_Read_UINT16(s, pointerFlags); /* pointerFlags (2 bytes) */
 	Stream_Read_UINT16(s, xPos);         /* xPos (2 bytes) */
 	Stream_Read_UINT16(s, yPos);         /* yPos (2 bytes) */
+
+	/* only pass input if we are actually connected */
+	if (!rdp_has_reached_state(input->context->rdp, CONNECTION_STATE_ACTIVE))
+		return TRUE;
 	return IFCALLRESULT(TRUE, input->MouseEvent, input, pointerFlags, xPos, yPos);
+}
+
+static BOOL input_recv_relmouse_event(rdpInput* input, wStream* s)
+{
+	UINT16 pointerFlags = 0;
+	INT16 xDelta = 0;
+	INT16 yDelta = 0;
+
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 6))
+		return FALSE;
+
+	Stream_Read_UINT16(s, pointerFlags); /* pointerFlags (2 bytes) */
+	Stream_Read_INT16(s, xDelta);        /* xPos (2 bytes) */
+	Stream_Read_INT16(s, yDelta);        /* yPos (2 bytes) */
+
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasRelativeMouseEvent))
+	{
+		WLog_ERR(TAG,
+		         "Received relative mouse event(flags=0x%04" PRIx16 ", xPos=%" PRId16
+		         ", yPos=%" PRId16 "), but we did not announce support for that",
+		         pointerFlags, xDelta, yDelta);
+		return FALSE;
+	}
+
+	/* only pass input if we are actually connected */
+	if (!rdp_has_reached_state(input->context->rdp, CONNECTION_STATE_ACTIVE))
+		return TRUE;
+
+	return IFCALLRESULT(TRUE, input->RelMouseEvent, input, pointerFlags, xDelta, yDelta);
 }
 
 static BOOL input_recv_extended_mouse_event(rdpInput* input, wStream* s)
 {
-	UINT16 pointerFlags, xPos, yPos;
+	UINT16 pointerFlags = 0;
+	UINT16 xPos = 0;
+	UINT16 yPos = 0;
 
-	if (Stream_GetRemainingLength(s) < 6)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 6))
 		return FALSE;
 
 	Stream_Read_UINT16(s, pointerFlags); /* pointerFlags (2 bytes) */
 	Stream_Read_UINT16(s, xPos);         /* xPos (2 bytes) */
 	Stream_Read_UINT16(s, yPos);         /* yPos (2 bytes) */
+
+	if (!freerdp_settings_get_bool(input->context->settings, FreeRDP_HasExtendedMouseEvent))
+	{
+		WLog_ERR(TAG,
+		         "Received extended mouse event(flags=0x%04" PRIx16 ", xPos=%" PRIu16
+		         ", yPos=%" PRIu16 "), but we did not announce support for that",
+		         pointerFlags, xPos, yPos);
+		return FALSE;
+	}
+
+	/* only pass input if we are actually connected */
+	if (!rdp_has_reached_state(input->context->rdp, CONNECTION_STATE_ACTIVE))
+		return TRUE;
 	return IFCALLRESULT(TRUE, input->ExtendedMouseEvent, input, pointerFlags, xPos, yPos);
 }
 
 static BOOL input_recv_event(rdpInput* input, wStream* s)
 {
-	UINT16 messageType;
+	UINT16 messageType = 0;
 
-	if (Stream_GetRemainingLength(s) < 6)
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(s);
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 6))
 		return FALSE;
 
 	Stream_Seek(s, 4);                  /* eventTime (4 bytes), ignored by the server */
@@ -586,10 +898,17 @@ static BOOL input_recv_event(rdpInput* input, wStream* s)
 
 			break;
 
+		case INPUT_EVENT_MOUSEREL:
+			if (!input_recv_relmouse_event(input, s))
+				return FALSE;
+
+			break;
+
 		default:
 			WLog_ERR(TAG, "Unknown messageType %" PRIu16 "", messageType);
 			/* Each input event uses 6 bytes. */
-			Stream_Seek(s, 6);
+			if (!Stream_SafeSeek(s, 6))
+				return FALSE;
 			break;
 	}
 
@@ -598,22 +917,22 @@ static BOOL input_recv_event(rdpInput* input, wStream* s)
 
 BOOL input_recv(rdpInput* input, wStream* s)
 {
-	UINT16 i, numberEvents;
+	UINT16 numberEvents = 0;
 
-	if (!input || !s)
-		return FALSE;
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(s);
 
-	if (Stream_GetRemainingLength(s) < 4)
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 4))
 		return FALSE;
 
 	Stream_Read_UINT16(s, numberEvents); /* numberEvents (2 bytes) */
 	Stream_Seek(s, 2);                   /* pad2Octets (2 bytes) */
 
 	/* Each input event uses 6 exactly bytes. */
-	if (Stream_GetRemainingLength(s) < (size_t)(6 * numberEvents))
+	if (!Stream_CheckAndLogRequiredLengthOfSize(TAG, s, numberEvents, 6ull))
 		return FALSE;
 
-	for (i = 0; i < numberEvents; i++)
+	for (UINT16 i = 0; i < numberEvents; i++)
 	{
 		if (!input_recv_event(input, s))
 			return FALSE;
@@ -624,9 +943,9 @@ BOOL input_recv(rdpInput* input, wStream* s)
 
 BOOL input_register_client_callbacks(rdpInput* input)
 {
-	rdpSettings* settings;
+	rdpSettings* settings = nullptr;
 
-	if (!input || !input->context)
+	if (!input->context)
 		return FALSE;
 
 	settings = input->context->settings;
@@ -634,15 +953,17 @@ BOOL input_register_client_callbacks(rdpInput* input)
 	if (!settings)
 		return FALSE;
 
-	if (settings->FastPathInput)
+	if (freerdp_settings_get_bool(settings, FreeRDP_FastPathInput))
 	{
 		input->SynchronizeEvent = input_send_fastpath_synchronize_event;
 		input->KeyboardEvent = input_send_fastpath_keyboard_event;
 		input->KeyboardPauseEvent = input_send_fastpath_keyboard_pause_event;
 		input->UnicodeKeyboardEvent = input_send_fastpath_unicode_keyboard_event;
 		input->MouseEvent = input_send_fastpath_mouse_event;
+		input->RelMouseEvent = input_send_fastpath_relmouse_event;
 		input->ExtendedMouseEvent = input_send_fastpath_extended_mouse_event;
 		input->FocusInEvent = input_send_fastpath_focus_in_event;
+		input->QoEEvent = input_send_fastpath_qoe_event;
 	}
 	else
 	{
@@ -651,84 +972,207 @@ BOOL input_register_client_callbacks(rdpInput* input)
 		input->KeyboardPauseEvent = input_send_keyboard_pause_event;
 		input->UnicodeKeyboardEvent = input_send_unicode_keyboard_event;
 		input->MouseEvent = input_send_mouse_event;
+		input->RelMouseEvent = input_send_relmouse_event;
 		input->ExtendedMouseEvent = input_send_extended_mouse_event;
 		input->FocusInEvent = input_send_focus_in_event;
-	}
-
-	input->asynchronous = settings->AsyncInput;
-
-	if (input->asynchronous)
-	{
-		input->proxy = input_message_proxy_new(input);
-
-		if (!input->proxy)
-			return FALSE;
 	}
 
 	return TRUE;
 }
 
+/* Save last input timestamp and/or mouse position in prevent-session-lock mode */
+static BOOL input_update_last_event(rdpInput* input, BOOL mouse, UINT16 x, UINT16 y)
+{
+	rdp_input_internal* in = input_cast(input);
+
+	WINPR_ASSERT(input);
+	WINPR_ASSERT(input->context);
+
+	if (freerdp_settings_get_uint32(input->context->settings, FreeRDP_FakeMouseMotionInterval) > 0)
+	{
+		const time_t now = time(nullptr);
+		in->lastInputTimestamp = WINPR_ASSERTING_INT_CAST(UINT64, now);
+
+		if (mouse)
+		{
+			in->lastX = x;
+			in->lastY = y;
+		}
+	}
+	return TRUE;
+}
+
+WINPR_ATTR_NODISCARD
+static const char* boolstr(bool value)
+{
+	if (value)
+		return "true";
+	return "false";
+}
+
+WINPR_ATTR_NODISCARD
+WINPR_ATTR_FORMAT_ARG(2, 3)
+static BOOL input_skip(const rdpInput* input, WINPR_FORMAT_ARG const char* fmt, ...)
+{
+	WINPR_ASSERT(input);
+
+	const rdpContext* context = input->context;
+	WINPR_ASSERT(context);
+
+	const rdp_input_internal* in = (const rdp_input_internal*)input;
+	WINPR_ASSERT(in);
+
+	const BOOL suspended = freerdp_settings_get_bool(context->settings, FreeRDP_SuspendInput);
+	const BOOL connected = freerdp_is_active_state(context);
+	const DWORD loglevel = WLOG_DEBUG;
+
+	if (WLog_IsLevelActive(in->log, loglevel))
+	{
+		char buffer[128] = WINPR_C_ARRAY_INIT;
+
+		va_list args = WINPR_C_ARRAY_INIT;
+		va_start(args, fmt);
+		(void)vsnprintf(buffer, sizeof(buffer), fmt, args);
+		va_end(args);
+
+		WLog_Print(in->log, loglevel, "[connected=%s, suspended=%s] %s", boolstr(connected),
+		           boolstr(suspended), buffer);
+	}
+
+	return suspended || !connected;
+}
+
 BOOL freerdp_input_send_synchronize_event(rdpInput* input, UINT32 flags)
 {
-	if (!input)
+	if (!input || !input->context)
 		return FALSE;
+
+	char buffer[128] = WINPR_C_ARRAY_INIT;
+	if (input_skip(input, "Keyboard {Sync} [%s]",
+	               freerdp_input_keyboard_flags_string(flags, buffer, sizeof(buffer))))
+		return TRUE;
 
 	return IFCALLRESULT(TRUE, input->SynchronizeEvent, input, flags);
 }
 
-BOOL freerdp_input_send_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
+BOOL freerdp_input_send_keyboard_event(rdpInput* input, UINT16 flags, UINT8 code)
 {
-	if (!input)
+	if (!input || !input->context)
 		return FALSE;
+
+	char buffer[128] = WINPR_C_ARRAY_INIT;
+	if (input_skip(input, "Keyboard {Event} [%s]",
+	               freerdp_input_keypress_flags_string(flags, buffer, sizeof(buffer))))
+		return TRUE;
+
+	input_update_last_event(input, FALSE, 0, 0);
 
 	return IFCALLRESULT(TRUE, input->KeyboardEvent, input, flags, code);
 }
 
-BOOL freerdp_input_send_keyboard_event_ex(rdpInput* input, BOOL down, UINT32 rdp_scancode)
+BOOL freerdp_input_send_keyboard_event_ex(rdpInput* input, BOOL down, BOOL repeat,
+                                          UINT32 rdp_scancode)
 {
-	return freerdp_input_send_keyboard_event(
-	    input,
-	    (RDP_SCANCODE_EXTENDED(rdp_scancode) ? KBD_FLAGS_EXTENDED : 0) |
-	        ((down) ? KBD_FLAGS_DOWN : KBD_FLAGS_RELEASE),
-	    RDP_SCANCODE_CODE(rdp_scancode));
+	UINT16 flags = (RDP_SCANCODE_EXTENDED(rdp_scancode) ? KBD_FLAGS_EXTENDED : 0);
+	if (down && repeat)
+		flags |= KBD_FLAGS_DOWN;
+	else if (!down)
+		flags |= KBD_FLAGS_RELEASE;
+
+	return freerdp_input_send_keyboard_event(input, flags, RDP_SCANCODE_CODE(rdp_scancode));
 }
 
 BOOL freerdp_input_send_unicode_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
 {
-	if (!input)
+	if (!input || !input->context)
 		return FALSE;
+
+	char buffer[128] = WINPR_C_ARRAY_INIT;
+	if (input_skip(input, "Keyboard {Unicode} [%s]",
+	               freerdp_input_keypress_flags_string(flags, buffer, ARRAYSIZE(buffer))))
+		return TRUE;
+
+	input_update_last_event(input, FALSE, 0, 0);
 
 	return IFCALLRESULT(TRUE, input->UnicodeKeyboardEvent, input, flags, code);
 }
 
 BOOL freerdp_input_send_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
 {
-	if (!input)
+	if (!input || !input->context)
 		return FALSE;
+
+	char buffer[128] = WINPR_C_ARRAY_INIT;
+	if (input_skip(input, "Mouse {Event} [%s]",
+	               freerdp_input_mouse_flags_string(flags, false, buffer, ARRAYSIZE(buffer))))
+		return TRUE;
+
+	input_update_last_event(
+	    input, flags & (PTR_FLAGS_MOVE | PTR_FLAGS_BUTTON1 | PTR_FLAGS_BUTTON2 | PTR_FLAGS_BUTTON3),
+	    x, y);
 
 	return IFCALLRESULT(TRUE, input->MouseEvent, input, flags, x, y);
 }
 
+BOOL freerdp_input_send_rel_mouse_event(rdpInput* input, UINT16 flags, INT16 xDelta, INT16 yDelta)
+{
+	if (!input || !input->context)
+		return FALSE;
+
+	char buffer[128] = WINPR_C_ARRAY_INIT;
+	if (input_skip(input, "Mouse {RelativeEvent} [%s]",
+	               freerdp_input_mouse_flags_string(flags, true, buffer, ARRAYSIZE(buffer))))
+		return TRUE;
+
+	return IFCALLRESULT(TRUE, input->RelMouseEvent, input, flags, xDelta, yDelta);
+}
+
+BOOL freerdp_input_send_qoe_timestamp(rdpInput* input, UINT32 timestampMS)
+{
+	if (!input || !input->context)
+		return FALSE;
+
+	if (input_skip(input, "QOE timestamp %" PRIu32, timestampMS))
+		return TRUE;
+
+	return IFCALLRESULT(TRUE, input->QoEEvent, input, timestampMS);
+}
+
 BOOL freerdp_input_send_extended_mouse_event(rdpInput* input, UINT16 flags, UINT16 x, UINT16 y)
 {
-	if (!input)
+	if (!input || !input->context)
 		return FALSE;
+
+	char buffer[128] = WINPR_C_ARRAY_INIT;
+	if (input_skip(input, "Mouse {ExtendedEvent} %s",
+	               freerdp_input_mouse_flags_string(flags, true, buffer, ARRAYSIZE(buffer))))
+		return TRUE;
+
+	input_update_last_event(input, TRUE, x, y);
 
 	return IFCALLRESULT(TRUE, input->ExtendedMouseEvent, input, flags, x, y);
 }
 
 BOOL freerdp_input_send_focus_in_event(rdpInput* input, UINT16 toggleStates)
 {
-	if (!input)
+	if (!input || !input->context)
 		return FALSE;
+
+	char buffer[128] = WINPR_C_ARRAY_INIT;
+	if (input_skip(input, "Keyboard {FocusIn} [%s]",
+	               freerdp_input_keyboard_flags_string(toggleStates, buffer, sizeof(buffer))))
+		return TRUE;
 
 	return IFCALLRESULT(TRUE, input->FocusInEvent, input, toggleStates);
 }
 
 BOOL freerdp_input_send_keyboard_pause_event(rdpInput* input)
 {
-	if (!input)
+	if (!input || !input->context)
 		return FALSE;
+
+	if (input_skip(input, "Keyboard {Pause}"))
+		return TRUE;
 
 	return IFCALLRESULT(TRUE, input->KeyboardPauseEvent, input);
 }
@@ -749,32 +1193,141 @@ static void input_free_queued_message(void* obj)
 
 rdpInput* input_new(rdpRdp* rdp)
 {
-	const wObject cb = { NULL, NULL, NULL, input_free_queued_message, NULL };
-	rdpInput* input;
-	input = (rdpInput*)calloc(1, sizeof(rdpInput));
+	const wObject cb = { nullptr, nullptr, nullptr, input_free_queued_message, nullptr };
+	rdp_input_internal* input = (rdp_input_internal*)calloc(1, sizeof(rdp_input_internal));
+
+	WINPR_UNUSED(rdp);
 
 	if (!input)
-		return NULL;
+		return nullptr;
 
+	input->common.context = rdp->context;
 	input->queue = MessageQueue_New(&cb);
+	input->log = WLog_Get(TAG);
 
 	if (!input->queue)
 	{
 		free(input);
-		return NULL;
+		return nullptr;
 	}
 
-	return input;
+	return &input->common;
 }
 
 void input_free(rdpInput* input)
 {
-	if (input != NULL)
+	if (input != nullptr)
 	{
-		if (input->asynchronous)
-			input_message_proxy_free(input->proxy);
+		rdp_input_internal* in = input_cast(input);
 
-		MessageQueue_Free(input->queue);
-		free(input);
+		MessageQueue_Free(in->queue);
+		free(in);
 	}
+}
+
+static const char* flag2str(uint32_t flag, bool extended)
+{
+#define EVCASE(x) \
+	case x:       \
+		return #x
+	if (extended)
+	{
+		switch (flag)
+		{
+			/* Extended Pointer Flags */
+			EVCASE(PTR_XFLAGS_DOWN);
+			EVCASE(PTR_XFLAGS_BUTTON1);
+			EVCASE(PTR_XFLAGS_BUTTON2);
+			default:
+				return "PTR_XFLAGS_UNKNOWN";
+		}
+	}
+
+	switch (flag)
+	{
+		/* Pointer Flags */
+		EVCASE(PTR_FLAGS_HWHEEL);
+		EVCASE(PTR_FLAGS_WHEEL);
+		EVCASE(PTR_FLAGS_WHEEL_NEGATIVE);
+		EVCASE(PTR_FLAGS_MOVE);
+		EVCASE(PTR_FLAGS_DOWN);
+		EVCASE(PTR_FLAGS_BUTTON1);
+		EVCASE(PTR_FLAGS_BUTTON2);
+		EVCASE(PTR_FLAGS_BUTTON3);
+		default:
+			return "PTR_FLAGS_UNKNOWN";
+	}
+#undef EVCASE
+}
+
+const char* freerdp_input_mouse_flags_string(uint32_t flags, bool extended, char* buffer,
+                                             size_t len)
+{
+	if (len <= 2)
+		return nullptr;
+
+	if (!winpr_str_append("{", buffer, len, ""))
+		return nullptr;
+
+	/* Strip initial symbol so we do not get duplicate separators */
+	for (size_t x = 0; x < 32; x++)
+	{
+		const uint32_t flag = 1u << x;
+		if (flags & flag)
+		{
+			char ibuffer[64] = WINPR_C_ARRAY_INIT;
+			(void)_snprintf(ibuffer, sizeof(ibuffer), "%s", flag2str(flag, extended));
+			if (!winpr_str_append(ibuffer, &buffer[1], len - 2, "|"))
+				return nullptr;
+		}
+	}
+	if (!winpr_str_append("}", &buffer[1], len - 2, ""))
+		return nullptr;
+
+	return buffer;
+}
+
+static const char* kbdflag2str(uint32_t flag)
+{
+#define EVCASE(x) \
+	case x:       \
+		return #x
+
+	switch (flag)
+	{
+		/* Pointer Flags */
+		EVCASE(KBD_FLAGS_EXTENDED);
+		EVCASE(KBD_FLAGS_EXTENDED1);
+		EVCASE(KBD_FLAGS_DOWN);
+		EVCASE(KBD_FLAGS_RELEASE);
+		default:
+			return "KBD_FLAGS_UNKNOWN";
+	}
+#undef EVCASE
+}
+
+const char* freerdp_input_keypress_flags_string(uint32_t flags, char* buffer, size_t len)
+{
+	if (len <= 2)
+		return nullptr;
+
+	if (!winpr_str_append("{", buffer, len, ""))
+		return nullptr;
+
+	/* Strip initial symbol so we do not get duplicate separators */
+	for (size_t x = 0; x < 32; x++)
+	{
+		const uint32_t flag = 1u << x;
+		if (flags & flag)
+		{
+			char ibuffer[64] = WINPR_C_ARRAY_INIT;
+			(void)_snprintf(ibuffer, sizeof(ibuffer), "%s", kbdflag2str(flag));
+			if (!winpr_str_append(ibuffer, &buffer[1], len - 2, "|"))
+				return nullptr;
+		}
+	}
+	if (!winpr_str_append("}", &buffer[1], len - 2, ""))
+		return nullptr;
+
+	return buffer;
 }

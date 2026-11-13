@@ -24,11 +24,7 @@
 #include <winpr/stream.h>
 #include <freerdp/api.h>
 
-typedef struct _MSUSB_INTERFACE_DESCRIPTOR MSUSB_INTERFACE_DESCRIPTOR;
-typedef struct _MSUSB_PIPE_DESCRIPTOR MSUSB_PIPE_DESCRIPTOR;
-typedef struct _MSUSB_CONFIG_DESCRIPTOR MSUSB_CONFIG_DESCRIPTOR;
-
-struct _MSUSB_PIPE_DESCRIPTOR
+typedef struct
 {
 	UINT16 MaximumPacketSize;
 	UINT32 MaximumTransferSize;
@@ -38,9 +34,9 @@ struct _MSUSB_PIPE_DESCRIPTOR
 	BYTE bInterval;
 	BYTE PipeType;
 	int InitCompleted;
-};
+} MSUSB_PIPE_DESCRIPTOR;
 
-struct _MSUSB_INTERFACE_DESCRIPTOR
+typedef struct
 {
 	UINT16 Length;
 	UINT16 NumberOfPipesExpected;
@@ -53,9 +49,9 @@ struct _MSUSB_INTERFACE_DESCRIPTOR
 	BYTE bInterfaceProtocol;
 	MSUSB_PIPE_DESCRIPTOR** MsPipes;
 	int InitCompleted;
-};
+} MSUSB_INTERFACE_DESCRIPTOR;
 
-struct _MSUSB_CONFIG_DESCRIPTOR
+typedef struct
 {
 	UINT16 wTotalLength;
 	BYTE bConfigurationValue;
@@ -64,32 +60,49 @@ struct _MSUSB_CONFIG_DESCRIPTOR
 	MSUSB_INTERFACE_DESCRIPTOR** MsInterfaces;
 	int InitCompleted;
 	int MsOutSize;
-};
+} MSUSB_CONFIG_DESCRIPTOR;
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
+	/* MSUSB_CONFIG exported functions */
+	FREERDP_LOCAL void msusb_msconfig_free(MSUSB_CONFIG_DESCRIPTOR* MsConfig);
+
+	WINPR_ATTR_MALLOC(msusb_msconfig_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_LOCAL MSUSB_CONFIG_DESCRIPTOR* msusb_msconfig_new(void);
+
+	WINPR_ATTR_MALLOC(msusb_msconfig_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_LOCAL MSUSB_CONFIG_DESCRIPTOR* msusb_msconfig_read(wStream* s, UINT32 NumInterfaces);
+
+	WINPR_ATTR_NODISCARD
+	FREERDP_LOCAL BOOL msusb_msconfig_write(const MSUSB_CONFIG_DESCRIPTOR* MsConfig, wStream* out);
+
+	FREERDP_LOCAL void msusb_msconfig_dump(const MSUSB_CONFIG_DESCRIPTOR* MsConfig);
+
 	/* MSUSB_PIPE exported functions */
-	FREERDP_API BOOL msusb_mspipes_replace(MSUSB_INTERFACE_DESCRIPTOR* MsInterface,
-	                                       MSUSB_PIPE_DESCRIPTOR** NewMsPipes,
-	                                       UINT32 NewNumberOfPipes);
+	FREERDP_LOCAL void msusb_mspipes_replace(MSUSB_INTERFACE_DESCRIPTOR* MsInterface,
+	                                         MSUSB_PIPE_DESCRIPTOR** NewMsPipes,
+	                                         UINT32 NewNumberOfPipes);
 
 	/* MSUSB_INTERFACE exported functions */
-	FREERDP_API BOOL msusb_msinterface_replace(MSUSB_CONFIG_DESCRIPTOR* MsConfig,
-	                                           BYTE InterfaceNumber,
-	                                           MSUSB_INTERFACE_DESCRIPTOR* NewMsInterface);
-	FREERDP_API MSUSB_INTERFACE_DESCRIPTOR* msusb_msinterface_read(wStream* out);
-	FREERDP_API BOOL msusb_msinterface_write(MSUSB_INTERFACE_DESCRIPTOR* MsInterface, wStream* out);
-	FREERDP_API void msusb_msinterface_free(MSUSB_INTERFACE_DESCRIPTOR* MsInterface);
+	WINPR_ATTR_NODISCARD
+	FREERDP_LOCAL BOOL msusb_msinterface_replace(MSUSB_CONFIG_DESCRIPTOR* MsConfig,
+	                                             BYTE InterfaceNumber,
+	                                             MSUSB_INTERFACE_DESCRIPTOR* NewMsInterface);
 
-	/* MSUSB_CONFIG exported functions */
-	FREERDP_API MSUSB_CONFIG_DESCRIPTOR* msusb_msconfig_new(void);
-	FREERDP_API void msusb_msconfig_free(MSUSB_CONFIG_DESCRIPTOR* MsConfig);
-	FREERDP_API MSUSB_CONFIG_DESCRIPTOR* msusb_msconfig_read(wStream* s, UINT32 NumInterfaces);
-	FREERDP_API BOOL msusb_msconfig_write(MSUSB_CONFIG_DESCRIPTOR* MsConfg, wStream* out);
-	FREERDP_API void msusb_msconfig_dump(MSUSB_CONFIG_DESCRIPTOR* MsConfg);
+	FREERDP_LOCAL void msusb_msinterface_free(MSUSB_INTERFACE_DESCRIPTOR* MsInterface);
+
+	WINPR_ATTR_MALLOC(msusb_msinterface_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_LOCAL MSUSB_INTERFACE_DESCRIPTOR* msusb_msinterface_read(wStream* s);
+
+	WINPR_ATTR_NODISCARD
+	FREERDP_LOCAL BOOL msusb_msinterface_write(const MSUSB_INTERFACE_DESCRIPTOR* MsInterface,
+	                                           wStream* out);
 
 #ifdef __cplusplus
 }

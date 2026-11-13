@@ -19,50 +19,26 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 
 #include <winpr/crt.h>
+#include <winpr/assert.h>
 #include <winpr/stream.h>
 
 #include "echo_main.h"
+#include <freerdp/client/channels.h>
 #include <freerdp/channels/log.h>
 #include <freerdp/channels/echo.h>
 
 #define TAG CHANNELS_TAG("echo.client")
 
-typedef struct _ECHO_LISTENER_CALLBACK ECHO_LISTENER_CALLBACK;
-struct _ECHO_LISTENER_CALLBACK
+typedef struct
 {
-	IWTSListenerCallback iface;
-
-	IWTSPlugin* plugin;
-	IWTSVirtualChannelManager* channel_mgr;
-};
-
-typedef struct _ECHO_CHANNEL_CALLBACK ECHO_CHANNEL_CALLBACK;
-struct _ECHO_CHANNEL_CALLBACK
-{
-	IWTSVirtualChannelCallback iface;
-
-	IWTSPlugin* plugin;
-	IWTSVirtualChannelManager* channel_mgr;
-	IWTSVirtualChannel* channel;
-};
-
-typedef struct _ECHO_PLUGIN ECHO_PLUGIN;
-struct _ECHO_PLUGIN
-{
-	IWTSPlugin iface;
-
-	ECHO_LISTENER_CALLBACK* listener_callback;
-	IWTSListener* listener;
-	BOOL initialized;
-};
+	GENERIC_DYNVC_PLUGIN baseDynPlugin;
+} ECHO_PLUGIN;
 
 /**
  * Function description
@@ -71,12 +47,19 @@ struct _ECHO_PLUGIN
  */
 static UINT echo_on_data_received(IWTSVirtualChannelCallback* pChannelCallback, wStream* data)
 {
-	ECHO_CHANNEL_CALLBACK* callback = (ECHO_CHANNEL_CALLBACK*)pChannelCallback;
-	BYTE* pBuffer = Stream_Pointer(data);
-	UINT32 cbSize = Stream_GetRemainingLength(data);
+	GENERIC_CHANNEL_CALLBACK* callback = (GENERIC_CHANNEL_CALLBACK*)pChannelCallback;
+	const BYTE* pBuffer = Stream_ConstPointer(data);
+	const size_t cbSize = Stream_GetRemainingLength(data);
+
+	WINPR_ASSERT(callback);
+	WINPR_ASSERT(callback->channel);
+	WINPR_ASSERT(callback->channel->Write);
+
+	if (cbSize > UINT32_MAX)
+		return ERROR_INVALID_PARAMETER;
 
 	/* echo back what we have received. ECHO does not have any message IDs. */
-	return callback->channel->Write(callback->channel, cbSize, pBuffer, NULL);
+	return callback->channel->Write(callback->channel, (ULONG)cbSize, pBuffer, nullptr);
 }
 
 /**
@@ -86,131 +69,25 @@ static UINT echo_on_data_received(IWTSVirtualChannelCallback* pChannelCallback, 
  */
 static UINT echo_on_close(IWTSVirtualChannelCallback* pChannelCallback)
 {
-	ECHO_CHANNEL_CALLBACK* callback = (ECHO_CHANNEL_CALLBACK*)pChannelCallback;
+	GENERIC_CHANNEL_CALLBACK* callback = (GENERIC_CHANNEL_CALLBACK*)pChannelCallback;
 
 	free(callback);
 
 	return CHANNEL_RC_OK;
 }
 
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT echo_on_new_channel_connection(IWTSListenerCallback* pListenerCallback,
-                                           IWTSVirtualChannel* pChannel, BYTE* Data, BOOL* pbAccept,
-                                           IWTSVirtualChannelCallback** ppCallback)
-{
-	ECHO_CHANNEL_CALLBACK* callback;
-	ECHO_LISTENER_CALLBACK* listener_callback = (ECHO_LISTENER_CALLBACK*)pListenerCallback;
-
-	callback = (ECHO_CHANNEL_CALLBACK*)calloc(1, sizeof(ECHO_CHANNEL_CALLBACK));
-
-	if (!callback)
-	{
-		WLog_ERR(TAG, "calloc failed!");
-		return CHANNEL_RC_NO_MEMORY;
-	}
-
-	callback->iface.OnDataReceived = echo_on_data_received;
-	callback->iface.OnClose = echo_on_close;
-	callback->plugin = listener_callback->plugin;
-	callback->channel_mgr = listener_callback->channel_mgr;
-	callback->channel = pChannel;
-
-	*ppCallback = (IWTSVirtualChannelCallback*)callback;
-
-	return CHANNEL_RC_OK;
-}
+static const IWTSVirtualChannelCallback echo_callbacks = { echo_on_data_received,
+	                                                       nullptr, /* Open */
+	                                                       echo_on_close, nullptr };
 
 /**
  * Function description
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT echo_plugin_initialize(IWTSPlugin* pPlugin, IWTSVirtualChannelManager* pChannelMgr)
+FREERDP_ENTRY_POINT(UINT VCAPITYPE echo_DVCPluginEntry(IDRDYNVC_ENTRY_POINTS* pEntryPoints))
 {
-	UINT status;
-	ECHO_PLUGIN* echo = (ECHO_PLUGIN*)pPlugin;
-	if (echo->initialized)
-	{
-		WLog_ERR(TAG, "[%s] channel initialized twice, aborting", ECHO_DVC_CHANNEL_NAME);
-		return ERROR_INVALID_DATA;
-	}
-	echo->listener_callback = (ECHO_LISTENER_CALLBACK*)calloc(1, sizeof(ECHO_LISTENER_CALLBACK));
-
-	if (!echo->listener_callback)
-	{
-		WLog_ERR(TAG, "calloc failed!");
-		return CHANNEL_RC_NO_MEMORY;
-	}
-
-	echo->listener_callback->iface.OnNewChannelConnection = echo_on_new_channel_connection;
-	echo->listener_callback->plugin = pPlugin;
-	echo->listener_callback->channel_mgr = pChannelMgr;
-
-	status = pChannelMgr->CreateListener(pChannelMgr, ECHO_DVC_CHANNEL_NAME, 0,
-	                                     &echo->listener_callback->iface, &echo->listener);
-
-	echo->initialized = status == CHANNEL_RC_OK;
-	return status;
-}
-
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT echo_plugin_terminated(IWTSPlugin* pPlugin)
-{
-	ECHO_PLUGIN* echo = (ECHO_PLUGIN*)pPlugin;
-	if (echo && echo->listener_callback)
-	{
-		IWTSVirtualChannelManager* mgr = echo->listener_callback->channel_mgr;
-		if (mgr)
-			IFCALL(mgr->DestroyListener, mgr, echo->listener);
-	}
-	free(echo);
-
-	return CHANNEL_RC_OK;
-}
-
-#ifdef BUILTIN_CHANNELS
-#define DVCPluginEntry echo_DVCPluginEntry
-#else
-#define DVCPluginEntry FREERDP_API DVCPluginEntry
-#endif
-
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-UINT DVCPluginEntry(IDRDYNVC_ENTRY_POINTS* pEntryPoints)
-{
-	UINT status = CHANNEL_RC_OK;
-	ECHO_PLUGIN* echo;
-
-	echo = (ECHO_PLUGIN*)pEntryPoints->GetPlugin(pEntryPoints, "echo");
-
-	if (!echo)
-	{
-		echo = (ECHO_PLUGIN*)calloc(1, sizeof(ECHO_PLUGIN));
-
-		if (!echo)
-		{
-			WLog_ERR(TAG, "calloc failed!");
-			return CHANNEL_RC_NO_MEMORY;
-		}
-
-		echo->iface.Initialize = echo_plugin_initialize;
-		echo->iface.Connected = NULL;
-		echo->iface.Disconnected = NULL;
-		echo->iface.Terminated = echo_plugin_terminated;
-
-		status = pEntryPoints->RegisterPlugin(pEntryPoints, "echo", (IWTSPlugin*)echo);
-	}
-
-	return status;
+	return freerdp_generic_DVCPluginEntry(pEntryPoints, TAG, ECHO_DVC_CHANNEL_NAME,
+	                                      sizeof(ECHO_PLUGIN), sizeof(GENERIC_CHANNEL_CALLBACK),
+	                                      &echo_callbacks, nullptr, nullptr);
 }

@@ -28,8 +28,6 @@
 #include <winpr/winpr.h>
 #include <winpr/wtypes.h>
 
-#if defined __linux__ && !defined ANDROID
-
 #define NOPARITY 0
 #define ODDPARITY 1
 #define EVENPARITY 2
@@ -202,7 +200,7 @@
 #define RTS_CONTROL_TOGGLE 0x03
 
 // http://msdn.microsoft.com/en-us/library/windows/desktop/aa363214%28v=vs.85%29.aspx
-typedef struct _DCB
+typedef struct
 {
 	DWORD DCBlength;
 	DWORD BaudRate;
@@ -226,15 +224,15 @@ typedef struct _DCB
 	BYTE ByteSize;
 	BYTE Parity;
 	BYTE StopBits;
-	char XonChar;
-	char XoffChar;
-	char ErrorChar;
-	char EofChar;
-	char EvtChar;
+	BYTE XonChar;
+	BYTE XoffChar;
+	BYTE ErrorChar;
+	BYTE EofChar;
+	BYTE EvtChar;
 	WORD wReserved1;
 } DCB, *LPDCB;
 
-typedef struct _COMM_CONFIG
+typedef struct
 {
 	DWORD dwSize;
 	WORD wVersion;
@@ -246,7 +244,7 @@ typedef struct _COMM_CONFIG
 	WCHAR wcProviderData[1];
 } COMMCONFIG, *LPCOMMCONFIG;
 
-typedef struct _COMMPROP
+typedef struct
 {
 	WORD wPacketLength;
 	WORD wPacketVersion;
@@ -268,7 +266,7 @@ typedef struct _COMMPROP
 	WCHAR wcProvChar[1];
 } COMMPROP, *LPCOMMPROP;
 
-typedef struct _COMMTIMEOUTS
+typedef struct
 {
 	DWORD ReadIntervalTimeout;
 	DWORD ReadTotalTimeoutMultiplier;
@@ -277,7 +275,7 @@ typedef struct _COMMTIMEOUTS
 	DWORD WriteTotalTimeoutConstant;
 } COMMTIMEOUTS, *LPCOMMTIMEOUTS;
 
-typedef struct _COMSTAT
+typedef struct
 {
 	DWORD fCtsHold : 1;
 	DWORD fDsrHold : 1;
@@ -296,49 +294,77 @@ extern "C"
 {
 #endif
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL BuildCommDCBA(LPCSTR lpDef, LPDCB lpDCB);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL BuildCommDCBW(LPCWSTR lpDef, LPDCB lpDCB);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL BuildCommDCBAndTimeoutsA(LPCSTR lpDef, LPDCB lpDCB,
 	                                        LPCOMMTIMEOUTS lpCommTimeouts);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL BuildCommDCBAndTimeoutsW(LPCWSTR lpDef, LPDCB lpDCB,
 	                                        LPCOMMTIMEOUTS lpCommTimeouts);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CommConfigDialogA(LPCSTR lpszName, HWND hWnd, LPCOMMCONFIG lpCC);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CommConfigDialogW(LPCWSTR lpszName, HWND hWnd, LPCOMMCONFIG lpCC);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetCommConfig(HANDLE hCommDev, LPCOMMCONFIG lpCC, LPDWORD lpdwSize);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL SetCommConfig(HANDLE hCommDev, LPCOMMCONFIG lpCC, DWORD dwSize);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetCommMask(HANDLE hFile, PDWORD lpEvtMask);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL SetCommMask(HANDLE hFile, DWORD dwEvtMask);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetCommModemStatus(HANDLE hFile, PDWORD lpModemStat);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetCommProperties(HANDLE hFile, LPCOMMPROP lpCommProp);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetCommState(HANDLE hFile, LPDCB lpDCB);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL SetCommState(HANDLE hFile, LPDCB lpDCB);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetCommTimeouts(HANDLE hFile, LPCOMMTIMEOUTS lpCommTimeouts);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL SetCommTimeouts(HANDLE hFile, LPCOMMTIMEOUTS lpCommTimeouts);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetDefaultCommConfigA(LPCSTR lpszName, LPCOMMCONFIG lpCC, LPDWORD lpdwSize);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetDefaultCommConfigW(LPCWSTR lpszName, LPCOMMCONFIG lpCC, LPDWORD lpdwSize);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL SetDefaultCommConfigA(LPCSTR lpszName, LPCOMMCONFIG lpCC, DWORD dwSize);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL SetDefaultCommConfigW(LPCWSTR lpszName, LPCOMMCONFIG lpCC, DWORD dwSize);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL SetCommBreak(HANDLE hFile);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL ClearCommBreak(HANDLE hFile);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL ClearCommError(HANDLE hFile, PDWORD lpErrors, LPCOMSTAT lpStat);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL PurgeComm(HANDLE hFile, DWORD dwFlags);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL SetupComm(HANDLE hFile, DWORD dwInQueue, DWORD dwOutQueue);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL EscapeCommFunction(HANDLE hFile, DWORD dwFunc);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL TransmitCommChar(HANDLE hFile, char cChar);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL WaitCommEvent(HANDLE hFile, PDWORD lpEvtMask, LPOVERLAPPED lpOverlapped);
 
 #ifdef UNICODE
@@ -357,7 +383,7 @@ extern "C"
 
 /* Extended API */
 
-/* FIXME: MAXULONG should be defined arround winpr/limits.h */
+/* FIXME: MAXULONG should be defined around winpr/limits.h */
 #ifndef MAXULONG
 #define MAXULONG (4294967295UL)
 #endif
@@ -366,7 +392,7 @@ extern "C"
 	 * IOCTLs table according the server's serial driver:
 	 * http://msdn.microsoft.com/en-us/library/windows/hardware/dn265347%28v=vs.85%29.aspx
 	 */
-	typedef enum _SERIAL_DRIVER_ID
+	typedef enum
 	{
 		SerialDriverUnknown = 0,
 		SerialDriverSerialSys,
@@ -378,13 +404,16 @@ extern "C"
 	 * About DefineCommDevice() / QueryDosDevice()
 	 *
 	 * Did something close to QueryDosDevice() and DefineDosDevice() but with
-	 * folowing constraints:
+	 * following constraints:
 	 *   - mappings are stored in a static array.
 	 *   - QueryCommDevice returns only the mappings that have been defined through
 	 * DefineCommDevice()
 	 */
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL DefineCommDevice(/* DWORD dwFlags,*/ LPCTSTR lpDeviceName, LPCTSTR lpTargetPath);
+	WINPR_ATTR_NODISCARD
 	WINPR_API DWORD QueryCommDevice(LPCTSTR lpDeviceName, LPTSTR lpTargetPath, DWORD ucchMax);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL IsCommDevice(LPCTSTR lpDeviceName);
 
 	/**
@@ -392,7 +421,9 @@ extern "C"
 	 * also ensures that CommCreateFileA() has been registered through
 	 * RegisterHandleCreator().
 	 */
-	WINPR_API HANDLE CommCreateFileA(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode,
+	WINPR_ATTR_MALLOC(CloseHandle, 1)
+	WINPR_ATTR_NODISCARD
+	WINPR_API HANDLE CommCreateFileA(LPCSTR lpDeviceName, DWORD dwDesiredAccess, DWORD dwShareMode,
 	                                 LPSECURITY_ATTRIBUTES lpSecurityAttributes,
 	                                 DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes,
 	                                 HANDLE hTemplateFile);
@@ -456,77 +487,24 @@ extern "C"
 /* http://msdn.microsoft.com/en-us/library/windows/hardware/ff551803(v=vs.85).aspx */
 #define IOCTL_USBPRINT_GET_1284_ID 0x220034
 
-	typedef struct __SERIAL_IOCTL_NAME
+	typedef struct
 	{
 		ULONG number;
 		const char* name;
+		// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 	} _SERIAL_IOCTL_NAME;
-
-	static const _SERIAL_IOCTL_NAME _SERIAL_IOCTL_NAMES[] = {
-		{ IOCTL_SERIAL_SET_BAUD_RATE, "IOCTL_SERIAL_SET_BAUD_RATE" },
-		{ IOCTL_SERIAL_GET_BAUD_RATE, "IOCTL_SERIAL_GET_BAUD_RATE" },
-		{ IOCTL_SERIAL_SET_LINE_CONTROL, "IOCTL_SERIAL_SET_LINE_CONTROL" },
-		{ IOCTL_SERIAL_GET_LINE_CONTROL, "IOCTL_SERIAL_GET_LINE_CONTROL" },
-		{ IOCTL_SERIAL_SET_TIMEOUTS, "IOCTL_SERIAL_SET_TIMEOUTS" },
-		{ IOCTL_SERIAL_GET_TIMEOUTS, "IOCTL_SERIAL_GET_TIMEOUTS" },
-		{ IOCTL_SERIAL_GET_CHARS, "IOCTL_SERIAL_GET_CHARS" },
-		{ IOCTL_SERIAL_SET_CHARS, "IOCTL_SERIAL_SET_CHARS" },
-		{ IOCTL_SERIAL_SET_DTR, "IOCTL_SERIAL_SET_DTR" },
-		{ IOCTL_SERIAL_CLR_DTR, "IOCTL_SERIAL_CLR_DTR" },
-		{ IOCTL_SERIAL_RESET_DEVICE, "IOCTL_SERIAL_RESET_DEVICE" },
-		{ IOCTL_SERIAL_SET_RTS, "IOCTL_SERIAL_SET_RTS" },
-		{ IOCTL_SERIAL_CLR_RTS, "IOCTL_SERIAL_CLR_RTS" },
-		{ IOCTL_SERIAL_SET_XOFF, "IOCTL_SERIAL_SET_XOFF" },
-		{ IOCTL_SERIAL_SET_XON, "IOCTL_SERIAL_SET_XON" },
-		{ IOCTL_SERIAL_SET_BREAK_ON, "IOCTL_SERIAL_SET_BREAK_ON" },
-		{ IOCTL_SERIAL_SET_BREAK_OFF, "IOCTL_SERIAL_SET_BREAK_OFF" },
-		{ IOCTL_SERIAL_SET_QUEUE_SIZE, "IOCTL_SERIAL_SET_QUEUE_SIZE" },
-		{ IOCTL_SERIAL_GET_WAIT_MASK, "IOCTL_SERIAL_GET_WAIT_MASK" },
-		{ IOCTL_SERIAL_SET_WAIT_MASK, "IOCTL_SERIAL_SET_WAIT_MASK" },
-		{ IOCTL_SERIAL_WAIT_ON_MASK, "IOCTL_SERIAL_WAIT_ON_MASK" },
-		{ IOCTL_SERIAL_IMMEDIATE_CHAR, "IOCTL_SERIAL_IMMEDIATE_CHAR" },
-		{ IOCTL_SERIAL_PURGE, "IOCTL_SERIAL_PURGE" },
-		{ IOCTL_SERIAL_GET_HANDFLOW, "IOCTL_SERIAL_GET_HANDFLOW" },
-		{ IOCTL_SERIAL_SET_HANDFLOW, "IOCTL_SERIAL_SET_HANDFLOW" },
-		{ IOCTL_SERIAL_GET_MODEMSTATUS, "IOCTL_SERIAL_GET_MODEMSTATUS" },
-		{ IOCTL_SERIAL_GET_DTRRTS, "IOCTL_SERIAL_GET_DTRRTS" },
-		{ IOCTL_SERIAL_GET_COMMSTATUS, "IOCTL_SERIAL_GET_COMMSTATUS" },
-		{ IOCTL_SERIAL_GET_PROPERTIES, "IOCTL_SERIAL_GET_PROPERTIES" },
-		// {IOCTL_SERIAL_XOFF_COUNTER,	"IOCTL_SERIAL_XOFF_COUNTER"},
-		// {IOCTL_SERIAL_LSRMST_INSERT,	"IOCTL_SERIAL_LSRMST_INSERT"},
-		{ IOCTL_SERIAL_CONFIG_SIZE, "IOCTL_SERIAL_CONFIG_SIZE" },
-		// {IOCTL_SERIAL_GET_STATS,	"IOCTL_SERIAL_GET_STATS"},
-		// {IOCTL_SERIAL_CLEAR_STATS,	"IOCTL_SERIAL_CLEAR_STATS"},
-		// {IOCTL_SERIAL_GET_MODEM_CONTROL,"IOCTL_SERIAL_GET_MODEM_CONTROL"},
-		// {IOCTL_SERIAL_SET_MODEM_CONTROL,"IOCTL_SERIAL_SET_MODEM_CONTROL"},
-		// {IOCTL_SERIAL_SET_FIFO_CONTROL,	"IOCTL_SERIAL_SET_FIFO_CONTROL"},
-
-		// {IOCTL_PAR_QUERY_INFORMATION,	"IOCTL_PAR_QUERY_INFORMATION"},
-		// {IOCTL_PAR_SET_INFORMATION,	"IOCTL_PAR_SET_INFORMATION"},
-		// {IOCTL_PAR_QUERY_DEVICE_ID,	"IOCTL_PAR_QUERY_DEVICE_ID"},
-		// {IOCTL_PAR_QUERY_DEVICE_ID_SIZE,"IOCTL_PAR_QUERY_DEVICE_ID_SIZE"},
-		// {IOCTL_IEEE1284_GET_MODE,	"IOCTL_IEEE1284_GET_MODE"},
-		// {IOCTL_IEEE1284_NEGOTIATE,	"IOCTL_IEEE1284_NEGOTIATE"},
-		// {IOCTL_PAR_SET_WRITE_ADDRESS,	"IOCTL_PAR_SET_WRITE_ADDRESS"},
-		// {IOCTL_PAR_SET_READ_ADDRESS,	"IOCTL_PAR_SET_READ_ADDRESS"},
-		// {IOCTL_PAR_GET_DEVICE_CAPS,	"IOCTL_PAR_GET_DEVICE_CAPS"},
-		// {IOCTL_PAR_GET_DEFAULT_MODES,	"IOCTL_PAR_GET_DEFAULT_MODES"},
-		// {IOCTL_PAR_QUERY_RAW_DEVICE_ID, "IOCTL_PAR_QUERY_RAW_DEVICE_ID"},
-		// {IOCTL_PAR_IS_PORT_FREE,	"IOCTL_PAR_IS_PORT_FREE"},
-
-		{ IOCTL_USBPRINT_GET_1284_ID, "IOCTL_USBPRINT_GET_1284_ID" },
-
-		{ 0, NULL }
-	};
 
 	/**
 	 * FIXME: got a proper function name and place
 	 */
+	// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
+	WINPR_ATTR_NODISCARD
 	WINPR_API const char* _comm_serial_ioctl_name(ULONG number);
 
 	/**
 	 * FIXME: got a proper function name and place
 	 */
+	// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 	WINPR_API void _comm_setServerSerialDriver(HANDLE hComm, SERIAL_DRIVER_ID);
 
 	/**
@@ -534,12 +512,14 @@ extern "C"
 	 *
 	 * permissive mode is disabled by default.
 	 */
+	// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 	WINPR_API BOOL _comm_set_permissive(HANDLE hDevice, BOOL permissive);
 
 	/**
 	 * FIXME: to be moved in comm_ioctl.h
 	 */
-	WINPR_API BOOL CommDeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, LPVOID lpInBuffer,
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL CommDeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, LPCVOID lpInBuffer,
 	                                   DWORD nInBufferSize, LPVOID lpOutBuffer,
 	                                   DWORD nOutBufferSize, LPDWORD lpBytesReturned,
 	                                   LPOVERLAPPED lpOverlapped);
@@ -547,19 +527,19 @@ extern "C"
 	/**
 	 * FIXME: to be moved in comm_io.h
 	 */
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CommReadFile(HANDLE hDevice, LPVOID lpBuffer, DWORD nNumberOfBytesToRead,
 	                            LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped);
 
 	/**
 	 * FIXME: to be moved in comm_io.h
 	 */
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CommWriteFile(HANDLE hDevice, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite,
 	                             LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped);
 
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* __linux__ */
 
 #endif /* WINPR_COMM_H */

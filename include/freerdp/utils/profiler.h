@@ -23,15 +23,18 @@
 #include <freerdp/api.h>
 #include <freerdp/utils/stopwatch.h>
 
-typedef struct _PROFILER PROFILER;
-
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-	FREERDP_API PROFILER* profiler_create(const char* name);
+	typedef struct S_PROFILER PROFILER;
+
 	FREERDP_API void profiler_free(PROFILER* profiler);
+
+	WINPR_ATTR_MALLOC(profiler_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_API PROFILER* profiler_create(const char* name);
 
 	FREERDP_API void profiler_enter(PROFILER* profiler);
 	FREERDP_API void profiler_exit(PROFILER* profiler);
@@ -40,17 +43,13 @@ extern "C"
 	FREERDP_API void profiler_print(PROFILER* profiler);
 	FREERDP_API void profiler_print_footer(void);
 
-#ifdef __cplusplus
-}
-#endif
-
 #ifdef WITH_PROFILER
 #define PROFILER_RENAME(prof, name)   \
 	do                                \
 	{                                 \
 		profiler_free(prof);          \
 		prof = profiler_create(name); \
-	} while (0)
+	} while (0);
 #define PROFILER_DEFINE(prof) PROFILER* prof;
 #define PROFILER_CREATE(prof, name) prof = profiler_create(name);
 #define PROFILER_FREE(prof) profiler_free(prof);
@@ -63,7 +62,7 @@ extern "C"
 #define PROFILER_RENAME(prof, name) \
 	do                              \
 	{                               \
-	} while (0)
+	} while (0);
 
 #define PROFILER_DEFINE(prof)
 #define PROFILER_CREATE(prof, name) \
@@ -94,6 +93,10 @@ extern "C"
 	do                        \
 	{                         \
 	} while (0);
+#endif
+
+#ifdef __cplusplus
+}
 #endif
 
 #endif /* FREERDP_UTILS_PROFILER_H */

@@ -205,7 +205,7 @@ static BYTE encodeDataSample[] = {
 	0xc5, 0xcc, 0x08, 0x00, 0x00, 0x00, 0x01, 0x00
 };
 
-static UINT32 refImage
+static UINT32 srefImage
     [] = { /* 4.2.4.4 Inverse Color Conversion */
 	       0x00229cdf, 0x00249de0, 0x00259fe2, 0x002ca5e8, 0x00229cdf, 0x00229ce0, 0x00239de0,
 	       0x00229ce0, 0x00229cdf, 0x00229cdf, 0x00239ce0, 0x00249ce0, 0x00249ce0, 0x00219ce3,
@@ -795,61 +795,63 @@ static UINT32 refImage
 	       0x00129bf5
     };
 
-#define IMG_WIDTH 64
-#define IMG_HEIGHT 64
-#define FORMAT_SIZE 4
+#define IMG_WIDTH 64ULL
+#define IMG_HEIGHT 64ULL
+#define FORMAT_SIZE 4ULL
 #define FORMAT PIXEL_FORMAT_XRGB32
 
-static INLINE size_t fuzzyCompare(BYTE b1, BYTE b2)
+static inline size_t fuzzyCompare(BYTE b1, BYTE b2)
 {
 	if (b1 > b2)
 		return b1 - b2;
 	return b2 - b1;
 }
 
-static BOOL fuzzyCompareImage(const UINT32* refImage, const BYTE* img, size_t npixels)
+static BOOL fuzzyCompareImage(const UINT32* crefImage, const BYTE* img, size_t npixels)
 {
-	size_t i;
 	size_t totalDelta = 0;
 
-	for (i = 0; i < npixels; i++, refImage++)
+	for (size_t i = 0; i < npixels; i++, crefImage++)
 	{
 		BYTE A = *img++;
 		BYTE R = *img++;
 		BYTE G = *img++;
 		BYTE B = *img++;
-		size_t delta;
+		size_t delta = 0;
 
 		if (A != 0x00)
 			return FALSE;
 
-		delta = fuzzyCompare(R, (*refImage & 0x00ff0000) >> 16);
+		delta = fuzzyCompare(R, (*crefImage & 0x00ff0000) >> 16);
 		if (delta > 1)
 			return FALSE;
 		totalDelta += delta;
 
-		delta = fuzzyCompare(G, (*refImage & 0x0000ff00) >> 8);
+		delta = fuzzyCompare(G, (*crefImage & 0x0000ff00) >> 8);
 		if (delta > 1)
 			return FALSE;
 		totalDelta += delta;
 
-		delta = fuzzyCompare(B, (*refImage & 0x0000ff));
+		delta = fuzzyCompare(B, (*crefImage & 0x0000ff));
 		if (delta > 1)
 			return FALSE;
 		totalDelta += delta;
 	}
 
-	WLog_DBG("test", "totalDelta=%d (npixels=%d)", totalDelta, npixels);
+	WLog_DBG("test", "totalDelta=%" PRIuz " (npixels=%" PRIuz ")", totalDelta, npixels);
 	return TRUE;
 }
 
 int TestFreeRDPCodecRemoteFX(int argc, char* argv[])
 {
 	int rc = -1;
-	REGION16 region = { 0 };
-	RFX_CONTEXT* context = NULL;
-	BYTE* dest = NULL;
+	REGION16 region = WINPR_C_ARRAY_INIT;
+	RFX_CONTEXT* context = nullptr;
+	BYTE* dest = nullptr;
 	size_t stride = FORMAT_SIZE * IMG_WIDTH;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	/* use default threading options here, pass zero as
 	 * ThreadingFlags */
@@ -872,13 +874,7 @@ int TestFreeRDPCodecRemoteFX(int argc, char* argv[])
 		goto fail;
 	region16_print(&region);
 
-#if 0
-	FILE *f = fopen("/tmp/windows.data", "w");
-	fwrite(dest, IMG_WIDTH * IMG_HEIGHT, FORMAT_SIZE, f);
-	fclose(f);
-#endif
-
-	if (!fuzzyCompareImage(refImage, dest, IMG_WIDTH * IMG_HEIGHT))
+	if (!fuzzyCompareImage(srefImage, dest, IMG_WIDTH * IMG_HEIGHT))
 		goto fail;
 
 	rc = 0;

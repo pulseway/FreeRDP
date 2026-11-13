@@ -17,9 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include "urbdrc_helpers.h"
 #include "urbdrc_types.h"
@@ -110,6 +108,9 @@ static const char* call_to_string_proxy_server(UINT32 functionId)
 		case TRANSFER_IN_REQUEST:
 			return "TRANSFER_IN_REQUEST               [proxy|server]";
 
+		case TRANSFER_OUT_REQUEST:
+			return "TRANSFER_OUT_REQUEST              [proxy|server]";
+
 		default:
 			return "UNKNOWN                           [proxy|server]";
 	}
@@ -194,15 +195,17 @@ static const char* call_to_string_proxy(BOOL client, UINT32 interfaceId, UINT32 
 	}
 }
 
-static const char* call_to_string_stub(BOOL client, UINT32 interfaceId, UINT32 functionId)
+static const char* call_to_string_stub(WINPR_ATTR_UNUSED BOOL client,
+                                       WINPR_ATTR_UNUSED UINT32 interfaceNr,
+                                       WINPR_ATTR_UNUSED UINT32 functionId)
 {
 	return "QUERY_DEVICE_TEXT_RSP             [stub  |client]";
 }
 
-const char* call_to_string(BOOL client, UINT32 interface, UINT32 functionId)
+const char* call_to_string(BOOL client, UINT32 interfaceNr, UINT32 functionId)
 {
-	const UINT32 mask = (interface & STREAM_ID_MASK) >> 30;
-	const UINT32 interfaceId = interface & INTERFACE_ID_MASK;
+	const UINT32 mask = (interfaceNr & STREAM_ID_MASK) >> 30;
+	const UINT32 interfaceId = interfaceNr & INTERFACE_ID_MASK;
 
 	switch (mask)
 	{
@@ -385,14 +388,17 @@ const char* urb_function_string(UINT16 urb)
 void urbdrc_dump_message(wLog* log, BOOL client, BOOL write, wStream* s)
 {
 	const char* type = write ? "WRITE" : "READ";
-	UINT32 InterfaceId, MessageId, FunctionId;
-	size_t length, pos;
+	UINT32 InterfaceId = 0;
+	UINT32 MessageId = 0;
+	UINT32 FunctionId = 0;
+	size_t length = 0;
+	size_t pos = 0;
 
 	pos = Stream_GetPosition(s);
 	if (write)
 	{
 		length = pos;
-		Stream_SetPosition(s, 0);
+		Stream_ResetPosition(s);
 	}
 	else
 		length = Stream_GetRemainingLength(s);
@@ -403,7 +409,8 @@ void urbdrc_dump_message(wLog* log, BOOL client, BOOL write, wStream* s)
 	Stream_Read_UINT32(s, InterfaceId);
 	Stream_Read_UINT32(s, MessageId);
 	Stream_Read_UINT32(s, FunctionId);
-	Stream_SetPosition(s, pos);
+	if (!Stream_SetPosition(s, pos))
+		WLog_Print(log, WLOG_ERROR, "Stream_SetPosition(%" PRIuz ") failed", pos);
 
 	WLog_Print(log, WLOG_DEBUG,
 	           "[%-5s] %s [%08" PRIx32 "] InterfaceId=%08" PRIx32 ", MessageId=%08" PRIx32
@@ -418,4 +425,31 @@ void urbdrc_dump_message(wLog* log, BOOL client, BOOL write, wStream* s)
 	winpr_HexLogDump(log, WLOG_TRACE, Stream_Buffer(s), length);
 	WLog_Print(log, WLOG_TRACE, "-------------------------- URBDRC end -----");
 #endif
+}
+
+/* [MS-RDPEUSB] 2.2.1 Shared Message Header (SHARED_MSG_HEADER) */
+BOOL write_shared_message_header_with_functionid(wStream* s, UINT32 InterfaceId, UINT32 MessageId,
+                                                 UINT32 FunctionId)
+{
+	if (!Stream_EnsureRemainingCapacity(s, 12))
+		return FALSE;
+
+	Stream_Write_UINT32(s, InterfaceId);
+	Stream_Write_UINT32(s, MessageId);
+	Stream_Write_UINT32(s, FunctionId);
+	return TRUE;
+}
+
+wStream* create_shared_message_header_with_functionid(UINT32 InterfaceId, UINT32 MessageId,
+                                                      UINT32 FunctionId, size_t OutputSize)
+{
+	wStream* out = Stream_New(nullptr, 12ULL + OutputSize);
+	if (!out)
+		return nullptr;
+	if (!write_shared_message_header_with_functionid(out, InterfaceId, MessageId, FunctionId))
+	{
+		Stream_Free(out, TRUE);
+		return nullptr;
+	}
+	return out;
 }

@@ -19,9 +19,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,18 +69,18 @@ static BOOL wf_decode_color(wfContext* wfc, const UINT32 srcColor, COLORREF* col
 	if (!wfc)
 		return FALSE;
 
-	gdi = wfc->context.gdi;
-	settings = wfc->context.settings;
+	gdi = wfc->common.context.gdi;
+	settings = wfc->common.context.settings;
 
 	if (!gdi || !settings)
 		return FALSE;
 
-	SrcFormat = gdi_get_pixel_format(gdi->context->settings->ColorDepth);
+	SrcFormat = gdi_get_pixel_format(freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth));
 
 	if (format)
 		*format = SrcFormat;
 
-	switch (GetBitsPerPixel(gdi->dstFormat))
+	switch (FreeRDPGetBitsPerPixel(gdi->dstFormat))
 	{
 		case 32:
 			DstFormat = PIXEL_FORMAT_ABGR32;
@@ -120,6 +118,8 @@ static wfBitmap* wf_glyph_new(wfContext* wfc, GLYPH_DATA* glyph)
 {
 	wfBitmap* glyph_bmp;
 	glyph_bmp = wf_image_new(wfc, glyph->cx, glyph->cy, PIXEL_FORMAT_MONO, glyph->aj);
+	if (!glyph_bmp)
+		WLog_ERR(TAG, "wf_image_new failed for glyph");
 	return glyph_bmp;
 }
 
@@ -128,25 +128,23 @@ static void wf_glyph_free(wfBitmap* glyph)
 	wf_image_free(glyph);
 }
 
-static BYTE* wf_glyph_convert(wfContext* wfc, int width, int height, BYTE* data)
+static BYTE* wf_glyph_convert(wfContext* wfc, int width, int height, const BYTE* data)
 {
-	int indexx;
-	int indexy;
-	BYTE* src;
-	BYTE* dst;
-	BYTE* cdata;
-	int src_bytes_per_row;
-	int dst_bytes_per_row;
-	src_bytes_per_row = (width + 7) / 8;
-	dst_bytes_per_row = src_bytes_per_row + (src_bytes_per_row % 2);
-	cdata = (BYTE*)malloc(dst_bytes_per_row * height);
-	src = data;
-
-	for (indexy = 0; indexy < height; indexy++)
+	const int src_bytes_per_row = (width + 7) / 8;
+	const int dst_bytes_per_row = src_bytes_per_row + (src_bytes_per_row % 2);
+	BYTE* cdata = (BYTE*)malloc(dst_bytes_per_row * height);
+	if (!cdata)
 	{
-		dst = cdata + indexy * dst_bytes_per_row;
+		WLog_ERR(TAG, "malloc failed for cdata buffer");
+		return nullptr;
+	}
+	const BYTE* src = data;
 
-		for (indexx = 0; indexx < dst_bytes_per_row; indexx++)
+	for (int indexy = 0; indexy < height; indexy++)
+	{
+		BYTE* dst = &cdata[1ull * indexy * dst_bytes_per_row];
+
+		for (int indexx = 0; indexx < dst_bytes_per_row; indexx++)
 		{
 			if (indexx < src_bytes_per_row)
 				*dst++ = *src++;
@@ -160,12 +158,11 @@ static BYTE* wf_glyph_convert(wfContext* wfc, int width, int height, BYTE* data)
 
 static HBRUSH wf_create_brush(wfContext* wfc, rdpBrush* brush, UINT32 color, UINT32 bpp)
 {
-	UINT32 i;
 	HBRUSH br;
 	LOGBRUSH lbr;
 	BYTE* cdata;
 	BYTE ipattern[8];
-	HBITMAP pattern = NULL;
+	HBITMAP pattern = nullptr;
 	lbr.lbStyle = brush->style;
 
 	if (lbr.lbStyle == BS_DIBPATTERN || lbr.lbStyle == BS_DIBPATTERN8X8 ||
@@ -179,12 +176,12 @@ static HBRUSH wf_create_brush(wfContext* wfc, rdpBrush* brush, UINT32 color, UIN
 		if (brush->bpp > 1)
 		{
 			UINT32 format = gdi_get_pixel_format(bpp);
-			pattern = wf_create_dib(wfc, 8, 8, format, brush->data, NULL);
+			pattern = wf_create_dib(wfc, 8, 8, format, brush->data, nullptr);
 			lbr.lbHatch = (ULONG_PTR)pattern;
 		}
 		else
 		{
-			for (i = 0; i != 8; i++)
+			for (UINT32 i = 0; i != 8; i++)
 				ipattern[7 - i] = brush->data[i];
 
 			cdata = wf_glyph_convert(wfc, 8, 8, ipattern);
@@ -203,29 +200,29 @@ static HBRUSH wf_create_brush(wfContext* wfc, rdpBrush* brush, UINT32 color, UIN
 	}
 
 	br = CreateBrushIndirect(&lbr);
-	SetBrushOrgEx(wfc->drawing->hdc, brush->x, brush->y, NULL);
+	SetBrushOrgEx(wfc->drawing->hdc, brush->x, brush->y, nullptr);
 
-	if (pattern != NULL)
+	if (pattern != nullptr)
 		DeleteObject(pattern);
 
 	return br;
 }
 
-static BOOL wf_scale_rect(wfContext* wfc, RECT* source)
+BOOL wf_scale_rect(wfContext* wfc, RECT* source)
 {
 	UINT32 ww, wh, dw, dh;
 	rdpSettings* settings;
 
-	if (!wfc || !source || !wfc->context.settings)
+	if (!wfc || !source || !wfc->common.context.settings)
 		return FALSE;
 
-	settings = wfc->context.settings;
+	settings = wfc->common.context.settings;
 
 	if (!settings)
 		return FALSE;
 
-	dw = settings->DesktopWidth;
-	dh = settings->DesktopHeight;
+	dw = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
+	dh = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
 
 	if (!wfc->client_width)
 		wfc->client_width = dw;
@@ -242,7 +239,8 @@ static BOOL wf_scale_rect(wfContext* wfc, RECT* source)
 	if (!wh)
 		wh = dh;
 
-	if (wfc->context.settings->SmartSizing && (ww != dw || wh != dh))
+	if (freerdp_settings_get_bool(wfc->common.context.settings, FreeRDP_SmartSizing) &&
+	    (ww != dw || wh != dh))
 	{
 		source->bottom = source->bottom * wh / dh + 20;
 		source->top = source->top * wh / dh - 20;
@@ -260,7 +258,7 @@ static BOOL wf_scale_rect(wfContext* wfc, RECT* source)
 void wf_invalidate_region(wfContext* wfc, UINT32 x, UINT32 y, UINT32 width, UINT32 height)
 {
 	RECT rect;
-	rdpGdi* gdi = wfc->context.gdi;
+	rdpGdi* gdi = wfc->common.context.gdi;
 	wfc->update_rect.left = x + wfc->offset_x;
 	wfc->update_rect.top = y + wfc->offset_y;
 	wfc->update_rect.right = wfc->update_rect.left + width;
@@ -278,34 +276,38 @@ void wf_invalidate_region(wfContext* wfc, UINT32 x, UINT32 y, UINT32 width, UINT
 void wf_update_offset(wfContext* wfc)
 {
 	rdpSettings* settings;
-	settings = wfc->context.settings;
+	settings = wfc->common.context.settings;
 
 	if (wfc->fullscreen)
 	{
-		if (wfc->context.settings->UseMultimon)
+		if (freerdp_settings_get_bool(wfc->common.context.settings, FreeRDP_UseMultimon))
 		{
 			int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
 			int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
 			int w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
 			int h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-			wfc->offset_x = (w - settings->DesktopWidth) / 2;
+			wfc->offset_x = (w - freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth)) / 2;
 
 			if (wfc->offset_x < x)
 				wfc->offset_x = x;
 
-			wfc->offset_y = (h - settings->DesktopHeight) / 2;
+			wfc->offset_y = (h - freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight)) / 2;
 
 			if (wfc->offset_y < y)
 				wfc->offset_y = y;
 		}
 		else
 		{
-			wfc->offset_x = (GetSystemMetrics(SM_CXSCREEN) - settings->DesktopWidth) / 2;
+			wfc->offset_x = (GetSystemMetrics(SM_CXSCREEN) -
+			                 freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth)) /
+			                2;
 
 			if (wfc->offset_x < 0)
 				wfc->offset_x = 0;
 
-			wfc->offset_y = (GetSystemMetrics(SM_CYSCREEN) - settings->DesktopHeight) / 2;
+			wfc->offset_y = (GetSystemMetrics(SM_CYSCREEN) -
+			                 freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight)) /
+			                2;
 
 			if (wfc->offset_y < 0)
 				wfc->offset_y = 0;
@@ -321,11 +323,11 @@ void wf_update_offset(wfContext* wfc)
 void wf_resize_window(wfContext* wfc)
 {
 	rdpSettings* settings;
-	settings = wfc->context.settings;
+	settings = wfc->common.context.settings;
 
 	if (wfc->fullscreen)
 	{
-		if (wfc->context.settings->UseMultimon)
+		if (freerdp_settings_get_bool(wfc->common.context.settings, FreeRDP_UseMultimon))
 		{
 			int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
 			int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
@@ -341,17 +343,17 @@ void wf_resize_window(wfContext* wfc)
 			             GetSystemMetrics(SM_CYSCREEN), SWP_FRAMECHANGED);
 		}
 	}
-	else if (!wfc->context.settings->Decorations)
+	else if (!freerdp_settings_get_bool(wfc->common.context.settings, FreeRDP_Decorations))
 	{
 		SetWindowLongPtr(wfc->hwnd, GWL_STYLE, WS_CHILD);
 
-		if (settings->EmbeddedWindow)
+		if (freerdp_settings_get_bool(settings, FreeRDP_EmbeddedWindow))
 		{
 			if (!wfc->client_height)
-				wfc->client_height = settings->DesktopHeight;
+				wfc->client_height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
 
 			if (!wfc->client_width)
-				wfc->client_width = settings->DesktopWidth;
+				wfc->client_width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
 
 			wf_update_canvas_diff(wfc);
 			/* Now resize to get full canvas size and room for caption and borders */
@@ -362,11 +364,15 @@ void wf_resize_window(wfContext* wfc)
 		else
 		{
 			/* Now resize to get full canvas size and room for caption and borders */
-			SetWindowPos(wfc->hwnd, HWND_TOP, 0, 0, settings->DesktopWidth, settings->DesktopHeight,
+			SetWindowPos(wfc->hwnd, HWND_TOP, 0, 0,
+			             freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
+			             freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight),
 			             SWP_FRAMECHANGED);
 			wf_update_canvas_diff(wfc);
-			SetWindowPos(wfc->hwnd, HWND_TOP, -1, -1, settings->DesktopWidth + wfc->diff.x,
-			             settings->DesktopHeight + wfc->diff.y, SWP_NOMOVE | SWP_FRAMECHANGED);
+			SetWindowPos(wfc->hwnd, HWND_TOP, -1, -1,
+			             freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth) + wfc->diff.x,
+			             freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight) + wfc->diff.y,
+			             SWP_NOMOVE | SWP_FRAMECHANGED);
 		}
 	}
 	else
@@ -376,10 +382,10 @@ void wf_resize_window(wfContext* wfc)
 		                     WS_MAXIMIZEBOX);
 
 		if (!wfc->client_height)
-			wfc->client_height = settings->DesktopHeight;
+			wfc->client_height = freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight);
 
 		if (!wfc->client_width)
-			wfc->client_width = settings->DesktopWidth;
+			wfc->client_width = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth);
 
 		if (!wfc->client_x)
 			wfc->client_x = 10;
@@ -389,9 +395,33 @@ void wf_resize_window(wfContext* wfc)
 
 		wf_update_canvas_diff(wfc);
 		/* Now resize to get full canvas size and room for caption and borders */
-		SetWindowPos(wfc->hwnd, HWND_TOP, wfc->client_x, wfc->client_y,
-		             wfc->client_width + wfc->diff.x, wfc->client_height + wfc->diff.y,
-		             0 /*SWP_FRAMECHANGED*/);
+		int width, height;
+		if (freerdp_settings_get_bool(settings, FreeRDP_SmartSizing) &&
+		    freerdp_settings_get_uint32(settings, FreeRDP_SmartSizingWidth) &&
+		    freerdp_settings_get_uint32(settings, FreeRDP_SmartSizingHeight))
+		{
+			width = freerdp_settings_get_uint32(settings, FreeRDP_SmartSizingWidth);
+			height = freerdp_settings_get_uint32(settings, FreeRDP_SmartSizingHeight);
+		}
+		else
+		{
+			width = wfc->client_width + wfc->diff.x;
+			height = wfc->client_height + wfc->diff.y;
+		}
+
+		int xpos, ypos;
+		if ((freerdp_settings_get_uint32(settings, FreeRDP_DesktopPosX) != UINT32_MAX) &&
+		    (freerdp_settings_get_uint32(settings, FreeRDP_DesktopPosY) != UINT32_MAX))
+		{
+			xpos = freerdp_settings_get_uint32(settings, FreeRDP_DesktopPosX);
+			ypos = freerdp_settings_get_uint32(settings, FreeRDP_DesktopPosY);
+		}
+		else
+		{
+			xpos = wfc->client_x;
+			ypos = wfc->client_y;
+		}
+		SetWindowPos(wfc->hwnd, HWND_TOP, xpos, ypos, width, height, SWP_FRAMECHANGED);
 		// wf_size_scrollbars(wfc,  wfc->client_width, wfc->client_height);
 	}
 
@@ -409,14 +439,14 @@ void wf_toggle_fullscreen(wfContext* wfc)
 	}
 
 	wf_floatbar_toggle_fullscreen(wfc->floatbar, wfc->fullscreen);
-	SetParent(wfc->hwnd, wfc->fullscreen ? NULL : wfc->hWndParent);
+	SetParent(wfc->hwnd, wfc->fullscreen ? nullptr : wfc->hWndParent);
 	wf_resize_window(wfc);
 	ShowWindow(wfc->hwnd, SW_SHOW);
 	SetForegroundWindow(wfc->hwnd);
 
 	if (!wfc->fullscreen)
 	{
-		// Reenable window tracking AFTER resizing it back, otherwise it can lean to repositioning
+		// Re-enable window tracking AFTER resizing it back, otherwise it can lean to repositioning
 		// errors.
 		wfc->disablewindowtracking = FALSE;
 	}
@@ -429,7 +459,7 @@ static BOOL wf_gdi_palette_update(rdpContext* context, const PALETTE_UPDATE* pal
 
 void wf_set_null_clip_rgn(wfContext* wfc)
 {
-	SelectClipRgn(wfc->drawing->hdc, NULL);
+	SelectClipRgn(wfc->drawing->hdc, nullptr);
 }
 
 void wf_set_clip_rgn(wfContext* wfc, int x, int y, int width, int height)
@@ -448,14 +478,14 @@ static BOOL wf_gdi_set_bounds(rdpContext* context, const rdpBounds* bounds)
 	if (!context || !bounds)
 		return FALSE;
 
-	if (bounds != NULL)
+	if (bounds != nullptr)
 	{
 		hrgn = CreateRectRgn(bounds->left, bounds->top, bounds->right + 1, bounds->bottom + 1);
 		SelectClipRgn(wfc->drawing->hdc, hrgn);
 		DeleteObject(hrgn);
 	}
 	else
-		SelectClipRgn(wfc->drawing->hdc, NULL);
+		SelectClipRgn(wfc->drawing->hdc, nullptr);
 
 	return TRUE;
 }
@@ -468,7 +498,7 @@ static BOOL wf_gdi_dstblt(rdpContext* context, const DSTBLT_ORDER* dstblt)
 		return FALSE;
 
 	if (!BitBlt(wfc->drawing->hdc, dstblt->nLeftRect, dstblt->nTopRect, dstblt->nWidth,
-	            dstblt->nHeight, NULL, 0, 0, gdi_rop3_code(dstblt->bRop)))
+	            dstblt->nHeight, nullptr, 0, 0, gdi_rop3_code(dstblt->bRop)))
 		return FALSE;
 
 	wf_invalidate_region(wfc, dstblt->nLeftRect, dstblt->nTopRect, dstblt->nWidth, dstblt->nHeight);
@@ -480,8 +510,8 @@ static BOOL wf_gdi_patblt(rdpContext* context, PATBLT_ORDER* patblt)
 	HBRUSH brush;
 	HBRUSH org_brush;
 	int org_bkmode;
-	UINT32 fgcolor;
-	UINT32 bgcolor;
+	COLORREF fgcolor;
+	COLORREF bgcolor;
 	COLORREF org_bkcolor;
 	COLORREF org_textcolor;
 	BOOL rc;
@@ -490,13 +520,14 @@ static BOOL wf_gdi_patblt(rdpContext* context, PATBLT_ORDER* patblt)
 	if (!context || !patblt)
 		return FALSE;
 
-	if (!wf_decode_color(wfc, patblt->foreColor, &fgcolor, NULL))
+	if (!wf_decode_color(wfc, patblt->foreColor, &fgcolor, nullptr))
 		return FALSE;
 
-	if (!wf_decode_color(wfc, patblt->backColor, &bgcolor, NULL))
+	if (!wf_decode_color(wfc, patblt->backColor, &bgcolor, nullptr))
 		return FALSE;
 
-	brush = wf_create_brush(wfc, &patblt->brush, fgcolor, context->settings->ColorDepth);
+	brush = wf_create_brush(wfc, &patblt->brush, fgcolor,
+	                        freerdp_settings_get_uint32(context->settings, FreeRDP_ColorDepth));
 	org_bkmode = SetBkMode(wfc->drawing->hdc, OPAQUE);
 	org_bkcolor = SetBkColor(wfc->drawing->hdc, bgcolor);
 	org_textcolor = SetTextColor(wfc->drawing->hdc, fgcolor);
@@ -536,13 +567,13 @@ static BOOL wf_gdi_opaque_rect(rdpContext* context, const OPAQUE_RECT_ORDER* opa
 {
 	RECT rect;
 	HBRUSH brush;
-	UINT32 brush_color;
+	COLORREF brush_color;
 	wfContext* wfc = (wfContext*)context;
 
 	if (!context || !opaque_rect)
 		return FALSE;
 
-	if (!wf_decode_color(wfc, opaque_rect->color, &brush_color, NULL))
+	if (!wf_decode_color(wfc, opaque_rect->color, &brush_color, nullptr))
 		return FALSE;
 
 	rect.left = opaque_rect->nLeftRect;
@@ -563,19 +594,18 @@ static BOOL wf_gdi_opaque_rect(rdpContext* context, const OPAQUE_RECT_ORDER* opa
 static BOOL wf_gdi_multi_opaque_rect(rdpContext* context,
                                      const MULTI_OPAQUE_RECT_ORDER* multi_opaque_rect)
 {
-	UINT32 i;
 	RECT rect;
 	HBRUSH brush;
-	UINT32 brush_color;
+	COLORREF brush_color;
 	wfContext* wfc = (wfContext*)context;
 
 	if (!context || !multi_opaque_rect)
 		return FALSE;
 
-	if (!wf_decode_color(wfc, multi_opaque_rect->color, &brush_color, NULL))
+	if (!wf_decode_color(wfc, multi_opaque_rect->color, &brush_color, nullptr))
 		return FALSE;
 
-	for (i = 0; i < multi_opaque_rect->numRectangles; i++)
+	for (UINT32 i = 0; i < multi_opaque_rect->numRectangles; i++)
 	{
 		const DELTA_RECT* rectangle = &multi_opaque_rect->rectangles[i];
 		rect.left = rectangle->left;
@@ -600,19 +630,19 @@ static BOOL wf_gdi_line_to(rdpContext* context, const LINE_TO_ORDER* line_to)
 	HPEN pen;
 	HPEN org_pen;
 	int x, y, w, h;
-	UINT32 pen_color;
+	COLORREF pen_color;
 	wfContext* wfc = (wfContext*)context;
 
 	if (!context || !line_to)
 		return FALSE;
 
-	if (!wf_decode_color(wfc, line_to->penColor, &pen_color, NULL))
+	if (!wf_decode_color(wfc, line_to->penColor, &pen_color, nullptr))
 		return FALSE;
 
 	pen = CreatePen(line_to->penStyle, line_to->penWidth, pen_color);
 	wf_set_rop2(wfc->drawing->hdc, line_to->bRop2);
 	org_pen = (HPEN)SelectObject(wfc->drawing->hdc, pen);
-	MoveToEx(wfc->drawing->hdc, line_to->nXStart, line_to->nYStart, NULL);
+	MoveToEx(wfc->drawing->hdc, line_to->nXStart, line_to->nYStart, nullptr);
 	LineTo(wfc->drawing->hdc, line_to->nXEnd, line_to->nYEnd);
 	x = (line_to->nXStart < line_to->nXEnd) ? line_to->nXStart : line_to->nXEnd;
 	y = (line_to->nYStart < line_to->nYEnd) ? line_to->nYStart : line_to->nYEnd;
@@ -631,16 +661,17 @@ static BOOL wf_gdi_line_to(rdpContext* context, const LINE_TO_ORDER* line_to)
 
 static BOOL wf_gdi_polyline(rdpContext* context, const POLYLINE_ORDER* polyline)
 {
+	BOOL rc = FALSE;
 	int org_rop2;
 	HPEN hpen;
 	HPEN org_hpen;
-	UINT32 pen_color;
+	COLORREF pen_color;
 	wfContext* wfc = (wfContext*)context;
 
 	if (!context || !polyline)
 		return FALSE;
 
-	if (!wf_decode_color(wfc, polyline->penColor, &pen_color, NULL))
+	if (!wf_decode_color(wfc, polyline->penColor, &pen_color, nullptr))
 		return FALSE;
 
 	hpen = CreatePen(0, 1, pen_color);
@@ -652,13 +683,17 @@ static BOOL wf_gdi_polyline(rdpContext* context, const POLYLINE_ORDER* polyline)
 		POINT* pts;
 		POINT temp;
 		int numPoints;
-		int i;
 		numPoints = polyline->numDeltaEntries + 1;
 		pts = (POINT*)malloc(sizeof(POINT) * numPoints);
+		if (!pts)
+		{
+			WLog_ERR(TAG, "malloc failed for polyline points");
+			goto fail;
+		}
 		pts[0].x = temp.x = polyline->xStart;
 		pts[0].y = temp.y = polyline->yStart;
 
-		for (i = 0; i < (int)polyline->numDeltaEntries; i++)
+		for (UINT32 i = 0; i < polyline->numDeltaEntries; i++)
 		{
 			temp.x += polyline->points[i].x;
 			temp.y += polyline->points[i].y;
@@ -674,10 +709,13 @@ static BOOL wf_gdi_polyline(rdpContext* context, const POLYLINE_ORDER* polyline)
 		free(pts);
 	}
 
+	rc = TRUE;
+
+fail:
 	SelectObject(wfc->drawing->hdc, org_hpen);
 	wf_set_rop2(wfc->drawing->hdc, org_rop2);
 	DeleteObject(hpen);
-	return TRUE;
+	return rc;
 }
 
 static BOOL wf_gdi_memblt(rdpContext* context, MEMBLT_ORDER* memblt)
@@ -712,7 +750,7 @@ static BOOL wf_gdi_mem3blt(rdpContext* context, MEM3BLT_ORDER* mem3blt)
 	wfBitmap* bitmap;
 	wfContext* wfc = (wfContext*)context;
 	COLORREF fgcolor, bgcolor, orgColor;
-	HBRUSH orgBrush = NULL, brush = NULL;
+	HBRUSH orgBrush = nullptr, brush = nullptr;
 
 	if (!context || !mem3blt)
 		return FALSE;
@@ -724,10 +762,10 @@ static BOOL wf_gdi_mem3blt(rdpContext* context, MEM3BLT_ORDER* mem3blt)
 
 	hdc = wfc->drawing->hdc;
 
-	if (!wf_decode_color(wfc, mem3blt->foreColor, &fgcolor, NULL))
+	if (!wf_decode_color(wfc, mem3blt->foreColor, &fgcolor, nullptr))
 		return FALSE;
 
-	if (!wf_decode_color(wfc, mem3blt->backColor, &bgcolor, NULL))
+	if (!wf_decode_color(wfc, mem3blt->backColor, &bgcolor, nullptr))
 		return FALSE;
 
 	orgColor = SetTextColor(hdc, fgcolor);
@@ -742,13 +780,19 @@ static BOOL wf_gdi_mem3blt(rdpContext* context, MEM3BLT_ORDER* mem3blt)
 		case GDI_BS_PATTERN:
 		{
 			HBITMAP bmp = CreateBitmap(8, 8, 1, mem3blt->brush.bpp, mem3blt->brush.data);
+			if (!bmp)
+				goto fail;
 			brush = CreatePatternBrush(bmp);
+			DeleteObject(bmp);
 		}
 		break;
 
 		default:
 			goto fail;
 	}
+
+	if (!brush)
+		goto fail;
 
 	orgBrush = SelectObject(hdc, brush);
 
@@ -764,7 +808,10 @@ static BOOL wf_gdi_mem3blt(rdpContext* context, MEM3BLT_ORDER* mem3blt)
 fail:
 
 	if (brush)
+	{
 		SelectObject(hdc, orgBrush);
+		DeleteObject(brush);
+	}
 
 	SetTextColor(hdc, orgColor);
 	return rc;
@@ -778,16 +825,15 @@ static BOOL wf_gdi_surface_frame_marker(rdpContext* context,
 	if (!context || !surface_frame_marker || !context->instance)
 		return FALSE;
 
-	settings = context->instance->settings;
+	settings = context->settings;
 
 	if (!settings)
 		return FALSE;
 
 	if (surface_frame_marker->frameAction == SURFACECMD_FRAMEACTION_END &&
-	    settings->FrameAcknowledge > 0)
+	    freerdp_settings_get_uint32(settings, FreeRDP_FrameAcknowledge) > 0)
 	{
-		IFCALL(context->instance->update->SurfaceFrameAcknowledge, context,
-		       surface_frame_marker->frameId);
+		IFCALL(context->update->SurfaceFrameAcknowledge, context, surface_frame_marker->frameId);
 	}
 
 	return TRUE;

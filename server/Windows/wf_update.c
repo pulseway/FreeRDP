@@ -18,9 +18,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 
@@ -35,12 +33,11 @@
 
 #include "wf_update.h"
 
+#include <freerdp/log.h>
 #define TAG SERVER_TAG("windows")
 
 DWORD WINAPI wf_update_thread(LPVOID lpParam)
 {
-	int index;
-	int peerindex;
 	DWORD fps;
 	wfInfo* wfi;
 	DWORD beg, end;
@@ -63,9 +60,9 @@ DWORD WINAPI wf_update_thread(LPVOID lpParam)
 				{
 					wf_update_encode(wfi);
 					// WLog_DBG(TAG, "Start of parallel sending");
-					index = 0;
+					int index = 0;
 
-					for (peerindex = 0; peerindex < wfi->peerCount; peerindex++)
+					for (int peerindex = 0; peerindex < wfi->peerCount; peerindex++)
 					{
 						for (; index < FREERDP_SERVER_WIN_INFO_MAXPEERS; index++)
 						{
@@ -73,16 +70,17 @@ DWORD WINAPI wf_update_thread(LPVOID lpParam)
 							{
 								// WLog_DBG(TAG, "Setting event for %d of %d", index + 1,
 								// wfi->activePeerCount);
-								SetEvent(((wfPeerContext*)wfi->peers[index]->context)->updateEvent);
+								(void)SetEvent(
+								    ((wfPeerContext*)wfi->peers[index]->context)->updateEvent);
 							}
 						}
 					}
 
-					for (index = 0; index < wfi->activePeerCount; index++)
+					for (int index = 0; index < wfi->activePeerCount; index++)
 					{
 						// WLog_DBG(TAG, "Waiting for %d of %d", index + 1, wfi->activePeerCount);
 						// WaitForSingleObject(wfi->updateSemaphore, INFINITE);
-						WaitForSingleObject(wfi->updateSemaphore, 1000);
+						(void)WaitForSingleObject(wfi->updateSemaphore, 1000);
 					}
 
 					// WLog_DBG(TAG, "End of parallel sending");
@@ -110,12 +108,12 @@ void wf_update_encode(wfInfo* wfi)
 {
 	RFX_RECT rect;
 	long height, width;
-	BYTE* pDataBits = NULL;
+	BYTE* pDataBits = nullptr;
 	int stride;
 	SURFACE_BITS_COMMAND* cmd;
 	wf_info_find_invalid_region(wfi);
 	cmd = &wfi->cmd;
-	Stream_SetPosition(wfi->s, 0);
+	Stream_ResetPosition(wfi->s);
 	wf_info_getScreenData(wfi, &width, &height, &pDataBits, &stride);
 	rect.x = 0;
 	rect.y = 0;
@@ -131,7 +129,7 @@ void wf_update_encode(wfInfo* wfi)
 		return;
 	}
 
-	wfi->frame_idx = wfi->rfx_context->frameIdx;
+	wfi->frame_idx = rfx_context_get_frame_idx(wfi->rfx_context);
 	cmd->destLeft = wfi->invalid.left;
 	cmd->destTop = wfi->invalid.top;
 	cmd->destRight = wfi->invalid.left + width;
@@ -146,7 +144,13 @@ void wf_update_encode(wfInfo* wfi)
 
 void wf_update_peer_send(wfInfo* wfi, wfPeerContext* context)
 {
-	freerdp_peer* client = ((rdpContext*)context)->peer;
+	freerdp_peer* client;
+
+	WINPR_ASSERT(wfi);
+	WINPR_ASSERT(context);
+
+	client = ((rdpContext*)context)->peer;
+	WINPR_ASSERT(client);
 
 	/* This happens when the RemoteFX encoder state is reset */
 
@@ -170,8 +174,14 @@ void wf_update_peer_send(wfInfo* wfi, wfPeerContext* context)
 		         context->frame_idx + 1);
 	}
 
-	wfi->cmd.bmp.codecID = client->settings->RemoteFxCodecId;
-	client->update->SurfaceBits(client->update->context, &wfi->cmd);
+	WINPR_ASSERT(client->context);
+	WINPR_ASSERT(client->context->settings);
+	WINPR_ASSERT(client->context->update);
+	WINPR_ASSERT(client->context->update->SurfaceBits);
+
+	wfi->cmd.bmp.codecID =
+	    freerdp_settings_get_uint32(client->context->settings, FreeRDP_RemoteFxCodecId);
+	client->context->update->SurfaceBits(client->context, &wfi->cmd);
 	context->frame_idx++;
 }
 
@@ -189,11 +199,10 @@ void wf_update_encoder_reset(wfInfo* wfi)
 		{
 			/* TODO: pass ThreadingFlags somehow */
 			wfi->rfx_context = rfx_context_new(TRUE);
-			wfi->rfx_context->mode = RLGR3;
-			wfi->rfx_context->width = wfi->servscreen_width;
-			wfi->rfx_context->height = wfi->servscreen_height;
+			rfx_context_set_mode(wfi->rfx_context, RLGR3);
+			rfx_context_reset(wfi->rfx_context, wfi->servscreen_width, wfi->servscreen_height);
 			rfx_context_set_pixel_format(wfi->rfx_context, PIXEL_FORMAT_BGRA32);
-			wfi->s = Stream_New(NULL, 0xFFFF);
+			wfi->s = Stream_New(nullptr, 0xFFFF);
 		}
 
 		wf_info_invalidate_full_screen(wfi);

@@ -18,9 +18,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,26 +29,28 @@
 #include <winpr/cmdline.h>
 
 #include <freerdp/types.h>
+#include <freerdp/settings.h>
 
 #include "rdpsnd_main.h"
 
-typedef struct rdpsnd_fake_plugin rdpsndFakePlugin;
-
-struct rdpsnd_fake_plugin
+typedef struct
 {
 	rdpsndDevicePlugin device;
-};
+} rdpsndFakePlugin;
 
-static BOOL rdpsnd_fake_open(rdpsndDevicePlugin* device, const AUDIO_FORMAT* format, UINT32 latency)
+static BOOL rdpsnd_fake_open(WINPR_ATTR_UNUSED rdpsndDevicePlugin* device,
+                             WINPR_ATTR_UNUSED const AUDIO_FORMAT* format,
+                             WINPR_ATTR_UNUSED UINT32 latency)
 {
 	return TRUE;
 }
 
-static void rdpsnd_fake_close(rdpsndDevicePlugin* device)
+static void rdpsnd_fake_close(WINPR_ATTR_UNUSED rdpsndDevicePlugin* device)
 {
 }
 
-static BOOL rdpsnd_fake_set_volume(rdpsndDevicePlugin* device, UINT32 value)
+static BOOL rdpsnd_fake_set_volume(WINPR_ATTR_UNUSED rdpsndDevicePlugin* device,
+                                   WINPR_ATTR_UNUSED UINT32 value)
 {
 	return TRUE;
 }
@@ -65,12 +65,14 @@ static void rdpsnd_fake_free(rdpsndDevicePlugin* device)
 	free(fake);
 }
 
-static BOOL rdpsnd_fake_format_supported(rdpsndDevicePlugin* device, const AUDIO_FORMAT* format)
+static BOOL rdpsnd_fake_format_supported(WINPR_ATTR_UNUSED rdpsndDevicePlugin* device,
+                                         WINPR_ATTR_UNUSED const AUDIO_FORMAT* format)
 {
 	return TRUE;
 }
 
-static UINT rdpsnd_fake_play(rdpsndDevicePlugin* device, const BYTE* data, size_t size)
+static UINT rdpsnd_fake_play(WINPR_ATTR_UNUSED rdpsndDevicePlugin* device,
+                             WINPR_ATTR_UNUSED const BYTE* data, WINPR_ATTR_UNUSED size_t size)
 {
 	return CHANNEL_RC_OK;
 }
@@ -82,14 +84,15 @@ static UINT rdpsnd_fake_play(rdpsndDevicePlugin* device, const BYTE* data, size_
  */
 static UINT rdpsnd_fake_parse_addin_args(rdpsndFakePlugin* fake, const ADDIN_ARGV* args)
 {
-	int status;
-	DWORD flags;
-	COMMAND_LINE_ARGUMENT_A* arg;
-	COMMAND_LINE_ARGUMENT_A rdpsnd_fake_args[] = { { NULL, 0, NULL, NULL, NULL, -1, NULL, NULL } };
+	int status = 0;
+	DWORD flags = 0;
+	const COMMAND_LINE_ARGUMENT_A* arg = nullptr;
+	COMMAND_LINE_ARGUMENT_A rdpsnd_fake_args[] = { { nullptr, 0, nullptr, nullptr, nullptr, -1,
+		                                             nullptr, nullptr } };
 	flags =
 	    COMMAND_LINE_SIGIL_NONE | COMMAND_LINE_SEPARATOR_COLON | COMMAND_LINE_IGN_UNKNOWN_KEYWORD;
-	status = CommandLineParseArgumentsA(args->argc, args->argv, rdpsnd_fake_args, flags, fake, NULL,
-	                                    NULL);
+	status = CommandLineParseArgumentsA(args->argc, args->argv, rdpsnd_fake_args, flags, fake,
+	                                    nullptr, nullptr);
 
 	if (status < 0)
 		return ERROR_INVALID_DATA;
@@ -102,26 +105,21 @@ static UINT rdpsnd_fake_parse_addin_args(rdpsndFakePlugin* fake, const ADDIN_ARG
 			continue;
 
 		CommandLineSwitchStart(arg) CommandLineSwitchEnd(arg)
-	} while ((arg = CommandLineFindNextArgumentA(arg)) != NULL);
+	} while ((arg = CommandLineFindNextArgumentA(arg)) != nullptr);
 
 	return CHANNEL_RC_OK;
 }
-
-#ifdef BUILTIN_CHANNELS
-#define freerdp_rdpsnd_client_subsystem_entry fake_freerdp_rdpsnd_client_subsystem_entry
-#else
-#define freerdp_rdpsnd_client_subsystem_entry FREERDP_API freerdp_rdpsnd_client_subsystem_entry
-#endif
 
 /**
  * Function description
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT freerdp_rdpsnd_client_subsystem_entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints)
+FREERDP_ENTRY_POINT(UINT VCAPITYPE fake_freerdp_rdpsnd_client_subsystem_entry(
+    PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints))
 {
-	const ADDIN_ARGV* args;
-	rdpsndFakePlugin* fake;
+	const ADDIN_ARGV* args = nullptr;
+	rdpsndFakePlugin* fake = nullptr;
 	UINT ret = CHANNEL_RC_OK;
 	fake = (rdpsndFakePlugin*)calloc(1, sizeof(rdpsndFakePlugin));
 

@@ -3,6 +3,8 @@
  * Unicode Conversion (CRT)
  *
  * Copyright 2012 Marc-Andre Moreau <marcandre.moreau@gmail.com>
+ * Copyright 2022 Armin Novak <anovak@thincast.com>
+ * Copyright 2022 Thincast Technologies GmbH
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +19,8 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
+#include <winpr/assert.h>
 
 #include <errno.h>
 #include <wctype.h>
@@ -27,18 +28,11 @@
 #include <winpr/crt.h>
 #include <winpr/error.h>
 #include <winpr/print.h>
+#include <winpr/endian.h>
 
 #ifndef _WIN32
 
-#if defined(WITH_ICU)
-#include <unicode/ucnv.h>
-#include <unicode/ustring.h>
-#else
-#include "utf.h"
-#endif
-
-#include "../log.h"
-#define TAG WINPR_TAG("unicode")
+#include "unicode.h"
 
 /**
  * Notes on cross-platform Unicode portability:
@@ -112,7 +106,9 @@
  *
  */
 
-/*
+/** \deprecated We no longer export this function, see ConvertUtf8ToWChar family of functions for a
+ * replacement
+ *
  * Conversion to Unicode (UTF-16)
  * MultiByteToWideChar: http://msdn.microsoft.com/en-us/library/windows/desktop/dd319072/
  *
@@ -124,7 +120,7 @@
  * cchWideChar *cannot* be assumed to be cbMultiByte since UTF-8 is variable-width!
  *
  * Instead, obtain the required cchWideChar output size like this:
- * cchWideChar = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR) lpMultiByteStr, -1, NULL, 0);
+ * cchWideChar = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR) lpMultiByteStr, -1, nullptr, 0);
  *
  * A value of -1 for cbMultiByte indicates that the input string is null-terminated,
  * and the null terminator *will* be processed. The size returned by MultiByteToWideChar
@@ -151,93 +147,20 @@
  *
  */
 
-int MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte,
+#if !defined(WITH_WINPR_DEPRECATED)
+static
+#endif
+    int
+    MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte,
                         LPWSTR lpWideCharStr, int cchWideChar)
 {
-	LPWSTR targetStart;
-#if !defined(WITH_ICU)
-	const BYTE* sourceStart;
-	int length;
-	ConversionResult result;
-#endif
-
-	/* If cbMultiByte is 0, the function fails */
-
-	if ((cbMultiByte == 0) || (cbMultiByte < -1))
-		return 0;
-
-	/* If cbMultiByte is -1, the string is null-terminated */
-
-	if (cbMultiByte == -1)
-	{
-		size_t len = strnlen((const char*)lpMultiByteStr, INT32_MAX);
-		if (len >= INT32_MAX)
-			return 0;
-		cbMultiByte = (int)len + 1;
-	}
-
-	/*
-	 * if cchWideChar is 0, the function returns the required buffer size
-	 * in characters for lpWideCharStr and makes no use of the output parameter itself.
-	 */
-#if defined(WITH_ICU)
-	{
-		UErrorCode error;
-		int32_t targetLength;
-		int32_t targetCapacity;
-
-		switch (CodePage)
-		{
-			case CP_ACP:
-			case CP_UTF8:
-				break;
-
-			default:
-				WLog_ERR(TAG, "Unsupported encoding %u", CodePage);
-				return 0;
-		}
-
-		targetStart = lpWideCharStr;
-		targetCapacity = cchWideChar;
-		error = U_ZERO_ERROR;
-
-		if (cchWideChar == 0)
-		{
-			u_strFromUTF8(NULL, 0, &targetLength, lpMultiByteStr, cbMultiByte, &error);
-			cchWideChar = targetLength;
-		}
-		else
-		{
-			u_strFromUTF8(targetStart, targetCapacity, &targetLength, lpMultiByteStr, cbMultiByte,
-			              &error);
-			cchWideChar = U_SUCCESS(error) ? targetLength : 0;
-		}
-	}
-#else
-
-	if (cchWideChar == 0)
-	{
-		sourceStart = (const BYTE*)lpMultiByteStr;
-		targetStart = (WCHAR*)NULL;
-		result = ConvertUTF8toUTF16(&sourceStart, &sourceStart[cbMultiByte], &targetStart, NULL,
-		                            strictConversion);
-		length = targetStart - ((WCHAR*)NULL);
-	}
-	else
-	{
-		sourceStart = (const BYTE*)lpMultiByteStr;
-		targetStart = lpWideCharStr;
-		result = ConvertUTF8toUTF16(&sourceStart, &sourceStart[cbMultiByte], &targetStart,
-		                            &targetStart[cchWideChar], strictConversion);
-		length = targetStart - ((WCHAR*)lpWideCharStr);
-	}
-
-	cchWideChar = (result == conversionOK) ? length : 0;
-#endif
-	return cchWideChar;
+	return int_MultiByteToWideChar(CodePage, dwFlags, lpMultiByteStr, cbMultiByte, lpWideCharStr,
+	                               cchWideChar);
 }
 
-/*
+/** \deprecated We no longer export this function, see ConvertWCharToUtf8 family of functions for a
+ * replacement
+ *
  * Conversion from Unicode (UTF-16)
  * WideCharToMultiByte: http://msdn.microsoft.com/en-us/library/windows/desktop/dd374130/
  *
@@ -249,7 +172,8 @@ int MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int
  * cbMultiByte *cannot* be assumed to be cchWideChar since UTF-8 is variable-width!
  *
  * Instead, obtain the required cbMultiByte output size like this:
- * cbMultiByte = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR) lpWideCharStr, -1, NULL, 0, NULL, NULL);
+ * cbMultiByte = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR) lpWideCharStr, -1, nullptr, 0, nullptr,
+ * nullptr);
  *
  * A value of -1 for cbMultiByte indicates that the input string is null-terminated,
  * and the null terminator *will* be processed. The size returned by WideCharToMultiByte
@@ -266,7 +190,7 @@ int MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int
  * Finally, perform the conversion:
  *
  * cbMultiByte = WideCharToMultiByte(CP_UTF8, 0, (LPCWSTR) lpWideCharStr, -1, lpMultiByteStr,
- * cbMultiByte, NULL, NULL);
+ * cbMultiByte, nullptr, nullptr);
  *
  * The value returned by WideCharToMultiByte corresponds to the number of bytes written
  * to the output buffer, and should match the value obtained on the first call to
@@ -274,93 +198,16 @@ int MultiByteToWideChar(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int
  *
  */
 
-int WideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int cchWideChar,
+#if !defined(WITH_WINPR_DEPRECATED)
+static
+#endif
+    int
+    WideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int cchWideChar,
                         LPSTR lpMultiByteStr, int cbMultiByte, LPCSTR lpDefaultChar,
                         LPBOOL lpUsedDefaultChar)
 {
-#if !defined(WITH_ICU)
-	int length;
-	const WCHAR* sourceStart;
-	ConversionResult result;
-	BYTE* targetStart;
-#else
-	char* targetStart;
-#endif
-
-	/* If cchWideChar is 0, the function fails */
-
-	if ((cchWideChar == 0) || (cchWideChar < -1))
-		return 0;
-
-	/* If cchWideChar is -1, the string is null-terminated */
-
-	if (cchWideChar == -1)
-	{
-		size_t len = _wcslen(lpWideCharStr);
-		if (len >= INT32_MAX)
-			return 0;
-		cchWideChar = (int)len + 1;
-	}
-
-	/*
-	 * if cbMultiByte is 0, the function returns the required buffer size
-	 * in bytes for lpMultiByteStr and makes no use of the output parameter itself.
-	 */
-#if defined(WITH_ICU)
-	{
-		UErrorCode error;
-		int32_t targetLength;
-		int32_t targetCapacity;
-
-		switch (CodePage)
-		{
-			case CP_ACP:
-			case CP_UTF8:
-				break;
-
-			default:
-				WLog_ERR(TAG, "Unsupported encoding %u", CodePage);
-				return 0;
-		}
-
-		targetStart = lpMultiByteStr;
-		targetCapacity = cbMultiByte;
-		error = U_ZERO_ERROR;
-
-		if (cbMultiByte == 0)
-		{
-			u_strToUTF8(NULL, 0, &targetLength, lpWideCharStr, cchWideChar, &error);
-			cbMultiByte = targetLength;
-		}
-		else
-		{
-			u_strToUTF8(targetStart, targetCapacity, &targetLength, lpWideCharStr, cchWideChar,
-			            &error);
-			cbMultiByte = U_SUCCESS(error) ? targetLength : 0;
-		}
-	}
-#else
-
-	if (cbMultiByte == 0)
-	{
-		sourceStart = (WCHAR*)lpWideCharStr;
-		targetStart = (BYTE*)NULL;
-		result = ConvertUTF16toUTF8(&sourceStart, &sourceStart[cchWideChar], &targetStart, NULL,
-		                            strictConversion);
-		length = targetStart - ((BYTE*)NULL);
-	}
-	else
-	{
-		sourceStart = (WCHAR*)lpWideCharStr;
-		targetStart = (BYTE*)lpMultiByteStr;
-		result = ConvertUTF16toUTF8(&sourceStart, &sourceStart[cchWideChar], &targetStart,
-		                            &targetStart[cbMultiByte], strictConversion);
-		length = targetStart - ((BYTE*)lpMultiByteStr);
-	}
-
-	cbMultiByte = (result == conversionOK) ? length : 0;
-#endif
-	return cbMultiByte;
+	return int_WideCharToMultiByte(CodePage, dwFlags, lpWideCharStr, cchWideChar, lpMultiByteStr,
+	                               cbMultiByte, lpDefaultChar, lpUsedDefaultChar);
 }
 
 #endif
@@ -368,7 +215,7 @@ int WideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int
 /**
  * ConvertToUnicode is a convenience wrapper for MultiByteToWideChar:
  *
- * If the lpWideCharStr parameter for the converted string points to NULL
+ * If the lpWideCharStr parameter for the converted string points to nullptr
  * or if the cchWideChar parameter is set to 0 this function will automatically
  * allocate the required memory which is guaranteed to be null-terminated
  * after the conversion, even if the source c string isn't.
@@ -377,11 +224,11 @@ int WideCharToMultiByte(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int
  * be null-terminated and the required length for the converted string will be
  * calculated accordingly.
  */
-
+#if defined(WITH_WINPR_DEPRECATED)
 int ConvertToUnicode(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cbMultiByte,
                      LPWSTR* lpWideCharStr, int cchWideChar)
 {
-	int status;
+	int status = 0;
 	BOOL allocate = FALSE;
 
 	if (!lpMultiByteStr)
@@ -400,7 +247,8 @@ int ConvertToUnicode(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cb
 
 	if (cchWideChar == 0)
 	{
-		cchWideChar = MultiByteToWideChar(CodePage, dwFlags, lpMultiByteStr, cbMultiByte, NULL, 0);
+		cchWideChar =
+		    MultiByteToWideChar(CodePage, dwFlags, lpMultiByteStr, cbMultiByte, nullptr, 0);
 		allocate = TRUE;
 	}
 	else if (!(*lpWideCharStr))
@@ -411,7 +259,7 @@ int ConvertToUnicode(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cb
 
 	if (allocate)
 	{
-		*lpWideCharStr = (LPWSTR)calloc(cchWideChar + 1, sizeof(WCHAR));
+		*lpWideCharStr = (LPWSTR)calloc((size_t)cchWideChar + 1ull, sizeof(WCHAR));
 
 		if (!(*lpWideCharStr))
 		{
@@ -428,18 +276,19 @@ int ConvertToUnicode(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cb
 		if (allocate)
 		{
 			free(*lpWideCharStr);
-			*lpWideCharStr = NULL;
+			*lpWideCharStr = nullptr;
 			status = 0;
 		}
 	}
 
 	return status;
 }
+#endif
 
 /**
  * ConvertFromUnicode is a convenience wrapper for WideCharToMultiByte:
  *
- * If the lpMultiByteStr parameter for the converted string points to NULL
+ * If the lpMultiByteStr parameter for the converted string points to nullptr
  * or if the cbMultiByte parameter is set to 0 this function will automatically
  * allocate the required memory which is guaranteed to be null-terminated
  * after the conversion, even if the source unicode string isn't.
@@ -448,12 +297,12 @@ int ConvertToUnicode(UINT CodePage, DWORD dwFlags, LPCSTR lpMultiByteStr, int cb
  * be null-terminated and the required length for the converted string will be
  * calculated accordingly.
  */
-
+#if defined(WITH_WINPR_DEPRECATED)
 int ConvertFromUnicode(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int cchWideChar,
                        LPSTR* lpMultiByteStr, int cbMultiByte, LPCSTR lpDefaultChar,
                        LPBOOL lpUsedDefaultChar)
 {
-	int status;
+	int status = 0;
 	BOOL allocate = FALSE;
 
 	if (!lpWideCharStr)
@@ -467,8 +316,8 @@ int ConvertFromUnicode(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int 
 
 	if (cbMultiByte == 0)
 	{
-		cbMultiByte =
-		    WideCharToMultiByte(CodePage, dwFlags, lpWideCharStr, cchWideChar, NULL, 0, NULL, NULL);
+		cbMultiByte = WideCharToMultiByte(CodePage, dwFlags, lpWideCharStr, cchWideChar, nullptr, 0,
+		                                  nullptr, nullptr);
 		allocate = TRUE;
 	}
 	else if (!(*lpMultiByteStr))
@@ -479,7 +328,7 @@ int ConvertFromUnicode(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int 
 
 	if (allocate)
 	{
-		*lpMultiByteStr = (LPSTR)calloc(1, cbMultiByte + 1);
+		*lpMultiByteStr = (LPSTR)calloc(1, (size_t)cbMultiByte + 1ull);
 
 		if (!(*lpMultiByteStr))
 		{
@@ -499,23 +348,458 @@ int ConvertFromUnicode(UINT CodePage, DWORD dwFlags, LPCWSTR lpWideCharStr, int 
 	if ((status <= 0) && allocate)
 	{
 		free(*lpMultiByteStr);
-		*lpMultiByteStr = NULL;
+		*lpMultiByteStr = nullptr;
 	}
 
 	return status;
 }
+#endif
 
 /**
  * Swap Unicode byte order (UTF16LE <-> UTF16BE)
  */
 
-void ByteSwapUnicode(WCHAR* wstr, int length)
+const WCHAR* ByteSwapUnicode(WCHAR* wstr, size_t length)
 {
-	WCHAR* end = &wstr[length];
+	WINPR_ASSERT(wstr || (length == 0));
 
-	while (wstr < end)
+	for (size_t x = 0; x < length; x++)
+		wstr[x] = _byteswap_ushort(wstr[x]);
+	return wstr;
+}
+
+SSIZE_T ConvertWCharToUtf8(const WCHAR* wstr, char* str, size_t len)
+{
+	if (!wstr)
 	{
-		*wstr = _byteswap_ushort(*wstr);
-		wstr++;
+		if (str && len)
+			str[0] = 0;
+		return 0;
 	}
+
+	const size_t wlen = _wcslen(wstr);
+	return ConvertWCharNToUtf8(wstr, wlen + 1, str, len);
+}
+
+SSIZE_T ConvertWCharNToUtf8(const WCHAR* wstr, size_t wlen, char* str, size_t len)
+{
+	BOOL isNullTerminated = FALSE;
+	if (wlen == 0)
+		return 0;
+
+	WINPR_ASSERT(wstr);
+	size_t iwlen = _wcsnlen(wstr, wlen);
+
+	if ((len > INT32_MAX) || (wlen > INT32_MAX))
+	{
+		SetLastError(ERROR_INVALID_PARAMETER);
+		return -1;
+	}
+
+	if (iwlen < wlen)
+	{
+		isNullTerminated = TRUE;
+		iwlen++;
+	}
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_DEPRECATED_DECL
+	const int rc =
+	    WideCharToMultiByte(CP_UTF8, 0, wstr, (int)iwlen, str, (int)len, nullptr, nullptr);
+	WINPR_PRAGMA_DIAG_POP
+	if ((rc <= 0) || ((len > 0) && ((size_t)rc > len)))
+		return -1;
+	else if (!isNullTerminated)
+	{
+		if (str && ((size_t)rc < len))
+			str[rc] = '\0';
+		return rc;
+	}
+	else if ((size_t)rc == len)
+	{
+		if (str && (str[rc - 1] != '\0'))
+			return rc;
+	}
+	return rc - 1;
+}
+
+SSIZE_T ConvertMszWCharNToUtf8(const WCHAR* wstr, size_t wlen, char* str, size_t len)
+{
+	if (wlen == 0)
+		return 0;
+
+	WINPR_ASSERT(wstr);
+
+	if ((len > INT32_MAX) || (wlen > INT32_MAX))
+	{
+		SetLastError(ERROR_INVALID_PARAMETER);
+		return -1;
+	}
+
+	const int iwlen = (int)len;
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_DEPRECATED_DECL
+	const int rc = WideCharToMultiByte(CP_UTF8, 0, wstr, (int)wlen, str, iwlen, nullptr, nullptr);
+	WINPR_PRAGMA_DIAG_POP
+	if ((rc <= 0) || ((len > 0) && (rc > iwlen)))
+		return -1;
+
+	return rc;
+}
+
+SSIZE_T ConvertUtf8ToWChar(const char* str, WCHAR* wstr, size_t wlen)
+{
+	if (!str)
+	{
+		if (wstr && wlen)
+			wstr[0] = 0;
+		return 0;
+	}
+
+	const size_t len = strlen(str);
+	return ConvertUtf8NToWChar(str, len + 1, wstr, wlen);
+}
+
+SSIZE_T ConvertUtf8NToWChar(const char* str, size_t len, WCHAR* wstr, size_t wlen)
+{
+	size_t ilen = strnlen(str, len);
+	BOOL isNullTerminated = FALSE;
+	if (len == 0)
+		return 0;
+
+	WINPR_ASSERT(str);
+
+	if ((len > INT32_MAX) || (wlen > INT32_MAX))
+	{
+		SetLastError(ERROR_INVALID_PARAMETER);
+		return -1;
+	}
+	if (ilen < len)
+	{
+		isNullTerminated = TRUE;
+		ilen++;
+	}
+
+	const int iwlen = (int)wlen;
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_DEPRECATED_DECL
+	const int rc = MultiByteToWideChar(CP_UTF8, 0, str, (int)ilen, wstr, iwlen);
+	WINPR_PRAGMA_DIAG_POP
+	if ((rc <= 0) || ((wlen > 0) && (rc > iwlen)))
+		return -1;
+	if (!isNullTerminated)
+	{
+		if (wstr && (rc < iwlen))
+			wstr[rc] = '\0';
+		return rc;
+	}
+	else if (rc == iwlen)
+	{
+		if (wstr && (wstr[rc - 1] != '\0'))
+			return rc;
+	}
+	return rc - 1;
+}
+
+SSIZE_T ConvertMszUtf8NToWChar(const char* str, size_t len, WCHAR* wstr, size_t wlen)
+{
+	if (len == 0)
+		return 0;
+
+	WINPR_ASSERT(str);
+
+	if ((len > INT32_MAX) || (wlen > INT32_MAX))
+	{
+		SetLastError(ERROR_INVALID_PARAMETER);
+		return -1;
+	}
+
+	const int iwlen = (int)wlen;
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_DEPRECATED_DECL
+	const int rc = MultiByteToWideChar(CP_UTF8, 0, str, (int)len, wstr, iwlen);
+	WINPR_PRAGMA_DIAG_POP
+	if ((rc <= 0) || ((wlen > 0) && (rc > iwlen)))
+		return -1;
+
+	return rc;
+}
+
+char* ConvertWCharToUtf8Alloc(const WCHAR* wstr, size_t* pUtfCharLength)
+{
+	char* tmp = nullptr;
+	const SSIZE_T rc = ConvertWCharToUtf8(wstr, nullptr, 0);
+	if (pUtfCharLength)
+		*pUtfCharLength = 0;
+	if (rc < 0)
+		return nullptr;
+	tmp = calloc((size_t)rc + 1ull, sizeof(char));
+	if (!tmp)
+		return nullptr;
+	const SSIZE_T rc2 = ConvertWCharToUtf8(wstr, tmp, (size_t)rc + 1ull);
+	if (rc2 < 0)
+	{
+		free(tmp);
+		return nullptr;
+	}
+	WINPR_ASSERT(rc == rc2);
+	if (pUtfCharLength)
+		*pUtfCharLength = (size_t)rc2;
+	return tmp;
+}
+
+char* ConvertWCharNToUtf8Alloc(const WCHAR* wstr, size_t wlen, size_t* pUtfCharLength)
+{
+	char* tmp = nullptr;
+	const SSIZE_T rc = ConvertWCharNToUtf8(wstr, wlen, nullptr, 0);
+
+	if (pUtfCharLength)
+		*pUtfCharLength = 0;
+	if (rc < 0)
+		return nullptr;
+	tmp = calloc((size_t)rc + 1ull, sizeof(char));
+	if (!tmp)
+		return nullptr;
+	const SSIZE_T rc2 = ConvertWCharNToUtf8(wstr, wlen, tmp, (size_t)rc + 1ull);
+	if (rc2 < 0)
+	{
+		free(tmp);
+		return nullptr;
+	}
+	WINPR_ASSERT(rc == rc2);
+	if (pUtfCharLength)
+		*pUtfCharLength = (size_t)rc2;
+	return tmp;
+}
+
+char* ConvertMszWCharNToUtf8Alloc(const WCHAR* wstr, size_t wlen, size_t* pUtfCharLength)
+{
+	char* tmp = nullptr;
+	const SSIZE_T rc = ConvertMszWCharNToUtf8(wstr, wlen, nullptr, 0);
+
+	if (pUtfCharLength)
+		*pUtfCharLength = 0;
+	if (rc < 0)
+		return nullptr;
+	tmp = calloc((size_t)rc + 1ull, sizeof(char));
+	if (!tmp)
+		return nullptr;
+	const SSIZE_T rc2 = ConvertMszWCharNToUtf8(wstr, wlen, tmp, (size_t)rc + 1ull);
+	if (rc2 < 0)
+	{
+		free(tmp);
+		return nullptr;
+	}
+	WINPR_ASSERT(rc == rc2);
+	if (pUtfCharLength)
+		*pUtfCharLength = (size_t)rc2;
+	return tmp;
+}
+
+WCHAR* ConvertUtf8ToWCharAlloc(const char* str, size_t* pSize)
+{
+	WCHAR* tmp = nullptr;
+	const SSIZE_T rc = ConvertUtf8ToWChar(str, nullptr, 0);
+	if (pSize)
+		*pSize = 0;
+	if (rc < 0)
+		return nullptr;
+	tmp = calloc((size_t)rc + 1ull, sizeof(WCHAR));
+	if (!tmp)
+		return nullptr;
+	const SSIZE_T rc2 = ConvertUtf8ToWChar(str, tmp, (size_t)rc + 1ull);
+	if (rc2 < 0)
+	{
+		free(tmp);
+		return nullptr;
+	}
+	WINPR_ASSERT(rc == rc2);
+	if (pSize)
+		*pSize = (size_t)rc2;
+	return tmp;
+}
+
+WCHAR* ConvertUtf8NToWCharAlloc(const char* str, size_t len, size_t* pSize)
+{
+	WCHAR* tmp = nullptr;
+	const SSIZE_T rc = ConvertUtf8NToWChar(str, len, nullptr, 0);
+	if (pSize)
+		*pSize = 0;
+	if (rc < 0)
+		return nullptr;
+	tmp = calloc((size_t)rc + 1ull, sizeof(WCHAR));
+	if (!tmp)
+		return nullptr;
+	const SSIZE_T rc2 = ConvertUtf8NToWChar(str, len, tmp, (size_t)rc + 1ull);
+	if (rc2 < 0)
+	{
+		free(tmp);
+		return nullptr;
+	}
+	WINPR_ASSERT(rc == rc2);
+	if (pSize)
+		*pSize = (size_t)rc2;
+	return tmp;
+}
+
+WCHAR* ConvertMszUtf8NToWCharAlloc(const char* str, size_t len, size_t* pSize)
+{
+	WCHAR* tmp = nullptr;
+	const SSIZE_T rc = ConvertMszUtf8NToWChar(str, len, nullptr, 0);
+	if (pSize)
+		*pSize = 0;
+	if (rc < 0)
+		return nullptr;
+	tmp = calloc((size_t)rc + 1ull, sizeof(WCHAR));
+	if (!tmp)
+		return nullptr;
+	const SSIZE_T rc2 = ConvertMszUtf8NToWChar(str, len, tmp, (size_t)rc + 1ull);
+	if (rc2 < 0)
+	{
+		free(tmp);
+		return nullptr;
+	}
+	WINPR_ASSERT(rc == rc2);
+	if (pSize)
+		*pSize = (size_t)rc2;
+	return tmp;
+}
+
+WINPR_ATTR_NODISCARD
+static INT8 nnibble(char c)
+{
+	if ((c >= '0') && (c <= '9'))
+		return (INT8)(c - '0');
+	if ((c >= 'a') && (c <= 'f'))
+		return (INT8)((c - 'a') + 0xa);
+	if ((c >= 'A') && (c <= 'F'))
+		return (INT8)((c - 'A') + 0xa);
+	return -1;
+}
+
+WINPR_ATTR_NODISCARD
+static INT32 escapeToNumber(char* str, char** next)
+{
+	if (strncmp(str, "\\u", 2) != 0)
+		return -1;
+
+	size_t offset = 2;
+	INT32 code = 0;
+	for (size_t x = 0; x < 4; x++)
+	{
+		const INT8 val = nnibble(str[offset++]);
+		if (val < 0)
+			return -1;
+
+		code <<= 4;
+		code |= val;
+	}
+	*next = &str[offset];
+	return code;
+}
+
+SSIZE_T winpr_utfEscapedStringToUtf8(char* str, size_t len)
+{
+	/* A decoded escape is never longer than the escape itself, so decode in place with separate
+	 * read and write positions. Every byte is moved at most once, otherwise a string made of
+	 * escapes costs time quadratic in its length. */
+	char* const end = &str[strnlen(str, len)];
+	char* cur = str;
+	char* dst = str;
+	while (cur < end)
+	{
+		const char* esc = winpr_strnstr(cur, "\\u", (size_t)(end - cur));
+		const size_t plain = (size_t)((esc ? esc : end) - cur);
+		memmove(dst, cur, plain);
+		dst += plain;
+		cur += plain;
+		if (!esc)
+			break;
+
+		char* next = nullptr;
+		const INT32 code = escapeToNumber(cur, &next);
+		if (code < 0)
+		{
+			/* Not a \uXXXX escape (e.g. "C:\users"): keep it as literal text */
+			memmove(dst, cur, 2);
+			dst += 2;
+			cur += 2;
+			continue;
+		}
+
+		WCHAR wc[2] = WINPR_C_ARRAY_INIT;
+		winpr_Data_Write_UINT16(&wc[0], (WCHAR)code);
+
+		// Check for high surrogate
+		if ((code & 0xd800) == 0xd800)
+		{
+			const INT32 code2 = escapeToNumber(next, &next);
+			if (code2 < 0)
+				return -1;
+
+			// low surrogate check. must match
+			if ((code2 & 0xdc00) != 0xdc00)
+				return -1;
+
+			winpr_Data_Write_UINT16(&wc[1], (WCHAR)code2);
+		}
+
+		char utf8[8] = WINPR_C_ARRAY_INIT;
+		const SSIZE_T rc = ConvertWCharNToUtf8(wc, ARRAYSIZE(wc), utf8, ARRAYSIZE(utf8));
+		if (rc < 0)
+			return -1;
+
+		/* Continue after the escape, so the decoded bytes are never decoded again */
+		memcpy(dst, utf8, (size_t)rc);
+		dst += rc;
+		cur = next;
+	}
+
+	if (dst < end)
+		*dst = '\0';
+	return (SSIZE_T)(dst - str);
+}
+
+char* winpr_utf8ToUtfEscapedString(char* str, size_t len, size_t* pDstLen)
+{
+	WINPR_ASSERT(str || (len == 0));
+
+	if (pDstLen)
+		*pDstLen = 0;
+
+	if (len >= SIZE_MAX / 12)
+		return nullptr;
+
+	char* escaped = nullptr;
+	size_t offset = 0;
+	size_t wlen = 0;
+	WCHAR* wstr = ConvertUtf8NToWCharAlloc(str, len, &wlen);
+	if (!wstr || (wlen == 0))
+		goto fail;
+
+	const size_t esclen = len * 12ull;
+	escaped = calloc(len + 1, 12);
+	if (!escaped)
+		goto fail;
+
+	for (size_t x = 0; x < wlen; x++)
+	{
+		const WCHAR wc = winpr_Data_Get_UINT16(&wstr[x]);
+		if ((wc < 0x80) && (wc != '\\'))
+			escaped[offset++] = (char)wc;
+		else
+		{
+			const int rc = snprintf(&escaped[offset], esclen - offset, "\\u%04x", wc);
+			if (rc < 0)
+				break;
+			offset += (size_t)rc;
+		}
+	}
+	escaped[offset] = '\0';
+
+fail:
+	if (pDstLen)
+		*pDstLen = offset;
+
+	winpr_znfree(wstr, wlen * sizeof(WCHAR));
+	return escaped;
 }

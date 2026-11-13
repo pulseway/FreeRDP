@@ -22,55 +22,71 @@
 #define FREERDP_CHANNEL_RDPSND_CLIENT_RDPSND_H
 
 #include <freerdp/channels/rdpsnd.h>
+#include <freerdp/settings.h>
 
-#define RDPSND_DVC_CHANNEL_NAME "AUDIO_PLAYBACK_DVC"
-
-/**
- * Subsystem Interface
- */
-typedef struct rdpsnd_plugin rdpsndPlugin;
-
-typedef struct rdpsnd_device_plugin rdpsndDevicePlugin;
-
-typedef BOOL (*pcFormatSupported)(rdpsndDevicePlugin* device, const AUDIO_FORMAT* format);
-typedef BOOL (*pcOpen)(rdpsndDevicePlugin* device, const AUDIO_FORMAT* format, UINT32 latency);
-typedef UINT32 (*pcGetVolume)(rdpsndDevicePlugin* device);
-typedef BOOL (*pcSetVolume)(rdpsndDevicePlugin* device, UINT32 value);
-typedef UINT (*pcPlay)(rdpsndDevicePlugin* device, const BYTE* data, size_t size);
-typedef void (*pcStart)(rdpsndDevicePlugin* device);
-typedef void (*pcClose)(rdpsndDevicePlugin* device);
-typedef void (*pcFree)(rdpsndDevicePlugin* device);
-typedef BOOL (*pcDefaultFormat)(rdpsndDevicePlugin* device, const AUDIO_FORMAT* desired,
-                                AUDIO_FORMAT* defaultFormat);
-
-struct rdpsnd_device_plugin
+#ifdef __cplusplus
+extern "C"
 {
-	rdpsndPlugin* rdpsnd;
+#endif
 
-	pcFormatSupported FormatSupported;
-	pcOpen Open;
-	pcGetVolume GetVolume;
-	pcSetVolume SetVolume;
-	pcPlay Play;
-	pcStart Start; /* Deprecated, unused. */
-	pcClose Close;
-	pcFree Free;
-	pcDefaultFormat DefaultFormat;
-};
+	/**
+	 * Subsystem Interface
+	 */
+	typedef struct rdpsnd_plugin rdpsndPlugin;
+
+	typedef struct rdpsnd_device_plugin rdpsndDevicePlugin;
+
+	typedef BOOL (*pcFormatSupported)(rdpsndDevicePlugin* device, const AUDIO_FORMAT* format);
+	typedef BOOL (*pcOpen)(rdpsndDevicePlugin* device, const AUDIO_FORMAT* format, UINT32 latency);
+	typedef UINT32 (*pcGetVolume)(rdpsndDevicePlugin* device);
+	typedef BOOL (*pcSetVolume)(rdpsndDevicePlugin* device, UINT32 value);
+	typedef UINT (*pcPlay)(rdpsndDevicePlugin* device, const BYTE* data, size_t size);
+	typedef UINT (*pcPlayEx)(rdpsndDevicePlugin* device, const AUDIO_FORMAT* format,
+	                         const BYTE* data, size_t size);
+	typedef void (*pcStart)(rdpsndDevicePlugin* device);
+	typedef void (*pcClose)(rdpsndDevicePlugin* device);
+	typedef void (*pcFree)(rdpsndDevicePlugin* device);
+	typedef BOOL (*pcDefaultFormat)(rdpsndDevicePlugin* device, const AUDIO_FORMAT* desired,
+	                                AUDIO_FORMAT* defaultFormat);
+	typedef UINT (*pcServerFormatAnnounce)(rdpsndDevicePlugin* device, const AUDIO_FORMAT* formats,
+	                                       size_t count);
+
+	struct rdpsnd_device_plugin
+	{
+		rdpsndPlugin* rdpsnd;
+
+		WINPR_ATTR_NODISCARD pcFormatSupported FormatSupported;
+		WINPR_ATTR_NODISCARD pcOpen Open;
+		WINPR_ATTR_NODISCARD pcGetVolume GetVolume;
+		WINPR_ATTR_NODISCARD pcSetVolume SetVolume;
+		WINPR_ATTR_NODISCARD pcPlay Play;
+		pcStart Start; /* Deprecated, unused. */
+		pcClose Close;
+		pcFree Free;
+		WINPR_ATTR_NODISCARD pcDefaultFormat DefaultFormat;
+		WINPR_ATTR_NODISCARD pcServerFormatAnnounce ServerFormatAnnounce;
+		WINPR_ATTR_NODISCARD pcPlayEx PlayEx;
+	};
 
 #define RDPSND_DEVICE_EXPORT_FUNC_NAME "freerdp_rdpsnd_client_subsystem_entry"
 
 typedef void (*PREGISTERRDPSNDDEVICE)(rdpsndPlugin* rdpsnd, rdpsndDevicePlugin* device);
 
-struct _FREERDP_RDPSND_DEVICE_ENTRY_POINTS
+typedef struct
 {
 	rdpsndPlugin* rdpsnd;
 	PREGISTERRDPSNDDEVICE pRegisterRdpsndDevice;
 	const ADDIN_ARGV* args;
-};
-typedef struct _FREERDP_RDPSND_DEVICE_ENTRY_POINTS FREERDP_RDPSND_DEVICE_ENTRY_POINTS;
+} FREERDP_RDPSND_DEVICE_ENTRY_POINTS;
 typedef FREERDP_RDPSND_DEVICE_ENTRY_POINTS* PFREERDP_RDPSND_DEVICE_ENTRY_POINTS;
 
-typedef UINT (*PFREERDP_RDPSND_DEVICE_ENTRY)(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints);
+typedef UINT(VCAPITYPE* PFREERDP_RDPSND_DEVICE_ENTRY)(
+	PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints);
 
+WINPR_ATTR_NODISCARD
+FREERDP_API rdpContext* freerdp_rdpsnd_get_context(rdpsndPlugin* plugin);
+
+#ifdef __cplusplus
+}
+#endif
 #endif /* FREERDP_CHANNEL_RDPSND_CLIENT_RDPSND_H */

@@ -17,18 +17,7 @@
 
 define_channel_client("parallel")
 
-set(${MODULE_PREFIX}_SRCS
-	parallel_main.c)
+set(${MODULE_PREFIX}_SRCS parallel_main.c)
 
+set(${MODULE_PREFIX}_LIBS winpr freerdp)
 add_channel_client_library(${MODULE_PREFIX} ${MODULE_NAME} ${CHANNEL_NAME} TRUE "DeviceServiceEntry")
-
-
-
-target_link_libraries(${MODULE_NAME} freerdp winpr)
-
-
-if (WITH_DEBUG_SYMBOLS AND MSVC AND NOT BUILTIN_CHANNELS AND BUILD_SHARED_LIBS)
-	install(FILES ${CMAKE_BINARY_DIR}/${MODULE_NAME}.pdb DESTINATION ${FREERDP_ADDIN_PATH} COMPONENT symbols)
-endif()
-
-set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "Channels/${CHANNEL_NAME}/Client")

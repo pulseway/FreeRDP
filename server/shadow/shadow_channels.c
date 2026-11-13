@@ -16,53 +16,60 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
+
+#include <freerdp/channels/cliprdr.h>
 
 #include "shadow.h"
 
 #include "shadow_channels.h"
+#include "shadow_cliprdr.h"
 
 UINT shadow_client_channels_post_connect(rdpShadowClient* client)
 {
 	if (WTSVirtualChannelManagerIsChannelJoined(client->vcm, ENCOMSP_SVC_CHANNEL_NAME))
 	{
-		shadow_client_encomsp_init(client);
+		if (shadow_client_encomsp_init(client) < 0)
+			return ERROR_NOT_READY;
 	}
 
 	if (WTSVirtualChannelManagerIsChannelJoined(client->vcm, REMDESK_SVC_CHANNEL_NAME))
 	{
-		shadow_client_remdesk_init(client);
+		if (shadow_client_remdesk_init(client) < 0)
+			return ERROR_NOT_READY;
 	}
 
-	if (WTSVirtualChannelManagerIsChannelJoined(client->vcm, "rdpsnd"))
+	if (WTSVirtualChannelManagerIsChannelJoined(client->vcm, RDPSND_CHANNEL_NAME))
 	{
-		shadow_client_rdpsnd_init(client);
+		if (shadow_client_rdpsnd_init(client) < 0)
+			return ERROR_NOT_READY;
 	}
 
-	shadow_client_audin_init(client);
+	if (!shadow_client_audin_init(client))
+		return ERROR_NOT_READY;
 
-	if (client->context.settings->SupportGraphicsPipeline)
+	if (WTSVirtualChannelManagerIsChannelJoined(client->vcm, CLIPRDR_SVC_CHANNEL_NAME))
 	{
-		shadow_client_rdpgfx_init(client);
+		if (shadow_client_cliprdr_init(client) < 0)
+			return ERROR_NOT_READY;
 	}
+
+	if (shadow_client_rdpgfx_init(client) < 0)
+		return ERROR_NOT_READY;
+
+	if (!shadow_client_disp_init(client))
+		return ERROR_NOT_READY;
 
 	return CHANNEL_RC_OK;
 }
 
 void shadow_client_channels_free(rdpShadowClient* client)
 {
-	if (client->context.settings->SupportGraphicsPipeline)
-	{
-		shadow_client_rdpgfx_uninit(client);
-	}
-
+	shadow_client_disp_uninit(client);
+	shadow_client_rdpgfx_uninit(client);
+	shadow_client_cliprdr_uninit(client);
 	shadow_client_audin_uninit(client);
-
 	shadow_client_rdpsnd_uninit(client);
-
 	shadow_client_remdesk_uninit(client);
-
 	shadow_client_encomsp_uninit(client);
 }

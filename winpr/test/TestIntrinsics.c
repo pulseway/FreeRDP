@@ -6,14 +6,14 @@
 
 static BOOL g_LZCNT = FALSE;
 
-static INLINE UINT32 lzcnt_s(UINT32 x)
+static inline UINT32 lzcnt_s(UINT32 x)
 {
 	if (!x)
 		return 32;
 
 	if (!g_LZCNT)
 	{
-		UINT32 y;
+		UINT32 y = 0;
 		int n = 32;
 		y = x >> 16;
 		if (y != 0)
@@ -48,58 +48,58 @@ static INLINE UINT32 lzcnt_s(UINT32 x)
 	return __lzcnt(x);
 }
 
-int test_lzcnt()
+static int test_lzcnt(void)
 {
 	if (lzcnt_s(0x1) != 31)
 	{
-		fprintf(stderr, "__lzcnt(0x1) != 31: %" PRIu32 "\n", __lzcnt(0x1));
+		(void)fprintf(stderr, "__lzcnt(0x1) != 31: %" PRIu32 "\n", __lzcnt(0x1));
 		return -1;
 	}
 
 	if (lzcnt_s(0xFF) != 24)
 	{
-		fprintf(stderr, "__lzcnt(0xFF) != 24\n");
+		(void)fprintf(stderr, "__lzcnt(0xFF) != 24\n");
 		return -1;
 	}
 
 	if (lzcnt_s(0xFFFF) != 16)
 	{
-		fprintf(stderr, "__lzcnt(0xFFFF) != 16\n");
+		(void)fprintf(stderr, "__lzcnt(0xFFFF) != 16\n");
 		return -1;
 	}
 
 	if (lzcnt_s(0xFFFFFF) != 8)
 	{
-		fprintf(stderr, "__lzcnt(0xFFFFFF) != 8\n");
+		(void)fprintf(stderr, "__lzcnt(0xFFFFFF) != 8\n");
 		return -1;
 	}
 
 	if (lzcnt_s(0xFFFFFFFF) != 0)
 	{
-		fprintf(stderr, "__lzcnt(0xFFFFFFFF) != 0\n");
+		(void)fprintf(stderr, "__lzcnt(0xFFFFFFFF) != 0\n");
 		return -1;
 	}
 
 	return 0;
 }
 
-int test_lzcnt16()
+static int test_lzcnt16(void)
 {
 	if (__lzcnt16(0x1) != 15)
 	{
-		fprintf(stderr, "__lzcnt16(0x1) != 15\n");
+		(void)fprintf(stderr, "__lzcnt16(0x1) != 15\n");
 		return -1;
 	}
 
 	if (__lzcnt16(0xFF) != 8)
 	{
-		fprintf(stderr, "__lzcnt16(0xFF) != 8\n");
+		(void)fprintf(stderr, "__lzcnt16(0xFF) != 8\n");
 		return -1;
 	}
 
 	if (__lzcnt16(0xFFFF) != 0)
 	{
-		fprintf(stderr, "__lzcnt16(0xFFFF) != 0\n");
+		(void)fprintf(stderr, "__lzcnt16(0xFFFF) != 0\n");
 		return -1;
 	}
 
@@ -108,6 +108,10 @@ int test_lzcnt16()
 
 int TestIntrinsics(int argc, char* argv[])
 {
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
 	g_LZCNT = IsProcessorFeaturePresentEx(PF_EX_LZCNT);
 
 	printf("LZCNT available: %" PRId32 "\n", g_LZCNT);

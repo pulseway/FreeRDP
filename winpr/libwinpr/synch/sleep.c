@@ -17,10 +17,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
+#include <winpr/platform.h>
 #include <winpr/windows.h>
 
 #include <winpr/synch.h>
@@ -36,12 +35,18 @@
 
 #include <time.h>
 
-#ifdef HAVE_UNISTD_H
+WINPR_PRAGMA_DIAG_PUSH
+WINPR_PRAGMA_DIAG_IGNORED_RESERVED_ID_MACRO
+WINPR_PRAGMA_DIAG_IGNORED_UNUSED_MACRO
+
+#ifdef WINPR_HAVE_UNISTD_H
 #ifndef _XOPEN_SOURCE
-#define _XOPEN_SOURCE 500
+#define _XOPEN_SOURCE 500 // NOLINT(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 #endif
 #include <unistd.h>
 #endif
+
+WINPR_PRAGMA_DIAG_POP
 
 VOID Sleep(DWORD dwMilliseconds)
 {
@@ -52,19 +57,21 @@ DWORD SleepEx(DWORD dwMilliseconds, BOOL bAlertable)
 {
 	WINPR_THREAD* thread = winpr_GetCurrentThread();
 	WINPR_POLL_SET pollset;
-	int status;
+	int status = 0;
 	DWORD ret = WAIT_FAILED;
-	BOOL autoSignalled;
+	BOOL autoSignalled = 0;
 
-	if (!thread)
+	if (thread)
 	{
-		WLog_ERR(TAG, "unable to retrieve currentThread");
-		return WAIT_FAILED;
+		/* treat re-entrancy if a completion is calling us */
+		if (thread->apc.treatingCompletions)
+			bAlertable = FALSE;
 	}
-
-	/* treat re-entrancy if a completion is calling us */
-	if (thread->apc.treatingCompletions)
+	else
+	{
+		/* called from a non WinPR thread */
 		bAlertable = FALSE;
+	}
 
 	if (!bAlertable || !thread->apc.length)
 	{
@@ -117,9 +124,9 @@ VOID USleep(DWORD dwMicroseconds)
 #ifndef _WIN32
 	usleep(dwMicroseconds);
 #else
-	static LARGE_INTEGER freq = { 0, 0 };
-	LARGE_INTEGER t1 = { 0, 0 };
-	LARGE_INTEGER t2 = { 0, 0 };
+	static LARGE_INTEGER freq = WINPR_C_ARRAY_INIT;
+	LARGE_INTEGER t1 = WINPR_C_ARRAY_INIT;
+	LARGE_INTEGER t2 = WINPR_C_ARRAY_INIT;
 
 	QueryPerformanceCounter(&t1);
 
@@ -128,7 +135,7 @@ VOID USleep(DWORD dwMicroseconds)
 		QueryPerformanceFrequency(&freq);
 	}
 
-	// in order to save cpu cyles we use Sleep() for the large share ...
+	// in order to save cpu cycles we use Sleep() for the large share ...
 	if (dwMicroseconds >= 1000)
 	{
 		Sleep(dwMicroseconds / 1000);

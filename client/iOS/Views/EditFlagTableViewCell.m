@@ -12,23 +12,40 @@
 
 @implementation EditFlagTableViewCell
 
-@synthesize label = _label, toggle = _toggle;
+@synthesize title = _title, toggle = _toggle;
 
 - (id)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(NSString *)reuseIdentifier
 {
 	self = [super initWithStyle:style reuseIdentifier:reuseIdentifier];
 	if (self)
 	{
-		// Initialization code
+		[self setSelectionStyle:UITableViewCellSelectionStyleNone];
+
+		_toggle = [[UISwitch alloc] init];
+		[self setAccessoryView:_toggle];
 	}
+
 	return self;
 }
 
-- (void)setSelected:(BOOL)selected animated:(BOOL)animated
+- (void)dealloc
 {
-	[super setSelected:selected animated:animated];
+	[_title release];
+	[_toggle release];
+	[super dealloc];
+}
 
-	// Configure the view for the selected state
+- (void)setTitle:(NSString *)title
+{
+	if (_title != title)
+	{
+		[_title release];
+		_title = [title copy];
+	}
+
+	UIListContentConfiguration *content = [self defaultContentConfiguration];
+	[content setText:title];
+	[self setContentConfiguration:content];
 }
 
 @end

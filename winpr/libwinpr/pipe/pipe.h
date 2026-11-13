@@ -29,7 +29,7 @@
 
 struct winpr_pipe
 {
-	WINPR_HANDLE_DEF();
+	WINPR_HANDLE common;
 
 	int fd;
 };
@@ -41,7 +41,7 @@ typedef void (*fnUnrefNamedPipe)(WINPR_NAMED_PIPE* pNamedPipe);
 
 struct winpr_named_pipe
 {
-	WINPR_HANDLE_DEF();
+	WINPR_HANDLE common;
 
 	int clientfd;
 	int serverfd;
@@ -69,6 +69,9 @@ BOOL NamedPipeRead(PVOID Object, LPVOID lpBuffer, DWORD nNumberOfBytesToRead,
                    LPDWORD lpNumberOfBytesRead, LPOVERLAPPED lpOverlapped);
 BOOL NamedPipeWrite(PVOID Object, LPCVOID lpBuffer, DWORD nNumberOfBytesToWrite,
                     LPDWORD lpNumberOfBytesWritten, LPOVERLAPPED lpOverlapped);
+
+WINPR_ATTR_NODISCARD
+HANDLE winpr_Pipe_FromFd(int fd);
 
 #endif
 

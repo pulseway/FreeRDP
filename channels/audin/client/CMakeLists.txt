@@ -17,46 +17,54 @@
 
 define_channel_client("audin")
 
-set(${MODULE_PREFIX}_SRCS
-	audin_main.c
-	audin_main.h)
+set(${MODULE_PREFIX}_SRCS audin_main.c audin_main.h)
+
+set(${MODULE_PREFIX}_LIBS freerdp)
 
 include_directories(..)
 
 add_channel_client_library(${MODULE_PREFIX} ${MODULE_NAME} ${CHANNEL_NAME} TRUE "DVCPluginEntry")
 
-target_link_libraries(${MODULE_NAME} freerdp winpr)
-
-if (WITH_DEBUG_SYMBOLS AND MSVC AND NOT BUILTIN_CHANNELS AND BUILD_SHARED_LIBS)
-	install(FILES ${CMAKE_BINARY_DIR}/${MODULE_NAME}.pdb DESTINATION ${FREERDP_ADDIN_PATH} COMPONENT symbols)
-endif()
-
-set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "Channels/${CHANNEL_NAME}/Client")
-
 if(WITH_OSS)
-	add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "oss" "")
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "oss" "")
 endif()
 
 if(WITH_ALSA)
-	add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "alsa" "")
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "alsa" "")
 endif()
 
 if(WITH_PULSE)
-	add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "pulse" "")
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "pulse" "")
+endif()
+
+if(WITH_AAUDIO)
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "aaudio" "")
 endif()
 
 if(WITH_OPENSLES)
-	add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "opensles" "")
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "opensles" "")
 endif()
 
 if(WITH_WINMM)
-	add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "winmm" "")
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "winmm" "")
 endif()
 
 if(WITH_MACAUDIO)
-	add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "mac" "")
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "mac" "")
 endif()
 
 if(WITH_SNDIO)
-	add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "sndio" "")
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "sndio" "")
+endif()
+
+if(WITH_IOSAUDIO)
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "ios" "")
+endif()
+
+if(EMSCRIPTEN)
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "emscripten" "")
+endif()
+
+if(WITH_SDL_AUDIO)
+  add_channel_client_subsystem(${MODULE_PREFIX} ${CHANNEL_NAME} "sdl" "")
 endif()

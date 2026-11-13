@@ -4,7 +4,7 @@
 #include <winpr/sysinfo.h>
 
 static int g_Count = 0;
-static HANDLE g_Event = NULL;
+static HANDLE g_Event = nullptr;
 
 struct apc_data
 {
@@ -14,7 +14,7 @@ typedef struct apc_data APC_DATA;
 
 static VOID CALLBACK TimerAPCProc(LPVOID lpArg, DWORD dwTimerLowValue, DWORD dwTimerHighValue)
 {
-	APC_DATA* apcData;
+	APC_DATA* apcData = nullptr;
 	UINT32 CurrentTime = GetTickCount();
 	WINPR_UNUSED(dwTimerLowValue);
 	WINPR_UNUSED(dwTimerHighValue);
@@ -28,21 +28,21 @@ static VOID CALLBACK TimerAPCProc(LPVOID lpArg, DWORD dwTimerLowValue, DWORD dwT
 
 	if (g_Count >= 5)
 	{
-		SetEvent(g_Event);
+		(void)SetEvent(g_Event);
 	}
 }
 
 int TestSynchWaitableTimerAPC(int argc, char* argv[])
 {
 	int status = -1;
-	DWORD rc;
-	HANDLE hTimer = NULL;
-	BOOL bSuccess;
-	LARGE_INTEGER due;
-	APC_DATA apcData = { 0 };
+	DWORD rc = 0;
+	HANDLE hTimer = nullptr;
+	BOOL bSuccess = 0;
+	LARGE_INTEGER due = WINPR_C_ARRAY_INIT;
+	APC_DATA apcData = WINPR_C_ARRAY_INIT;
 	WINPR_UNUSED(argc);
 	WINPR_UNUSED(argv);
-	g_Event = CreateEvent(NULL, TRUE, FALSE, NULL);
+	g_Event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 
 	if (!g_Event)
 	{
@@ -50,19 +50,19 @@ int TestSynchWaitableTimerAPC(int argc, char* argv[])
 		goto cleanup;
 	}
 
-	hTimer = CreateWaitableTimer(NULL, FALSE, NULL);
+	hTimer = CreateWaitableTimer(nullptr, FALSE, nullptr);
 	if (!hTimer)
 		goto cleanup;
 
-	due.QuadPart = -1000 * 1000LL; /* 1 seconds */
+	due.QuadPart = -1000 * 100LL; /* 0.1 seconds */
 	apcData.StartTime = GetTickCount();
-	bSuccess = SetWaitableTimer(hTimer, &due, 100, TimerAPCProc, &apcData, FALSE);
+	bSuccess = SetWaitableTimer(hTimer, &due, 10, TimerAPCProc, &apcData, FALSE);
 
 	if (!bSuccess)
 		goto cleanup;
 
-	/* nothing shall happen after 1.2 second, because thread is not in alertable state */
-	rc = WaitForSingleObject(g_Event, 1200);
+	/* nothing shall happen after 0.12 second, because thread is not in alertable state */
+	rc = WaitForSingleObject(g_Event, 120);
 	if (rc != WAIT_TIMEOUT)
 		goto cleanup;
 
@@ -83,10 +83,10 @@ int TestSynchWaitableTimerAPC(int argc, char* argv[])
 cleanup:
 
 	if (hTimer)
-		CloseHandle(hTimer);
+		(void)CloseHandle(hTimer);
 
 	if (g_Event)
-		CloseHandle(g_Event);
+		(void)CloseHandle(g_Event);
 
 	return status;
 }

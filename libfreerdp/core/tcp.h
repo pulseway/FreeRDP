@@ -27,6 +27,7 @@
 #include <freerdp/settings.h>
 #include <freerdp/freerdp.h>
 #include <freerdp/api.h>
+#include <freerdp/transport_io.h>
 
 #include <winpr/crt.h>
 #include <winpr/synch.h>
@@ -41,6 +42,7 @@
 #define BIO_TYPE_TSG 65
 #define BIO_TYPE_SIMPLE 66
 #define BIO_TYPE_BUFFERED 67
+#define BIO_TYPE_NAMEDPIPE 69
 
 #define BIO_C_SET_SOCKET 1101
 #define BIO_C_GET_SOCKET 1102
@@ -50,29 +52,89 @@
 #define BIO_C_WRITE_BLOCKED 1106
 #define BIO_C_WAIT_READ 1107
 #define BIO_C_WAIT_WRITE 1108
+#define BIO_C_SET_HANDLE 1109
 
-#define BIO_set_socket(b, s, c) BIO_ctrl(b, BIO_C_SET_SOCKET, c, s);
-#define BIO_get_socket(b, c) BIO_ctrl(b, BIO_C_GET_SOCKET, 0, (char*)c)
-#define BIO_get_event(b, c) BIO_ctrl(b, BIO_C_GET_EVENT, 0, (char*)c)
-#define BIO_set_nonblock(b, c) BIO_ctrl(b, BIO_C_SET_NONBLOCK, c, NULL)
-#define BIO_read_blocked(b) BIO_ctrl(b, BIO_C_READ_BLOCKED, 0, NULL)
-#define BIO_write_blocked(b) BIO_ctrl(b, BIO_C_WRITE_BLOCKED, 0, NULL)
-#define BIO_wait_read(b, c) BIO_ctrl(b, BIO_C_WAIT_READ, c, NULL)
-#define BIO_wait_write(b, c) BIO_ctrl(b, BIO_C_WAIT_WRITE, c, NULL)
+WINPR_ATTR_NODISCARD
+static inline long BIO_set_socket(BIO* b, SOCKET s, long c)
+{
+	return BIO_ctrl(b, BIO_C_SET_SOCKET, c, (void*)(intptr_t)s);
+}
 
-FREERDP_LOCAL BIO_METHOD* BIO_s_simple_socket(void);
-FREERDP_LOCAL BIO_METHOD* BIO_s_buffered_socket(void);
+static inline long BIO_get_socket(BIO* b, SOCKET* c)
+{
+	return BIO_ctrl(b, BIO_C_GET_SOCKET, 0, c);
+}
 
-FREERDP_LOCAL int freerdp_tcp_connect(rdpContext* context, rdpSettings* settings,
-                                      const char* hostname, int port, DWORD timeout);
+static inline long BIO_get_event(BIO* b, HANDLE* c)
+{
+	return BIO_ctrl(b, BIO_C_GET_EVENT, 0, (void*)c);
+}
 
+static inline long BIO_set_handle(BIO* b, HANDLE h)
+{
+	return BIO_ctrl(b, BIO_C_SET_HANDLE, 0, h);
+}
+
+static inline long BIO_set_nonblock(BIO* b, long c)
+{
+	return BIO_ctrl(b, BIO_C_SET_NONBLOCK, c, nullptr);
+}
+
+WINPR_ATTR_NODISCARD
+static inline long BIO_read_blocked(BIO* b)
+{
+	return BIO_ctrl(b, BIO_C_READ_BLOCKED, 0, nullptr);
+}
+
+WINPR_ATTR_NODISCARD
+static inline long BIO_write_blocked(BIO* b)
+{
+	return BIO_ctrl(b, BIO_C_WRITE_BLOCKED, 0, nullptr);
+}
+
+static inline long BIO_wait_read(BIO* b, long c)
+{
+	return BIO_ctrl(b, BIO_C_WAIT_READ, c, nullptr);
+}
+
+WINPR_ATTR_NODISCARD
+static inline long BIO_wait_write(BIO* b, long c)
+{
+	return BIO_ctrl(b, BIO_C_WAIT_WRITE, c, nullptr);
+}
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL const BIO_METHOD* BIO_s_simple_socket(void);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL const BIO_METHOD* BIO_s_buffered_socket(void);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL BOOL freerdp_tcp_set_keep_alive_mode(const rdpSettings* settings, int sockfd);
+
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL int freerdp_tcp_connect(rdpContext* context, const char* hostname, int port,
+                                      DWORD timeout);
+
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL int freerdp_tcp_default_connect(rdpContext* context, rdpSettings* settings,
                                               const char* hostname, int port, DWORD timeout);
 
+WINPR_ATTR_NODISCARD
+FREERDP_LOCAL rdpTransportLayer*
+freerdp_tcp_connect_layer(rdpContext* context, const char* hostname, int port, DWORD timeout);
+
+WINPR_ATTR_MALLOC(free, 1)
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL char* freerdp_tcp_get_peer_address(SOCKET sockfd);
 
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL struct addrinfo* freerdp_tcp_resolve_host(const char* hostname, int port,
                                                         int ai_flags);
+
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL char* freerdp_tcp_address_to_string(const struct sockaddr_storage* addr, BOOL* pIPv6);
+
+FREERDP_LOCAL BOOL freerdp_tcp_set_nodelay(wLog* log, DWORD level, int sockfd);
 
 #endif /* FREERDP_LIB_CORE_TCP_H */

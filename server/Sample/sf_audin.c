@@ -5,6 +5,7 @@
  * Copyright 2012 Marc-Andre Moreau <marcandre.moreau@gmail.com>
  * Copyright 2015 Thincast Technologies GmbH
  * Copyright 2015 DI (FH) Martin Haimberger <martin.haimberger@thincast.com>
+ * Copyright 2023 Pascal Nowack <Pascal.Nowack@gmx.de>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,9 +20,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
+
+#include <winpr/assert.h>
 
 #include "sfreerdp.h"
 
@@ -31,87 +32,83 @@
 #include <freerdp/log.h>
 #define TAG SERVER_TAG("sample")
 
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT sf_peer_audin_opening(audin_server_context* context)
-{
-	WLog_DBG(TAG, "AUDIN opening.");
-	/* Simply choose the first format supported by the client. */
-	context->SelectFormat(context, 0);
-	return CHANNEL_RC_OK;
-}
+#if defined(CHANNEL_AUDIN_SERVER)
 
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT sf_peer_audin_open_result(audin_server_context* context, UINT32 result)
+WINPR_ATTR_NODISCARD
+static UINT sf_peer_audin_data(WINPR_ATTR_UNUSED audin_server_context* audin,
+                               const SNDIN_DATA* data)
 {
 	/* TODO: Implement */
-	WLog_WARN(TAG, "%s not implemented", __FUNCTION__);
-	WLog_DBG(TAG, "AUDIN open result %" PRIu32 ".", result);
+	WINPR_ASSERT(audin);
+	WINPR_ASSERT(data);
+
+	WLog_WARN(TAG, "not implemented");
+	WLog_DBG(TAG, "receive %" PRIuz " bytes.", Stream_Length(data->Data));
 	return CHANNEL_RC_OK;
 }
 
-/**
- * Function description
- *
- * @return 0 on success, otherwise a Win32 error code
- */
-static UINT sf_peer_audin_receive_samples(audin_server_context* context, const AUDIO_FORMAT* format,
-                                          wStream* buf, size_t nframes)
-{
-	/* TODO: Implement */
-	WLog_WARN(TAG, "%s not implemented", __FUNCTION__);
-	WLog_DBG(TAG, "%s receive %" PRIdz " frames.", __FUNCTION__, nframes);
-	return CHANNEL_RC_OK;
-}
+#endif
 
-void sf_peer_audin_init(testPeerContext* context)
+BOOL sf_peer_audin_init(testPeerContext* context)
 {
+	WINPR_ASSERT(context);
+#if defined(CHANNEL_AUDIN_SERVER)
 	context->audin = audin_server_context_new(context->vcm);
+	WINPR_ASSERT(context->audin);
+
 	context->audin->rdpcontext = &context->_p;
-	context->audin->data = context;
-	context->audin->num_server_formats = server_audin_get_formats(&context->audin->server_formats);
+	context->audin->userdata = context;
 
-	if (context->audin->num_server_formats > 0)
-		context->audin->dst_format = &context->audin->server_formats[0];
+	context->audin->Data = sf_peer_audin_data;
 
-	context->audin->Opening = sf_peer_audin_opening;
-	context->audin->OpenResult = sf_peer_audin_open_result;
-	context->audin->ReceiveSamples = sf_peer_audin_receive_samples;
+	return audin_server_set_formats(context->audin, -1, nullptr);
+#else
+	return TRUE;
+#endif
 }
 
 BOOL sf_peer_audin_start(testPeerContext* context)
 {
+#if defined(CHANNEL_AUDIN_SERVER)
 	if (!context || !context->audin || !context->audin->Open)
 		return FALSE;
 
 	return context->audin->Open(context->audin);
+#else
+	return FALSE;
+#endif
 }
 
 BOOL sf_peer_audin_stop(testPeerContext* context)
 {
+#if defined(CHANNEL_AUDIN_SERVER)
 	if (!context || !context->audin || !context->audin->Close)
 		return FALSE;
 
 	return context->audin->Close(context->audin);
+#else
+	return FALSE;
+#endif
 }
 
 BOOL sf_peer_audin_running(testPeerContext* context)
 {
+#if defined(CHANNEL_AUDIN_SERVER)
 	if (!context || !context->audin || !context->audin->IsOpen)
 		return FALSE;
 
 	return context->audin->IsOpen(context->audin);
+#else
+	return FALSE;
+#endif
 }
 
 void sf_peer_audin_uninit(testPeerContext* context)
 {
-	if (context)
-		audin_server_context_free(context->audin);
+	WINPR_ASSERT(context);
+
+#if defined(CHANNEL_AUDIN_SERVER)
+	audin_server_context_free(context->audin);
+	context->audin = nullptr;
+#endif
 }

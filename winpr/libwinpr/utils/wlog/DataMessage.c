@@ -17,32 +17,26 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include "wlog.h"
 
-#include "wlog/DataMessage.h"
+#include "DataMessage.h"
 
-#include "../../log.h"
-#define TAG WINPR_TAG("utils.wlog")
+#include <winpr/file.h>
 
-BOOL WLog_DataMessage_Write(char* filename, void* data, int length)
+BOOL WLog_DataMessage_Write(const char* filename, const void* data, size_t length)
 {
-	FILE* fp;
+	FILE* fp = nullptr;
 	BOOL ret = TRUE;
 
-	fp = fopen(filename, "w+b");
+	fp = winpr_fopen(filename, "w+b");
 
 	if (!fp)
-	{
-		// WLog_ERR(TAG, "failed to open file %s", filename);
 		return FALSE;
-	}
 
 	if (fwrite(data, length, 1, fp) != 1)
 		ret = FALSE;
-	fclose(fp);
+	(void)fclose(fp);
 	return ret;
 }

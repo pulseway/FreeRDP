@@ -20,13 +20,20 @@
 #ifndef FREERDP_CLIENT_X11_CLIPRDR_H
 #define FREERDP_CLIENT_X11_CLIPRDR_H
 
-#include "xf_client.h"
-#include "xfreerdp.h"
-
+#include <freerdp/types.h>
 #include <freerdp/client/cliprdr.h>
 
-xfClipboard* xf_clipboard_new(xfContext* xfc);
+#include <X11/Xlib.h>
+
+#include "xf_types.h"
+
+typedef struct xf_clipboard xfClipboard;
+
 void xf_clipboard_free(xfClipboard* clipboard);
+
+WINPR_ATTR_MALLOC(xf_clipboard_free, 1)
+WINPR_ATTR_NODISCARD
+xfClipboard* xf_clipboard_new(xfContext* xfc, BOOL relieveFilenameRestriction);
 
 void xf_cliprdr_init(xfContext* xfc, CliprdrClientContext* cliprdr);
 void xf_cliprdr_uninit(xfContext* xfc, CliprdrClientContext* cliprdr);

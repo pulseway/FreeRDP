@@ -19,9 +19,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/stream.h>
@@ -32,41 +30,32 @@
 
 #include "rdpgfx_codec.h"
 
-#define TAG CHANNELS_TAG("rdpgfx.client")
-
 /**
  * Function description
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-static UINT rdpgfx_read_h264_metablock(RDPGFX_PLUGIN* gfx, wStream* s, RDPGFX_H264_METABLOCK* meta)
+static UINT rdpgfx_read_h264_metablock(WINPR_ATTR_UNUSED RDPGFX_PLUGIN* gfx, wStream* s,
+                                       RDPGFX_H264_METABLOCK* meta)
 {
-	UINT32 index;
-	RECTANGLE_16* regionRect;
-	RDPGFX_H264_QUANT_QUALITY* quantQualityVal;
+	RDPGFX_H264_QUANT_QUALITY* quantQualityVal = nullptr;
 	UINT error = ERROR_INVALID_DATA;
-	meta->regionRects = NULL;
-	meta->quantQualityVals = NULL;
+	meta->regionRects = nullptr;
+	meta->quantQualityVals = nullptr;
 
-	if (Stream_GetRemainingLength(s) < 4)
-	{
-		WLog_ERR(TAG, "not enough data!");
+	if (!Stream_CheckAndLogRequiredLengthWLog(gfx->base.log, s, 4))
 		goto error_out;
-	}
 
 	Stream_Read_UINT32(s, meta->numRegionRects); /* numRegionRects (4 bytes) */
 
-	if (Stream_GetRemainingLength(s) < (meta->numRegionRects * 8))
-	{
-		WLog_ERR(TAG, "not enough data!");
+	if (!Stream_CheckAndLogRequiredLengthOfSizeWLog(gfx->base.log, s, meta->numRegionRects, 8ull))
 		goto error_out;
-	}
 
 	meta->regionRects = (RECTANGLE_16*)calloc(meta->numRegionRects, sizeof(RECTANGLE_16));
 
 	if (!meta->regionRects)
 	{
-		WLog_ERR(TAG, "malloc failed!");
+		WLog_Print(gfx->base.log, WLOG_ERROR, "malloc failed!");
 		error = CHANNEL_RC_NO_MEMORY;
 		goto error_out;
 	}
@@ -76,37 +65,38 @@ static UINT rdpgfx_read_h264_metablock(RDPGFX_PLUGIN* gfx, wStream* s, RDPGFX_H2
 
 	if (!meta->quantQualityVals)
 	{
-		WLog_ERR(TAG, "malloc failed!");
+		WLog_Print(gfx->base.log, WLOG_ERROR, "malloc failed!");
 		error = CHANNEL_RC_NO_MEMORY;
 		goto error_out;
 	}
 
-	WLog_DBG(TAG, "H264_METABLOCK: numRegionRects: %" PRIu32 "", meta->numRegionRects);
+	WLog_Print(gfx->base.log, WLOG_TRACE, "H264_METABLOCK: numRegionRects: %" PRIu32 "",
+	           meta->numRegionRects);
 
-	for (index = 0; index < meta->numRegionRects; index++)
+	for (UINT32 index = 0; index < meta->numRegionRects; index++)
 	{
-		regionRect = &(meta->regionRects[index]);
+		RECTANGLE_16* regionRect = &(meta->regionRects[index]);
 
-		if ((error = rdpgfx_read_rect16(s, regionRect)))
+		if ((error = rdpgfx_read_rect16(gfx->base.log, s, regionRect, FALSE)))
 		{
-			WLog_ERR(TAG, "rdpgfx_read_rect16 failed with error %" PRIu32 "!", error);
+			WLog_Print(gfx->base.log, WLOG_ERROR,
+			           "rdpgfx_read_rect16 failed with error %" PRIu32 "!", error);
 			goto error_out;
 		}
 
-		WLog_DBG(TAG,
-		         "regionRects[%" PRIu32 "]: left: %" PRIu16 " top: %" PRIu16 " right: %" PRIu16
-		         " bottom: %" PRIu16 "",
-		         index, regionRect->left, regionRect->top, regionRect->right, regionRect->bottom);
+		WLog_Print(gfx->base.log, WLOG_TRACE,
+		           "regionRects[%" PRIu32 "]: left: %" PRIu16 " top: %" PRIu16 " right: %" PRIu16
+		           " bottom: %" PRIu16 "",
+		           index, regionRect->left, regionRect->top, regionRect->right, regionRect->bottom);
 	}
 
-	if (Stream_GetRemainingLength(s) < (meta->numRegionRects * 2))
+	if (!Stream_CheckAndLogRequiredLengthOfSizeWLog(gfx->base.log, s, meta->numRegionRects, 2ull))
 	{
-		WLog_ERR(TAG, "not enough data!");
 		error = ERROR_INVALID_DATA;
 		goto error_out;
 	}
 
-	for (index = 0; index < meta->numRegionRects; index++)
+	for (UINT32 index = 0; index < meta->numRegionRects; index++)
 	{
 		quantQualityVal = &(meta->quantQualityVals[index]);
 		Stream_Read_UINT8(s, quantQualityVal->qpVal);      /* qpVal (1 byte) */
@@ -114,11 +104,11 @@ static UINT rdpgfx_read_h264_metablock(RDPGFX_PLUGIN* gfx, wStream* s, RDPGFX_H2
 		quantQualityVal->qp = quantQualityVal->qpVal & 0x3F;
 		quantQualityVal->r = (quantQualityVal->qpVal >> 6) & 1;
 		quantQualityVal->p = (quantQualityVal->qpVal >> 7) & 1;
-		WLog_DBG(TAG,
-		         "quantQualityVals[%" PRIu32 "]: qp: %" PRIu8 " r: %" PRIu8 " p: %" PRIu8
-		         " qualityVal: %" PRIu8 "",
-		         index, quantQualityVal->qp, quantQualityVal->r, quantQualityVal->p,
-		         quantQualityVal->qualityVal);
+		WLog_Print(gfx->base.log, WLOG_TRACE,
+		           "quantQualityVals[%" PRIu32 "]: qp: %" PRIu8 " r: %" PRIu8 " p: %" PRIu8
+		           " qualityVal: %" PRIu8 "",
+		           index, quantQualityVal->qp, quantQualityVal->r, quantQualityVal->p,
+		           quantQualityVal->qualityVal);
 	}
 
 	return CHANNEL_RC_OK;
@@ -134,22 +124,21 @@ error_out:
  */
 static UINT rdpgfx_decode_AVC420(RDPGFX_PLUGIN* gfx, RDPGFX_SURFACE_COMMAND* cmd)
 {
-	UINT error;
-	wStream* s;
-	RDPGFX_AVC420_BITMAP_STREAM h264;
-	RdpgfxClientContext* context = (RdpgfxClientContext*)gfx->iface.pInterface;
-	s = Stream_New(cmd->data, cmd->length);
+	RDPGFX_AVC420_BITMAP_STREAM h264 = WINPR_C_ARRAY_INIT;
+	wStream* s = Stream_New(cmd->data, cmd->length);
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "Stream_New failed!");
+		WLog_Print(gfx->base.log, WLOG_ERROR, "Stream_New failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
-	if ((error = rdpgfx_read_h264_metablock(gfx, s, &(h264.meta))))
+	UINT error = rdpgfx_read_h264_metablock(gfx, s, &(h264.meta));
+	if (error != CHANNEL_RC_OK)
 	{
 		Stream_Free(s, FALSE);
-		WLog_ERR(TAG, "rdpgfx_read_h264_metablock failed with error %" PRIu32 "!", error);
+		WLog_Print(gfx->base.log, WLOG_ERROR,
+		           "rdpgfx_read_h264_metablock failed with error %" PRIu32 "!", error);
 		return error;
 	}
 
@@ -158,17 +147,96 @@ static UINT rdpgfx_decode_AVC420(RDPGFX_PLUGIN* gfx, RDPGFX_SURFACE_COMMAND* cmd
 	Stream_Free(s, FALSE);
 	cmd->extra = (void*)&h264;
 
-	if (context)
-	{
-		IFCALLRET(context->SurfaceCommand, error, context, cmd);
-
-		if (error)
-			WLog_ERR(TAG, "context->SurfaceCommand failed with error %" PRIu32 "", error);
-	}
+	error = logSurfaceCommand(gfx, cmd);
 
 	free_h264_metablock(&h264.meta);
+	cmd->extra = nullptr;
 	return error;
 }
+
+#if defined(WITH_GFX_AZURE)
+/**
+ * HEVC420 (undocumented) uses the AVC420 metablock, then a table of the NAL unit sizes and
+ * the Annex B bitstream:
+ *
+ *   RDPGFX_H264_METABLOCK
+ *   UINT32 cbNalSizes        size of the following table in bytes, 4 to 2048 (max 512 NAL units)
+ *   UINT32 nalSize[cbNalSizes / 4]
+ *   Annex B NAL units, each nalSize[i] bytes including its start code
+ *
+ * The table is checked against the bitstream and dropped, decoders get the Annex B data.
+ *
+ * With RDPGFX_CAPVERSION_113 and RDPGFX_CAPVERSION_115 a BYTE frameAttributes (bit 0: key
+ * frame) follows the table.
+ *
+ * @return 0 on success, otherwise a Win32 error code
+ */
+WINPR_ATTR_NODISCARD
+static UINT rdpgfx_decode_HEVC(RDPGFX_PLUGIN* gfx, RDPGFX_SURFACE_COMMAND* cmd)
+{
+	RDPGFX_HEVC_BITMAP_STREAM hevc = WINPR_C_ARRAY_INIT;
+	wStream sbuffer = WINPR_C_ARRAY_INIT;
+	wStream* s = Stream_StaticConstInit(&sbuffer, cmd->data, cmd->length);
+
+	UINT error = rdpgfx_read_h264_metablock(gfx, s, &(hevc.meta));
+	if (error != CHANNEL_RC_OK)
+	{
+		WLog_Print(gfx->base.log, WLOG_ERROR,
+		           "rdpgfx_read_h264_metablock failed with error %" PRIu32 "!", error);
+		return error;
+	}
+
+	error = ERROR_INVALID_DATA;
+	if (!Stream_CheckAndLogRequiredLengthWLog(gfx->base.log, s, 4))
+		goto fail;
+
+	hevc.cbNalSizes = Stream_Get_UINT32(s);
+	if ((hevc.cbNalSizes == 0) || (hevc.cbNalSizes > 2048) || ((hevc.cbNalSizes % 4) != 0) ||
+	    !Stream_CheckAndLogRequiredLengthWLog(gfx->base.log, s, hevc.cbNalSizes))
+	{
+		WLog_Print(gfx->base.log, WLOG_ERROR, "HEVC420 invalid NAL size table length %" PRIu32,
+		           hevc.cbNalSizes);
+		goto fail;
+	}
+
+	size_t total = 0;
+	hevc.nalSize = Stream_Pointer(s);
+	for (UINT32 x = 0; x < hevc.cbNalSizes / sizeof(UINT32); x++)
+		total += Stream_Get_UINT32(s);
+
+	if ((gfx->ConnectionCaps.version == RDPGFX_CAPVERSION_113) ||
+	    (gfx->ConnectionCaps.version == RDPGFX_CAPVERSION_115))
+	{
+		if (!Stream_CheckAndLogRequiredLengthWLog(gfx->base.log, s, 1))
+			goto fail;
+		hevc.frameAttributes = Stream_Get_UINT8(s);
+		WLog_Print(gfx->base.log, WLOG_TRACE, "HEVC420 frameAttributes 0x%02" PRIx8 "%s",
+		           hevc.frameAttributes, (hevc.frameAttributes & 0x01) ? " (key frame)" : "");
+	}
+	else
+		hevc.frameAttributes = -1;
+
+	const size_t remaining = Stream_GetRemainingLength(s);
+	if ((total != remaining) || (remaining > UINT32_MAX))
+	{
+		WLog_Print(gfx->base.log, WLOG_ERROR,
+		           "HEVC420 NAL sizes add up to %" PRIuz " bytes, but %" PRIuz " bytes follow",
+		           total, remaining);
+		goto fail;
+	}
+
+	hevc.data = Stream_Pointer(s);
+	hevc.length = (UINT32)remaining;
+	cmd->extra = (void*)&hevc;
+
+	error = logSurfaceCommand(gfx, cmd);
+
+fail:
+	free_h264_metablock(&hevc.meta);
+	cmd->extra = nullptr;
+	return error;
+}
+#endif
 
 /**
  * Function description
@@ -177,21 +245,21 @@ static UINT rdpgfx_decode_AVC420(RDPGFX_PLUGIN* gfx, RDPGFX_SURFACE_COMMAND* cmd
  */
 static UINT rdpgfx_decode_AVC444(RDPGFX_PLUGIN* gfx, RDPGFX_SURFACE_COMMAND* cmd)
 {
-	UINT error;
-	UINT32 tmp;
-	size_t pos1, pos2;
-	wStream* s;
-	RDPGFX_AVC444_BITMAP_STREAM h264 = { 0 };
-	RdpgfxClientContext* context = (RdpgfxClientContext*)gfx->iface.pInterface;
-	s = Stream_New(cmd->data, cmd->length);
+	UINT error = CHANNEL_RC_OK;
+	UINT32 tmp = 0;
+	size_t pos1 = 0;
+	size_t pos2 = 0;
+
+	RDPGFX_AVC444_BITMAP_STREAM h264 = WINPR_C_ARRAY_INIT;
+	wStream* s = Stream_New(cmd->data, cmd->length);
 
 	if (!s)
 	{
-		WLog_ERR(TAG, "Stream_New failed!");
+		WLog_Print(gfx->base.log, WLOG_ERROR, "Stream_New failed!");
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
-	if (Stream_GetRemainingLength(s) < 4)
+	if (!Stream_CheckAndLogRequiredLengthWLog(gfx->base.log, s, 4))
 	{
 		error = ERROR_INVALID_DATA;
 		goto fail;
@@ -211,7 +279,8 @@ static UINT rdpgfx_decode_AVC444(RDPGFX_PLUGIN* gfx, RDPGFX_SURFACE_COMMAND* cmd
 
 	if ((error = rdpgfx_read_h264_metablock(gfx, s, &(h264.bitstream[0].meta))))
 	{
-		WLog_ERR(TAG, "rdpgfx_read_h264_metablock failed with error %" PRIu32 "!", error);
+		WLog_Print(gfx->base.log, WLOG_ERROR,
+		           "rdpgfx_read_h264_metablock failed with error %" PRIu32 "!", error);
 		goto fail;
 	}
 
@@ -220,43 +289,49 @@ static UINT rdpgfx_decode_AVC444(RDPGFX_PLUGIN* gfx, RDPGFX_SURFACE_COMMAND* cmd
 
 	if (h264.LC == 0)
 	{
-		tmp = h264.cbAvc420EncodedBitstream1 - pos2 + pos1;
+		const size_t bitstreamLen = 1ULL * h264.cbAvc420EncodedBitstream1 - pos2 + pos1;
 
-		if (Stream_GetRemainingLength(s) < tmp)
+		if ((bitstreamLen > UINT32_MAX) || (h264.cbAvc420EncodedBitstream1 < pos2 - pos1) ||
+		    !Stream_CheckAndLogRequiredLengthWLog(gfx->base.log, s, bitstreamLen))
 		{
 			error = ERROR_INVALID_DATA;
 			goto fail;
 		}
 
-		h264.bitstream[0].length = tmp;
-		Stream_Seek(s, tmp);
+		h264.bitstream[0].length = (UINT32)bitstreamLen;
+		Stream_Seek(s, bitstreamLen);
 
 		if ((error = rdpgfx_read_h264_metablock(gfx, s, &(h264.bitstream[1].meta))))
 		{
-			WLog_ERR(TAG, "rdpgfx_read_h264_metablock failed with error %" PRIu32 "!", error);
+			WLog_Print(gfx->base.log, WLOG_ERROR,
+			           "rdpgfx_read_h264_metablock failed with error %" PRIu32 "!", error);
 			goto fail;
 		}
 
 		h264.bitstream[1].data = Stream_Pointer(s);
-		h264.bitstream[1].length = Stream_GetRemainingLength(s);
+
+		const size_t len = Stream_GetRemainingLength(s);
+		if (len > UINT32_MAX)
+			goto fail;
+		h264.bitstream[1].length = (UINT32)len;
 	}
 	else
-		h264.bitstream[0].length = Stream_GetRemainingLength(s);
+	{
+		const size_t len = Stream_GetRemainingLength(s);
+		if (len > UINT32_MAX)
+			goto fail;
+		h264.bitstream[0].length = (UINT32)len;
+	}
 
 	cmd->extra = (void*)&h264;
 
-	if (context)
-	{
-		IFCALLRET(context->SurfaceCommand, error, context, cmd);
-
-		if (error)
-			WLog_ERR(TAG, "context->SurfaceCommand failed with error %" PRIu32 "", error);
-	}
+	error = logSurfaceCommand(gfx, cmd);
 
 fail:
 	Stream_Free(s, FALSE);
 	free_h264_metablock(&h264.bitstream[0].meta);
 	free_h264_metablock(&h264.bitstream[1].meta);
+	cmd->extra = nullptr;
 	return error;
 }
 
@@ -268,36 +343,46 @@ fail:
 UINT rdpgfx_decode(RDPGFX_PLUGIN* gfx, RDPGFX_SURFACE_COMMAND* cmd)
 {
 	UINT error = CHANNEL_RC_OK;
-	RdpgfxClientContext* context = (RdpgfxClientContext*)gfx->iface.pInterface;
-	PROFILER_ENTER(context->SurfaceProfiler)
+	WINPR_ASSERT(gfx);
+	WINPR_ASSERT(cmd);
+
+	PROFILER_ENTER(gfx->context->SurfaceProfiler)
 
 	switch (cmd->codecId)
 	{
+#if defined(WITH_GFX_AV1) || defined(WITH_GFX_AV2)
+		case RDPGFX_CODECID_AV1:
+#endif
 		case RDPGFX_CODECID_AVC420:
 			if ((error = rdpgfx_decode_AVC420(gfx, cmd)))
-				WLog_ERR(TAG, "rdpgfx_decode_AVC420 failed with error %" PRIu32 "", error);
+				WLog_Print(gfx->base.log, WLOG_ERROR,
+				           "rdpgfx_decode_AVC420 failed with error %" PRIu32 "", error);
 
 			break;
 
 		case RDPGFX_CODECID_AVC444:
 		case RDPGFX_CODECID_AVC444v2:
 			if ((error = rdpgfx_decode_AVC444(gfx, cmd)))
-				WLog_ERR(TAG, "rdpgfx_decode_AVC444 failed with error %" PRIu32 "", error);
+				WLog_Print(gfx->base.log, WLOG_ERROR,
+				           "rdpgfx_decode_AVC444 failed with error %" PRIu32 "", error);
 
 			break;
 
+#if defined(WITH_GFX_AZURE)
+		case RDPGFX_CODECID_HEVC420:
+		case RDPGFX_CODECID_HEVC444:
+			if ((error = rdpgfx_decode_HEVC(gfx, cmd)))
+				WLog_Print(gfx->base.log, WLOG_ERROR,
+				           "rdpgfx_decode_HEVC failed with error %" PRIu32 "", error);
+
+			break;
+#endif
+
 		default:
-			if (context)
-			{
-				IFCALLRET(context->SurfaceCommand, error, context, cmd);
-
-				if (error)
-					WLog_ERR(TAG, "context->SurfaceCommand failed with error %" PRIu32 "", error);
-			}
-
+			error = logSurfaceCommand(gfx, cmd);
 			break;
 	}
 
-	PROFILER_EXIT(context->SurfaceProfiler)
+	PROFILER_EXIT(gfx->context->SurfaceProfiler)
 	return error;
 }

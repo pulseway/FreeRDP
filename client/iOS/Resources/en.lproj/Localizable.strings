@@ -28,9 +28,12 @@
 /* Advanced Settings title */
 "Advanced Settings" = "Advanced Settings";
 
-/* Automatic protocl security selection
+/* Automatic protocol security selection
    Screen resolution selector: Automatic resolution (full screen on iPad, reasonable size on iPhone) */
 "Automatic" = "Automatic";
+
+/* Avoid Screen Edges UI setting */
+"Avoid Screen Edges" = "Avoid Screen Edges";
 
 /* Bookmark data validation: label blank title. */
 "Bookmark labels cannot be blank" = "Bookmark labels cannot be blank";
@@ -100,10 +103,6 @@
 
 /* Custom Screen Height */
 "Height" = "Height";
-
-/* Help Controller title
-   Tabbar item help */
-"Help" = "Help";
 
 /* Button title 'Hide' */
 "Hide" = "Hide";
@@ -193,6 +192,9 @@
 /* Incomplete bookmark error message */
 "Press 'Cancel' to abort!\nPress 'Continue' to specify the required fields!" = "Press 'Cancel' to abort!\nPress 'Continue' to specify the required fields!";
 
+/* Connecting progress view - reconnect label */
+"Reconnecting" = "Reconnecting";
+
 /* 'Remote Program': Bookmark remote program settings */
 "Remote Program" = "Remote Program";
 
@@ -205,7 +207,7 @@
 /* 'Screen': Bookmark Screen settings */
 "Screen" = "Screen";
 
-/* 'Security': Bookmark protocl security settings */
+/* 'Security': Bookmark protocol security settings */
 "Security" = "Security";
 
 /* Server Certificate Handling section title */
@@ -271,4 +273,3 @@
 
 /* Save connection settings message */
 "Your connection settings have not been saved. Do you want to save them to a new bookmark?" = "Your connection settings have not been saved. Do you want to save them to a new bookmark?";
-

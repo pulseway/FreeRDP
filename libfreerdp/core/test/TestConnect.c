@@ -1,20 +1,26 @@
 #include <winpr/sysinfo.h>
 #include <winpr/path.h>
 #include <winpr/crypto.h>
+#include <winpr/pipe.h>
+
+#include <freerdp/version.h>
 #include <freerdp/freerdp.h>
+#include <freerdp/gdi/gdi.h>
 #include <freerdp/client/cmdline.h>
 
-static HANDLE s_sync = NULL;
+static HANDLE s_sync = nullptr;
 
-static int runInstance(int argc, char* argv[], freerdp** inst)
+WINPR_ATTR_NODISCARD
+static int runInstance(int argc, char* argv[], freerdp** inst, DWORD timeout)
 {
 	int rc = -1;
-	RDP_CLIENT_ENTRY_POINTS clientEntryPoints;
-	ZeroMemory(&clientEntryPoints, sizeof(RDP_CLIENT_ENTRY_POINTS));
+	RDP_CLIENT_ENTRY_POINTS clientEntryPoints = WINPR_C_ARRAY_INIT;
+	rdpContext* context = nullptr;
+
 	clientEntryPoints.Size = sizeof(RDP_CLIENT_ENTRY_POINTS);
 	clientEntryPoints.Version = RDP_CLIENT_INTERFACE_VERSION;
-	clientEntryPoints.ContextSize = sizeof(rdpContext);
-	rdpContext* context = freerdp_client_context_new(&clientEntryPoints);
+	clientEntryPoints.ContextSize = sizeof(rdpClientContext);
+	context = freerdp_client_context_new(&clientEntryPoints);
 
 	if (!context)
 		goto finish;
@@ -22,7 +28,20 @@ static int runInstance(int argc, char* argv[], freerdp** inst)
 	if (inst)
 		*inst = context->instance;
 
+	context->instance->ChooseSmartcard = nullptr;
+	context->instance->PresentGatewayMessage = nullptr;
+	context->instance->LogonErrorInfo = nullptr;
+	context->instance->AuthenticateEx = nullptr;
+	context->instance->VerifyCertificateEx = nullptr;
+	context->instance->VerifyChangedCertificateEx = nullptr;
+
+	if (!freerdp_settings_set_bool(context->settings, FreeRDP_DeactivateClientDecoding, TRUE))
+		return FALSE;
+
 	if (freerdp_client_settings_parse_command_line(context->settings, argc, argv, FALSE) < 0)
+		goto finish;
+
+	if (!freerdp_settings_set_uint32(context->settings, FreeRDP_TcpConnectTimeout, timeout))
 		goto finish;
 
 	if (!freerdp_client_load_addins(context->channels, context->settings))
@@ -47,19 +66,25 @@ static int runInstance(int argc, char* argv[], freerdp** inst)
 	rc = 0;
 finish:
 	freerdp_client_context_free(context);
+	if (inst)
+		*inst = nullptr;
 	return rc;
 }
 
+WINPR_ATTR_NODISCARD
 static int testTimeout(int port)
 {
-	DWORD start, end, diff;
+	const DWORD timeout = 200;
+	DWORD start = 0;
+	DWORD end = 0;
+	DWORD diff = 0;
 	char arg1[] = "/v:192.0.2.1:XXXXX";
-	char* argv[] = { "test", "/v:192.0.2.1:XXXXX", NULL };
-	int rc;
-	_snprintf(arg1, 18, "/v:192.0.2.1:%d", port);
+	char* argv[] = { "test", "/v:192.0.2.1:XXXXX" };
+	int rc = 0;
+	(void)_snprintf(arg1, 18, "/v:192.0.2.1:%d", port);
 	argv[1] = arg1;
 	start = GetTickCount();
-	rc = runInstance(2, argv, NULL);
+	rc = runInstance(ARRAYSIZE(argv), argv, nullptr, timeout);
 	end = GetTickCount();
 
 	if (rc != 1)
@@ -67,14 +92,65 @@ static int testTimeout(int port)
 
 	diff = end - start;
 
-	if (diff > 16000)
+	if (diff > 4 * timeout)
 		return -1;
 
-	if (diff < 14000)
+	if (diff < timeout)
 		return -1;
 
-	printf("%s: Success!\n", __FUNCTION__);
+	printf("%s: Success!\n", __func__);
 	return 0;
+}
+
+/* Without a monitor list (no fullscreen, no multimon) freerdp_connect makes one monitor from the
+ * desktop settings. Its scale factors must be the desktop and the device scale factor, in that
+ * order: /scale-desktop sets only the first. The connection itself fails (nothing listens on the
+ * port); the monitor is made before. */
+WINPR_ATTR_NODISCARD
+static int testMonitorScaleFactors(void)
+{
+	int rc = -1;
+	char* argv[] = { "test", "/v:127.0.0.1:1", "/scale-desktop:200" };
+	RDP_CLIENT_ENTRY_POINTS clientEntryPoints = WINPR_C_ARRAY_INIT;
+	clientEntryPoints.Size = sizeof(RDP_CLIENT_ENTRY_POINTS);
+	clientEntryPoints.Version = RDP_CLIENT_INTERFACE_VERSION;
+	clientEntryPoints.ContextSize = sizeof(rdpClientContext);
+	rdpContext* context = freerdp_client_context_new(&clientEntryPoints);
+
+	if (!context)
+		return -1;
+
+	if (freerdp_client_settings_parse_command_line(context->settings, ARRAYSIZE(argv), argv,
+	                                               FALSE) < 0)
+		goto finish;
+
+	(void)freerdp_connect(context->instance);
+
+	{
+		const rdpMonitor* monitor =
+		    freerdp_settings_get_pointer_array(context->settings, FreeRDP_MonitorDefArray, 0);
+		if (!monitor || (freerdp_settings_get_uint32(context->settings, FreeRDP_MonitorCount) != 1))
+			goto finish;
+
+		const UINT32 desktop =
+		    freerdp_settings_get_uint32(context->settings, FreeRDP_DesktopScaleFactor);
+		const UINT32 device =
+		    freerdp_settings_get_uint32(context->settings, FreeRDP_DeviceScaleFactor);
+		if ((monitor->attributes.desktopScaleFactor != desktop) ||
+		    (monitor->attributes.deviceScaleFactor != device) || (desktop != 200))
+		{
+			printf("%s: monitor scale %" PRIu32 "/%" PRIu32 ", expected %" PRIu32 "/%" PRIu32 "\n",
+			       __func__, monitor->attributes.desktopScaleFactor,
+			       monitor->attributes.deviceScaleFactor, desktop, device);
+			goto finish;
+		}
+	}
+
+	printf("%s: Success!\n", __func__);
+	rc = 0;
+finish:
+	freerdp_client_context_free(context);
+	return rc;
 }
 
 struct testThreadArgs
@@ -83,15 +159,16 @@ struct testThreadArgs
 	freerdp** arg;
 };
 
+WINPR_ATTR_NODISCARD
 static DWORD WINAPI testThread(LPVOID arg)
 {
 	char arg1[] = "/v:192.0.2.1:XXXXX";
-	char* argv[] = { "test", "/v:192.0.2.1:XXXXX", NULL };
-	int rc;
+	char* argv[] = { "test", "/v:192.0.2.1:XXXXX" };
+	int rc = 0;
 	struct testThreadArgs* args = arg;
-	_snprintf(arg1, 18, "/v:192.0.2.1:%d", args->port);
+	(void)_snprintf(arg1, 18, "/v:192.0.2.1:%d", args->port);
 	argv[1] = arg1;
-	rc = runInstance(2, argv, args->arg);
+	rc = runInstance(ARRAYSIZE(argv), argv, args->arg, 5000);
 
 	if (rc != 1)
 		ExitThread(-1);
@@ -100,14 +177,17 @@ static DWORD WINAPI testThread(LPVOID arg)
 	return 0;
 }
 
+WINPR_ATTR_NODISCARD
 static int testAbort(int port)
 {
-	DWORD status;
-	DWORD start, end, diff;
-	HANDLE thread;
+	DWORD status = 0;
+	DWORD start = 0;
+	DWORD end = 0;
+	DWORD diff = 0;
+	HANDLE thread = nullptr;
 	struct testThreadArgs args;
-	freerdp* instance = NULL;
-	s_sync = CreateEvent(NULL, TRUE, FALSE, NULL);
+	freerdp* instance = nullptr;
+	s_sync = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 
 	if (!s_sync)
 		return -1;
@@ -115,78 +195,141 @@ static int testAbort(int port)
 	args.port = port;
 	args.arg = &instance;
 	start = GetTickCount();
-	thread = CreateThread(NULL, 0, testThread, &args, 0, NULL);
+	thread = CreateThread(nullptr, 0, testThread, &args, 0, nullptr);
 
 	if (!thread)
 	{
-		CloseHandle(s_sync);
-		s_sync = NULL;
+		(void)CloseHandle(s_sync);
+		s_sync = nullptr;
 		return -1;
 	}
 
-	WaitForSingleObject(s_sync, INFINITE);
-	Sleep(1000); /* Wait until freerdp_connect has been called */
-	freerdp_abort_connect(instance);
-	status = WaitForSingleObject(instance->context->abortEvent, 0);
-
-	if (status != WAIT_OBJECT_0)
+	(void)WaitForSingleObject(s_sync, INFINITE);
+	Sleep(100); /* Wait until freerdp_connect has been called */
+	if (instance)
 	{
-		CloseHandle(s_sync);
-		CloseHandle(thread);
-		s_sync = NULL;
-		return -1;
+		freerdp_abort_connect_context(instance->context);
+
+		if (!freerdp_shall_disconnect_context(instance->context))
+		{
+			(void)CloseHandle(s_sync);
+			(void)CloseHandle(thread);
+			s_sync = nullptr;
+			return -1;
+		}
 	}
 
 	status = WaitForSingleObject(thread, 20000);
 	end = GetTickCount();
-	CloseHandle(s_sync);
-	CloseHandle(thread);
-	s_sync = NULL;
+	(void)CloseHandle(s_sync);
+	(void)CloseHandle(thread);
+	s_sync = nullptr;
 	diff = end - start;
 
 	if (diff > 5000)
 	{
-		printf("%s required %" PRIu32 "ms for the test\n", __FUNCTION__, diff);
+		printf("%s required %" PRIu32 "ms for the test\n", __func__, diff);
 		return -1;
 	}
 
 	if (WAIT_OBJECT_0 != status)
 		return -1;
 
-	printf("%s: Success!\n", __FUNCTION__);
+	printf("%s: Success!\n", __func__);
 	return 0;
 }
 
+WINPR_ATTR_MALLOC(free, 1)
+static char* concatenate(size_t count, ...)
+{
+	char* rc = nullptr;
+	va_list ap = WINPR_C_ARRAY_INIT;
+	va_start(ap, count);
+	rc = _strdup(va_arg(ap, char*));
+	for (size_t x = 1; x < count; x++)
+	{
+		const char* cur = va_arg(ap, const char*);
+		char* tmp = GetCombinedPath(rc, cur);
+		free(rc);
+		rc = tmp;
+	}
+	va_end(ap);
+	return rc;
+}
+
+WINPR_ATTR_NODISCARD
+static BOOL prepare_certificates(const char* path)
+{
+	BOOL rc = FALSE;
+	char* exe = nullptr;
+	DWORD status = 0;
+	STARTUPINFOA si = WINPR_C_ARRAY_INIT;
+	PROCESS_INFORMATION process = WINPR_C_ARRAY_INIT;
+
+	if (!path)
+		return FALSE;
+
+	const char makecert[] = "winpr-makecert"
+#if defined(WITH_BINARY_VERSIONING)
+	    FREERDP_API_VERSION
+#endif
+	        CMAKE_EXECUTABLE_SUFFIX;
+
+	exe = concatenate(5, TESTING_OUTPUT_DIRECTORY, "winpr", "tools", "makecert-cli", makecert);
+	if (!exe)
+		return FALSE;
+
+	char commandLine[] = "-format crt -path . -n server";
+	printf("[%s]: %s %s\n", __func__, exe, commandLine);
+	rc = CreateProcessA(exe, commandLine, nullptr, nullptr, TRUE, 0, nullptr, path, &si, &process);
+	free(exe);
+	if (!rc)
+		goto fail;
+	status = WaitForSingleObject(process.hProcess, 30000);
+	if (status != WAIT_OBJECT_0)
+		goto fail;
+	rc = TRUE;
+fail:
+	(void)CloseHandle(process.hProcess);
+	(void)CloseHandle(process.hThread);
+	return rc;
+}
+
+WINPR_ATTR_NODISCARD
 static int testSuccess(int port)
 {
-	int r;
+	int r = 0;
 	int rc = -2;
-	STARTUPINFOA si;
-	PROCESS_INFORMATION process;
+	STARTUPINFOA si = WINPR_C_ARRAY_INIT;
+	PROCESS_INFORMATION process = WINPR_C_ARRAY_INIT;
 	char arg1[] = "/v:127.0.0.1:XXXXX";
-	char* clientArgs[] = { "test", "/v:127.0.0.1:XXXXX", "/cert-ignore", "/rfx", NULL };
-	char* commandLine = NULL;
-	size_t commandLineLen;
+	char* clientArgs[] = { "test", "/v:127.0.0.1:XXXXX", "/cert:ignore", "/rfx", nullptr };
+	char* commandLine = nullptr;
+	size_t commandLineLen = 0;
 	int argc = 4;
-	char* path = NULL;
-	char* wpath = NULL;
+	char* path = nullptr;
+	char* wpath = nullptr;
 	char* exe = GetCombinedPath(TESTING_OUTPUT_DIRECTORY, "server");
-	char* wexe = GetCombinedPath(TESTING_SRC_DIRECTORY, "server");
-	_snprintf(arg1, 18, "/v:127.0.0.1:%d", port);
+	(void)_snprintf(arg1, 18, "/v:127.0.0.1:%d", port);
 	clientArgs[1] = arg1;
 
-	if (!exe || !wexe)
+	if (!exe)
 		goto fail;
 
 	path = GetCombinedPath(exe, "Sample");
-	wpath = GetCombinedPath(wexe, "Sample");
+	wpath = GetCombinedPath(exe, "Sample");
 	free(exe);
-	exe = NULL;
+	exe = nullptr;
 
 	if (!path || !wpath)
 		goto fail;
 
-	exe = GetCombinedPath(path, "sfreerdp-server");
+	const char srvexe[] = "sfreerdp-server"
+#if defined(WITH_BINARY_VERSIONING)
+	    FREERDP_API_VERSION
+#endif
+	        CMAKE_EXECUTABLE_SUFFIX;
+	exe = GetCombinedPath(path, srvexe);
 
 	if (!exe)
 		goto fail;
@@ -194,41 +337,56 @@ static int testSuccess(int port)
 	printf("Sample Server: %s\n", exe);
 	printf("Workspace: %s\n", wpath);
 
-	if (!PathFileExistsA(exe))
+	if (!winpr_PathFileExists(exe))
+	{
+		(void)fprintf(stderr, "[%s]: winpr_PathFileExists(%s) failed\n", __func__, exe);
 		goto fail;
+	}
+
+	if (!prepare_certificates(wpath))
+	{
+		(void)fprintf(stderr, "[%s]: prepare_certificates(%s) failed\n", __func__, wpath);
+		goto fail;
+	}
 
 	// Start sample server locally.
-	commandLineLen = strlen(exe) + strlen("--local-only --port=XXXXX") + 1;
+	commandLineLen = strlen(exe) + strlen("--port=XXXXX") + 1;
 	commandLine = malloc(commandLineLen);
 
 	if (!commandLine)
 		goto fail;
 
-	_snprintf(commandLine, commandLineLen, "%s --local-only --port=%d", exe, port);
-	memset(&si, 0, sizeof(si));
+	(void)_snprintf(commandLine, commandLineLen, "%s --port=%d", exe, port);
 	si.cb = sizeof(si);
 
-	if (!CreateProcessA(exe, commandLine, NULL, NULL, FALSE, 0, NULL, wpath, &si, &process))
+	printf("Createing process with '%s'\n", commandLine);
+	if (!CreateProcessA(nullptr, commandLine, nullptr, nullptr, FALSE, 0, nullptr, wpath, &si,
+	                    &process))
+	{
+		(void)fprintf(stderr, "[%s]: CreateProcess failed\n", __func__);
 		goto fail;
+	}
 
-	Sleep(1 * 1000); /* let the server start */
-	r = runInstance(argc, clientArgs, NULL);
+	Sleep(5000); /* let the server start */
+	r = runInstance(argc, clientArgs, nullptr, 10000);
 
 	if (!TerminateProcess(process.hProcess, 0))
+	{
+		(void)fprintf(stderr, "[%s]: TerminateProcess failed\n", __func__);
 		goto fail;
+	}
 
-	WaitForSingleObject(process.hProcess, INFINITE);
-	CloseHandle(process.hProcess);
-	CloseHandle(process.hThread);
-	printf("%s: returned %d!\n", __FUNCTION__, r);
+	(void)WaitForSingleObject(process.hProcess, INFINITE);
+	(void)CloseHandle(process.hProcess);
+	(void)CloseHandle(process.hThread);
+	printf("%s: returned %d!\n", __func__, r);
 	rc = r;
 
 	if (rc == 0)
-		printf("%s: Success!\n", __FUNCTION__);
+		printf("%s: Success!\n", __func__);
 
 fail:
 	free(exe);
-	free(wexe);
 	free(path);
 	free(wpath);
 	free(commandLine);
@@ -237,27 +395,48 @@ fail:
 
 int TestConnect(int argc, char* argv[])
 {
-	int randomPort;
-	int random;
+	int randomPort = 0;
+	int random = 0;
 	WINPR_UNUSED(argc);
 	WINPR_UNUSED(argv);
-	winpr_RAND((BYTE*)&random, sizeof(random));
+	if (winpr_RAND(&random, sizeof(random)) < 0)
+	{
+		(void)fprintf(stderr, "winpr_RAND failed\n");
+		return -1;
+	}
+
 	randomPort = 3389 + (random % 200);
+
+	/* The monitor made from the desktop settings keeps their scale factors apart. */
+	if (testMonitorScaleFactors())
+	{
+		(void)fprintf(stderr, "testMonitorScaleFactors failed\n");
+		return -1;
+	}
 
 	/* Test connect to not existing server,
 	 * check if timeout is honored. */
 	if (testTimeout(randomPort))
+	{
+		(void)fprintf(stderr, "testTimeout failed\n");
 		return -1;
+	}
 
 	/* Test connect to not existing server,
 	 * check if connection abort is working. */
 	if (testAbort(randomPort))
+	{
+		(void)fprintf(stderr, "testAbort failed\n");
 		return -1;
+	}
 
 	/* Test connect to existing server,
 	 * check if connection is working. */
 	if (testSuccess(randomPort))
+	{
+		(void)fprintf(stderr, "testSuccess failed\n");
 		return -1;
+	}
 
 	return 0;
 }

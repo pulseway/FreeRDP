@@ -12,9 +12,7 @@
  * permissions and limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/sysinfo.h>
 #include "prim_test.h"
@@ -24,13 +22,12 @@
 /* ------------------------------------------------------------------------- */
 static BOOL test_sign16s_func(void)
 {
-	pstatus_t status;
-	INT16 ALIGN(src[TEST_BUFFER_SIZE + 16]) = { 0 };
-	INT16 ALIGN(d1[TEST_BUFFER_SIZE + 16]) = { 0 };
-	INT16 ALIGN(d2[TEST_BUFFER_SIZE + 16]) = { 0 };
-	winpr_RAND((BYTE*)src, sizeof(src));
-	memset(d1, 0, sizeof(d1));
-	memset(d2, 0, sizeof(d2));
+	pstatus_t status = 0;
+	INT16 src[TEST_BUFFER_SIZE + 16] = WINPR_C_ARRAY_INIT;
+	INT16 d1[TEST_BUFFER_SIZE + 16] = WINPR_C_ARRAY_INIT;
+	INT16 d2[TEST_BUFFER_SIZE + 16] = WINPR_C_ARRAY_INIT;
+	if (winpr_RAND(src, sizeof(src)) < 0)
+		return FALSE;
 	status = generic->sign_16s(src + 1, d1 + 1, TEST_BUFFER_SIZE);
 
 	if (status != PRIMITIVES_SUCCESS)
@@ -62,9 +59,10 @@ static BOOL test_sign16s_func(void)
 
 static int test_sign16s_speed(void)
 {
-	INT16 ALIGN(src[MAX_TEST_SIZE + 3]) = { 0 };
-	INT16 ALIGN(dst[MAX_TEST_SIZE + 3]) = { 0 };
-	winpr_RAND((BYTE*)src, sizeof(src));
+	INT16 src[MAX_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
+	INT16 dst[MAX_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
+	if (winpr_RAND(src, sizeof(src)) < 0)
+		return FALSE;
 
 	if (!speed_test("sign16s", "aligned", g_Iterations, (speed_test_fkt)generic->sign_16s,
 	                (speed_test_fkt)optimized->sign_16s, src + 1, dst + 1, MAX_TEST_SIZE))

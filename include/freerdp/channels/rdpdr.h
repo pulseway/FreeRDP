@@ -33,13 +33,35 @@
 #include <winpr/interlocked.h>
 #include <winpr/collections.h>
 
-#include <freerdp/freerdp.h>
+#include <freerdp/api.h>
+#include <freerdp/types.h>
+#include <freerdp/settings.h>
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/** The command line name of the channel
+ *
+ *  \since version 3.0.0
+ */
+#define RDPDR_CHANNEL_NAME "rdpdr"
+#define RDPDR_SVC_CHANNEL_NAME "rdpdr"
 
 #define RDPDR_DEVICE_IO_REQUEST_LENGTH 24
 #define RDPDR_DEVICE_IO_RESPONSE_LENGTH 16
 
 #define RDPDR_DEVICE_IO_CONTROL_REQ_HDR_LENGTH 32
 #define RDPDR_DEVICE_IO_CONTROL_RSP_HDR_LENGTH 4
+
+#define RDPDR_VERSION_MAJOR 0x0001
+
+#define RDPDR_VERSION_MINOR_RDP50 0x0002
+#define RDPDR_VERSION_MINOR_RDP51 0x0005
+#define RDPDR_VERSION_MINOR_RDP52 0x000A
+#define RDPDR_VERSION_MINOR_RDP6X 0x000C
+#define RDPDR_VERSION_MINOR_RDP10X 0x000D
 
 /* RDPDR_HEADER.Component */
 enum RDPDR_CTYP
@@ -120,16 +142,16 @@ enum IRP_MN
 /* DR_CREATE_RSP.Information */
 /* DR_DRIVE_CREATE_RSP.DeviceCreateResponse */
 
-#define FILE_OPENED 0x00000001
-#define FILE_OVERWRITTEN 0x00000003
 
 /* DR_CORE_CLIENT_ANNOUNCE_RSP.VersionMinor */
+#define RDPDR_MAJOR_RDP_VERSION 1
 enum RDPDR_MINOR_RDP_VERSION
 {
 	RDPDR_MINOR_RDP_VERSION_5_0 = 0x0002,
 	RDPDR_MINOR_RDP_VERSION_5_1 = 0x0005,
 	RDPDR_MINOR_RDP_VERSION_5_2 = 0x000A,
-	RDPDR_MINOR_RDP_VERSION_6_X = 0x000C
+	RDPDR_MINOR_RDP_VERSION_6_X = 0x000C,
+	RDPDR_MINOR_RDP_VERSION_13 = 0x000D
 };
 
 /* DR_CORE_CLIENT_NAME_REQ.UnicodeFlag */
@@ -194,23 +216,7 @@ enum RDPDR_PRINTER_ANNOUNCE_FLAG
 
 /* [MS-FSCC] FileAttributes */
 
-#ifndef _WIN32
-
-#define FILE_ATTRIBUTE_ARCHIVE 0x00000020
-#define FILE_ATTRIBUTE_COMPRESSED 0x00000800
-#define FILE_ATTRIBUTE_DIRECTORY 0x00000010
-#define FILE_ATTRIBUTE_ENCRYPTED 0x00004000
-#define FILE_ATTRIBUTE_HIDDEN 0x00000002
-#define FILE_ATTRIBUTE_NORMAL 0x00000080
-#define FILE_ATTRIBUTE_NOT_CONTENT_INDEXED 0x00002000
-#define FILE_ATTRIBUTE_OFFLINE 0x00001000
-#define FILE_ATTRIBUTE_READONLY 0x00000001
-#define FILE_ATTRIBUTE_REPARSE_POINT 0x00000400
-#define FILE_ATTRIBUTE_SPARSE_FILE 0x00000200
-#define FILE_ATTRIBUTE_SYSTEM 0x00000004
-#define FILE_ATTRIBUTE_TEMPORARY 0x00000100
-
-#endif
+/* Included with winpr/file.h */
 
 /* [MS-FSCC] FSCTL Structures */
 
@@ -298,6 +304,7 @@ enum FILE_FS_DEVICE_FLAG
 	FILE_DEVICE_SECURE_OPEN = 0x00000100
 };
 
+#ifndef __MINGW32__
 enum FILE_FS_INFORMATION_CLASS
 {
 	FileFsVolumeInformation = 1,
@@ -311,18 +318,19 @@ enum FILE_FS_INFORMATION_CLASS
 	FileFsDriverPathInformation,
 	FileFsMaximumInformation
 };
+#endif
 
-typedef struct _DEVICE DEVICE;
-typedef struct _IRP IRP;
-typedef struct _DEVMAN DEVMAN;
+typedef struct S_DEVICE DEVICE;
+typedef struct S_IRP IRP;
+typedef struct S_DEVMAN DEVMAN;
 
 typedef UINT (*pcCustomComponentRequest)(DEVICE* device, UINT16 component, UINT16 packetId,
-                                         wStream* s);
+	                                     wStream* s);
 typedef UINT (*pcIRPRequest)(DEVICE* device, IRP* irp);
 typedef UINT (*pcInitDevice)(DEVICE* device);
 typedef UINT (*pcFreeDevice)(DEVICE* device);
 
-struct _DEVICE
+struct S_DEVICE
 {
 	UINT32 id;
 
@@ -330,17 +338,17 @@ struct _DEVICE
 	const char* name;
 	wStream* data;
 
-	pcCustomComponentRequest CustomComponentRequest;
-	pcIRPRequest IRPRequest;
-	pcInitDevice Init;
+	WINPR_ATTR_NODISCARD pcCustomComponentRequest CustomComponentRequest;
+	WINPR_ATTR_NODISCARD pcIRPRequest IRPRequest;
+	WINPR_ATTR_NODISCARD pcInitDevice Init;
 	pcFreeDevice Free;
 };
 
 typedef UINT (*pcIRPResponse)(IRP* irp);
 
-struct _IRP
+struct S_IRP
 {
-	WINPR_SLIST_ENTRY ItemEntry;
+	void* ItemEntry; /**< Unused pointer entry, keep for compatibility */
 
 	DEVICE* device;
 	DEVMAN* devman;
@@ -350,17 +358,17 @@ struct _IRP
 	UINT32 MinorFunction;
 	wStream* input;
 
-	UINT32 IoStatus;
+	NTSTATUS IoStatus;
 	wStream* output;
 
-	pcIRPResponse Complete;
+	WINPR_ATTR_NODISCARD pcIRPResponse Complete;
 	pcIRPResponse Discard;
 
 	HANDLE thread;
 	BOOL cancelled;
 };
 
-struct _DEVMAN
+struct S_DEVMAN
 {
 	void* plugin;
 	UINT32 id_sequence;
@@ -369,17 +377,20 @@ struct _DEVMAN
 
 typedef UINT (*pcRegisterDevice)(DEVMAN* devman, DEVICE* device);
 
-struct _DEVICE_SERVICE_ENTRY_POINTS
+typedef struct
 {
 	DEVMAN* devman;
 
-	pcRegisterDevice RegisterDevice;
+	WINPR_ATTR_NODISCARD pcRegisterDevice RegisterDevice;
 	RDPDR_DEVICE* device;
 	rdpContext* rdpcontext;
-};
-typedef struct _DEVICE_SERVICE_ENTRY_POINTS DEVICE_SERVICE_ENTRY_POINTS;
+} DEVICE_SERVICE_ENTRY_POINTS;
 typedef DEVICE_SERVICE_ENTRY_POINTS* PDEVICE_SERVICE_ENTRY_POINTS;
 
-typedef UINT (*PDEVICE_SERVICE_ENTRY)(PDEVICE_SERVICE_ENTRY_POINTS);
+typedef UINT(VCAPITYPE* PDEVICE_SERVICE_ENTRY)(PDEVICE_SERVICE_ENTRY_POINTS);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_CHANNEL_RDPDR_H */

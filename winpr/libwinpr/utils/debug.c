@@ -18,330 +18,86 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
+#include <winpr/buildflags.h>
+#include <winpr/platform.h>
+
+WINPR_PRAGMA_DIAG_PUSH
+WINPR_PRAGMA_DIAG_IGNORED_RESERVED_ID_MACRO
+WINPR_PRAGMA_DIAG_IGNORED_UNUSED_MACRO
+
+#define __STDC_WANT_LIB_EXT1__ 1 // NOLINT(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
+
+WINPR_PRAGMA_DIAG_POP
 
 #include <stdio.h>
+#include <string.h>
 #include <fcntl.h>
+#include <errno.h>
+
+#include <winpr/crt.h>
 #include <winpr/string.h>
 
-#if defined(HAVE_EXECINFO_H)
-#include <execinfo.h>
+#if defined(USE_EXECINFO)
+#include <execinfo/debug.h>
 #endif
 
-#if defined(ANDROID)
-#include <corkscrew/backtrace.h>
+#if defined(USE_UNWIND)
+#include <unwind/debug.h>
+#endif
+
+#if defined(WINPR_HAVE_CORKSCREW)
+#include <corkscrew/debug.h>
 #endif
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <io.h>
-#include <windows.h>
-#include <dbghelp.h>
-#define write _write
+#include <windows/debug.h>
 #endif
 
-#include <winpr/crt.h>
 #include <winpr/wlog.h>
 #include <winpr/debug.h>
 
 #define TAG "com.winpr.utils.debug"
-#define LOGT(...)                                           \
-	do                                                      \
-	{                                                       \
-		WLog_Print(WLog_Get(TAG), WLOG_TRACE, __VA_ARGS__); \
-	} while (0)
-#define LOGD(...)                                           \
-	do                                                      \
-	{                                                       \
-		WLog_Print(WLog_Get(TAG), WLOG_DEBUG, __VA_ARGS__); \
-	} while (0)
-#define LOGI(...)                                          \
-	do                                                     \
-	{                                                      \
-		WLog_Print(WLog_Get(TAG), WLOG_INFO, __VA_ARGS__); \
-	} while (0)
-#define LOGW(...)                                          \
-	do                                                     \
-	{                                                      \
-		WLog_Print(WLog_Get(TAG), WLOG_WARN, __VA_ARGS__); \
-	} while (0)
-#define LOGE(...)                                           \
-	do                                                      \
-	{                                                       \
-		WLog_Print(WLog_Get(TAG), WLOG_ERROR, __VA_ARGS__); \
-	} while (0)
-#define LOGF(...)                                           \
-	do                                                      \
-	{                                                       \
-		WLog_Print(WLog_Get(TAG), WLOG_FATAL, __VA_ARGS__); \
-	} while (0)
 
-static const char* support_msg = "Invalid stacktrace buffer! check if platform is supported!";
+#define LINE_LENGTH_MAX 2048
 
-#if defined(HAVE_EXECINFO_H)
-typedef struct
-{
-	void** buffer;
-	size_t max;
-	size_t used;
-} t_execinfo;
-#endif
-
-#if defined(_WIN32) || defined(_WIN64)
-typedef struct
-{
-	PVOID* stack;
-	ULONG used;
-	ULONG max;
-} t_win_stack;
-#endif
-
-#if defined(ANDROID)
-#include <pthread.h>
-#include <dlfcn.h>
-#include <unistd.h>
-
-typedef struct
-{
-	backtrace_frame_t* buffer;
-	size_t max;
-	size_t used;
-} t_corkscrew_data;
-
-typedef struct
-{
-	void* hdl;
-	ssize_t (*unwind_backtrace)(backtrace_frame_t* backtrace, size_t ignore_depth,
-	                            size_t max_depth);
-	ssize_t (*unwind_backtrace_thread)(pid_t tid, backtrace_frame_t* backtrace, size_t ignore_depth,
-	                                   size_t max_depth);
-	ssize_t (*unwind_backtrace_ptrace)(pid_t tid, const ptrace_context_t* context,
-	                                   backtrace_frame_t* backtrace, size_t ignore_depth,
-	                                   size_t max_depth);
-	void (*get_backtrace_symbols)(const backtrace_frame_t* backtrace, size_t frames,
-	                              backtrace_symbol_t* backtrace_symbols);
-	void (*get_backtrace_symbols_ptrace)(const ptrace_context_t* context,
-	                                     const backtrace_frame_t* backtrace, size_t frames,
-	                                     backtrace_symbol_t* backtrace_symbols);
-	void (*free_backtrace_symbols)(backtrace_symbol_t* backtrace_symbols, size_t frames);
-	void (*format_backtrace_line)(unsigned frameNumber, const backtrace_frame_t* frame,
-	                              const backtrace_symbol_t* symbol, char* buffer,
-	                              size_t bufferSize);
-} t_corkscrew;
-
-static pthread_once_t initialized = PTHREAD_ONCE_INIT;
-static t_corkscrew* fkt = NULL;
-
-void load_library(void)
-{
-	static t_corkscrew lib;
-	{
-		lib.hdl = dlopen("libcorkscrew.so", RTLD_LAZY);
-
-		if (!lib.hdl)
-		{
-			LOGF("dlopen error %s", dlerror());
-			goto fail;
-		}
-
-		lib.unwind_backtrace = dlsym(lib.hdl, "unwind_backtrace");
-
-		if (!lib.unwind_backtrace)
-		{
-			LOGF("dlsym error %s", dlerror());
-			goto fail;
-		}
-
-		lib.unwind_backtrace_thread = dlsym(lib.hdl, "unwind_backtrace_thread");
-
-		if (!lib.unwind_backtrace_thread)
-		{
-			LOGF("dlsym error %s", dlerror());
-			goto fail;
-		}
-
-		lib.unwind_backtrace_ptrace = dlsym(lib.hdl, "unwind_backtrace_ptrace");
-
-		if (!lib.unwind_backtrace_ptrace)
-		{
-			LOGF("dlsym error %s", dlerror());
-			goto fail;
-		}
-
-		lib.get_backtrace_symbols = dlsym(lib.hdl, "get_backtrace_symbols");
-
-		if (!lib.get_backtrace_symbols)
-		{
-			LOGF("dlsym error %s", dlerror());
-			goto fail;
-		}
-
-		lib.get_backtrace_symbols_ptrace = dlsym(lib.hdl, "get_backtrace_symbols_ptrace");
-
-		if (!lib.get_backtrace_symbols_ptrace)
-		{
-			LOGF("dlsym error %s", dlerror());
-			goto fail;
-		}
-
-		lib.free_backtrace_symbols = dlsym(lib.hdl, "free_backtrace_symbols");
-
-		if (!lib.free_backtrace_symbols)
-		{
-			LOGF("dlsym error %s", dlerror());
-			goto fail;
-		}
-
-		lib.format_backtrace_line = dlsym(lib.hdl, "format_backtrace_line");
-
-		if (!lib.format_backtrace_line)
-		{
-			LOGF("dlsym error %s", dlerror());
-			goto fail;
-		}
-
-		fkt = &lib;
-		return;
-	}
-fail:
-{
-	if (lib.hdl)
-		dlclose(lib.hdl);
-
-	fkt = NULL;
-}
-}
-#endif
-
-#if defined(_WIN32) && (NTDDI_VERSION <= NTDDI_WINXP)
-
-typedef USHORT(WINAPI* PRTL_CAPTURE_STACK_BACK_TRACE_FN)(ULONG FramesToSkip, ULONG FramesToCapture,
-                                                         PVOID* BackTrace, PULONG BackTraceHash);
-
-static HMODULE g_NTDLL_Library = NULL;
-static BOOL g_RtlCaptureStackBackTrace_Detected = FALSE;
-static BOOL g_RtlCaptureStackBackTrace_Available = FALSE;
-static PRTL_CAPTURE_STACK_BACK_TRACE_FN g_pRtlCaptureStackBackTrace = NULL;
-
-USHORT RtlCaptureStackBackTrace(ULONG FramesToSkip, ULONG FramesToCapture, PVOID* BackTrace,
-                                PULONG BackTraceHash)
-{
-	if (!g_RtlCaptureStackBackTrace_Detected)
-	{
-		g_NTDLL_Library = LoadLibraryA("kernel32.dll");
-
-		if (g_NTDLL_Library)
-		{
-			g_pRtlCaptureStackBackTrace = (PRTL_CAPTURE_STACK_BACK_TRACE_FN)GetProcAddress(
-			    g_NTDLL_Library, "RtlCaptureStackBackTrace");
-			g_RtlCaptureStackBackTrace_Available = (g_pRtlCaptureStackBackTrace) ? TRUE : FALSE;
-		}
-		else
-		{
-			g_RtlCaptureStackBackTrace_Available = FALSE;
-		}
-
-		g_RtlCaptureStackBackTrace_Detected = TRUE;
-	}
-
-	if (g_RtlCaptureStackBackTrace_Available)
-	{
-		return (*g_pRtlCaptureStackBackTrace)(FramesToSkip, FramesToCapture, BackTrace,
-		                                      BackTraceHash);
-	}
-
-	return 0;
-}
-
-#endif
+static const char support_msg[] = "Invalid stacktrace buffer! check if platform is supported!";
 
 void winpr_backtrace_free(void* buffer)
 {
 	if (!buffer)
-	{
-		LOGF(support_msg);
 		return;
-	}
 
-#if defined(HAVE_EXECINFO_H)
-	t_execinfo* data = (t_execinfo*)buffer;
-	free(data->buffer);
-	free(data);
-#elif defined(ANDROID)
-	t_corkscrew_data* data = (t_corkscrew_data*)buffer;
-	free(data->buffer);
-	free(data);
+#if defined(USE_UNWIND)
+	winpr_unwind_backtrace_free(buffer);
+#elif defined(USE_EXECINFO)
+	winpr_execinfo_backtrace_free(buffer);
+#elif defined(WINPR_HAVE_CORKSCREW)
+	winpr_corkscrew_backtrace_free(buffer);
 #elif defined(_WIN32) || defined(_WIN64)
-	{
-		t_win_stack* data = (t_win_stack*)buffer;
-		free(data->stack);
-		free(data);
-	}
+	winpr_win_backtrace_free(buffer);
 #else
-	LOGF(support_msg);
+	free(buffer);
+	WLog_FATAL(TAG, "%s", support_msg);
 #endif
 }
 
 void* winpr_backtrace(DWORD size)
 {
-#if defined(HAVE_EXECINFO_H)
-	t_execinfo* data = calloc(1, sizeof(t_execinfo));
-
-	if (!data)
-		return NULL;
-
-	data->buffer = calloc(size, sizeof(void*));
-
-	if (!data->buffer)
-	{
-		free(data);
-		return NULL;
-	}
-
-	data->max = size;
-	data->used = backtrace(data->buffer, size);
-	return data;
-#elif defined(ANDROID)
-	t_corkscrew_data* data = calloc(1, sizeof(t_corkscrew_data));
-
-	if (!data)
-		return NULL;
-
-	data->buffer = calloc(size, sizeof(backtrace_frame_t));
-
-	if (!data->buffer)
-	{
-		free(data);
-		return NULL;
-	}
-
-	pthread_once(&initialized, load_library);
-	data->max = size;
-	data->used = fkt->unwind_backtrace(data->buffer, 0, size);
-	return data;
+#if defined(USE_UNWIND)
+	return winpr_unwind_backtrace(size);
+#elif defined(USE_EXECINFO)
+	return winpr_execinfo_backtrace(size);
+#elif defined(WINPR_HAVE_CORKSCREW)
+	return winpr_corkscrew_backtrace(size);
 #elif (defined(_WIN32) || defined(_WIN64)) && !defined(_UWP)
-	HANDLE process = GetCurrentProcess();
-	t_win_stack* data = calloc(1, sizeof(t_win_stack));
-
-	if (!data)
-		return NULL;
-
-	data->max = size;
-	data->stack = calloc(data->max, sizeof(PVOID));
-
-	if (!data->stack)
-	{
-		free(data);
-		return NULL;
-	}
-
-	SymInitialize(process, NULL, TRUE);
-	data->used = RtlCaptureStackBackTrace(2, size, data->stack, NULL);
-	return data;
+	return winpr_win_backtrace(size);
 #else
-	LOGF(support_msg);
-	return NULL;
+	WLog_FATAL(TAG, "%s", support_msg);
+	/* return a non nullptr buffer to allow the backtrace function family to succeed without failing
+	 */
+	return strndup(support_msg, sizeof(support_msg));
 #endif
 }
 
@@ -352,120 +108,38 @@ char** winpr_backtrace_symbols(void* buffer, size_t* used)
 
 	if (!buffer)
 	{
-		LOGF(support_msg);
-		return NULL;
+		WLog_FATAL(TAG, "%s", support_msg);
+		return nullptr;
 	}
 
-#if defined(HAVE_EXECINFO_H)
-	t_execinfo* data = (t_execinfo*)buffer;
-
-	if (!data)
-		return NULL;
-
-	if (used)
-		*used = data->used;
-
-	return backtrace_symbols(data->buffer, data->used);
-#elif defined(ANDROID)
-	t_corkscrew_data* data = (t_corkscrew_data*)buffer;
-
-	if (!data)
-		return NULL;
-
-	pthread_once(&initialized, load_library);
-
-	if (!fkt)
-	{
-		LOGF(support_msg);
-		return NULL;
-	}
-	else
-	{
-		size_t line_len = (data->max > 1024) ? data->max : 1024;
-		size_t i;
-		size_t array_size = data->used * sizeof(char*);
-		size_t lines_size = data->used * line_len;
-		char** vlines = calloc(1, array_size + lines_size);
-		backtrace_symbol_t* symbols = calloc(data->used, sizeof(backtrace_symbol_t));
-
-		if (!vlines || !symbols)
-		{
-			free(vlines);
-			free(symbols);
-			return NULL;
-		}
-
-		/* Set the pointers in the allocated buffer's initial array section */
-		for (i = 0; i < data->used; i++)
-			vlines[i] = (char*)vlines + array_size + i * line_len;
-
-		fkt->get_backtrace_symbols(data->buffer, data->used, symbols);
-
-		for (i = 0; i < data->used; i++)
-			fkt->format_backtrace_line(i, &data->buffer[i], &symbols[i], vlines[i], line_len);
-
-		fkt->free_backtrace_symbols(symbols, data->used);
-		free(symbols);
-
-		if (used)
-			*used = data->used;
-
-		return vlines;
-	}
-
+#if defined(USE_UNWIND)
+	return winpr_unwind_backtrace_symbols(buffer, used);
+#elif defined(USE_EXECINFO)
+	return winpr_execinfo_backtrace_symbols(buffer, used);
+#elif defined(WINPR_HAVE_CORKSCREW)
+	return winpr_corkscrew_backtrace_symbols(buffer, used);
 #elif (defined(_WIN32) || defined(_WIN64)) && !defined(_UWP)
-	{
-		size_t i;
-		size_t line_len = 1024;
-		HANDLE process = GetCurrentProcess();
-		t_win_stack* data = (t_win_stack*)buffer;
-		size_t array_size = data->used * sizeof(char*);
-		size_t lines_size = data->used * line_len;
-		char** vlines = calloc(1, array_size + lines_size);
-		SYMBOL_INFO* symbol = calloc(1, sizeof(SYMBOL_INFO) + line_len * sizeof(char));
-		IMAGEHLP_LINE64* line = (IMAGEHLP_LINE64*)calloc(1, sizeof(IMAGEHLP_LINE64));
-
-		if (!vlines || !symbol || !line)
-		{
-			free(vlines);
-			free(symbol);
-			free(line);
-			return NULL;
-		}
-
-		line->SizeOfStruct = sizeof(IMAGEHLP_LINE64);
-		symbol->MaxNameLen = line_len;
-		symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-
-		/* Set the pointers in the allocated buffer's initial array section */
-		for (i = 0; i < data->used; i++)
-			vlines[i] = (char*)vlines + array_size + i * line_len;
-
-		for (i = 0; i < data->used; i++)
-		{
-			DWORD64 address = (DWORD64)(data->stack[i]);
-			DWORD displacement;
-			SymFromAddr(process, address, 0, symbol);
-
-			if (SymGetLineFromAddr64(process, address, &displacement, line))
-			{
-				sprintf_s(vlines[i], line_len, "%016" PRIx64 ": %s in %s:%" PRIu32, symbol->Address,
-				          symbol->Name, line->FileName, line->LineNumber);
-			}
-			else
-				sprintf_s(vlines[i], line_len, "%016" PRIx64 ": %s", symbol->Address, symbol->Name);
-		}
-
-		if (used)
-			*used = data->used;
-
-		free(symbol);
-		free(line);
-		return vlines;
-	}
+	return winpr_win_backtrace_symbols(buffer, used);
 #else
-	LOGF(support_msg);
-	return NULL;
+	WLog_FATAL(TAG, "%s", support_msg);
+
+	/* We return a char** on heap that is compatible with free:
+	 *
+	 * 1. We allocate sizeof(char*) + strlen + 1 bytes.
+	 * 2. The first sizeof(char*) bytes contain the pointer to the string following the pointer.
+	 * 3. The at data + sizeof(char*) contains the actual string
+	 */
+	size_t len = strnlen(support_msg, sizeof(support_msg));
+	char* ppmsg = calloc(sizeof(char*) + len + 1, sizeof(char));
+	if (!ppmsg)
+		return nullptr;
+	char** msgptr = (char**)ppmsg;
+	char* msg = &ppmsg[sizeof(char*)];
+
+	*msgptr = msg;
+	strncpy(msg, support_msg, len);
+	*used = 1;
+	return msgptr;
 #endif
 }
 
@@ -473,32 +147,26 @@ void winpr_backtrace_symbols_fd(void* buffer, int fd)
 {
 	if (!buffer)
 	{
-		LOGF(support_msg);
+		WLog_FATAL(TAG, "%s", support_msg);
 		return;
 	}
 
-#if defined(HAVE_EXECINFO_H)
-	t_execinfo* data = (t_execinfo*)buffer;
-
-	if (!data)
-		return;
-
-	backtrace_symbols_fd(data->buffer, data->used, fd);
-#elif defined(_WIN32) || defined(_WIN64) || defined(ANDROID)
+#if defined(USE_EXECINFO) && !defined(USE_UNWIND)
+	winpr_execinfo_backtrace_symbols_fd(buffer, fd);
+#elif !defined(ANDROID)
 	{
-		DWORD i;
-		size_t used;
-		char** lines;
-		lines = winpr_backtrace_symbols(buffer, &used);
+		size_t used = 0;
+		char** lines = winpr_backtrace_symbols(buffer, &used);
 
-		if (lines)
-		{
-			for (i = 0; i < used; i++)
-				write(fd, lines[i], strlen(lines[i]));
-		}
+		if (!lines)
+			return;
+
+		for (size_t i = 0; i < used; i++)
+			(void)_write(fd, lines[i], (unsigned)strnlen(lines[i], LINE_LENGTH_MAX));
+		free((void*)lines);
 	}
 #else
-	LOGF(support_msg);
+	WLog_FATAL(TAG, "%s", support_msg);
 #endif
 }
 
@@ -507,70 +175,175 @@ void winpr_log_backtrace(const char* tag, DWORD level, DWORD size)
 	winpr_log_backtrace_ex(WLog_Get(tag), level, size);
 }
 
-void winpr_log_backtrace_ex(wLog* log, DWORD level, DWORD size)
+void winpr_log_backtrace_ex(wLog* log, DWORD level, WINPR_ATTR_UNUSED DWORD size)
 {
-	size_t used, x;
-	char** msg;
+	if (!WLog_IsLevelActive(log, level))
+		return;
+
+	size_t used = 0;
+	char** msg = nullptr;
 	void* stack = winpr_backtrace(20);
 
 	if (!stack)
 	{
 		WLog_Print(log, WLOG_ERROR, "winpr_backtrace failed!\n");
-		winpr_backtrace_free(stack);
-		return;
+		goto fail;
 	}
 
 	msg = winpr_backtrace_symbols(stack, &used);
 
 	if (msg)
 	{
-		for (x = 0; x < used; x++)
-			WLog_Print(log, level, "%" PRIuz ": %s\n", x, msg[x]);
+		for (size_t x = 0; x < used; x++)
+			WLog_Print(log, level, "%" PRIuz ": %s", x, msg[x]);
 	}
-	free(msg);
+	free((void*)msg);
 
+fail:
 	winpr_backtrace_free(stack);
 }
 
-char* winpr_strerror(DWORD dw, char* dmsg, size_t size)
+char* winpr_strerror(INT32 dw, char* dmsg, size_t size)
 {
-#if defined(_WIN32)
-	DWORD rc;
-	DWORD nSize = 0;
-	DWORD dwFlags = 0;
-	LPTSTR msg = NULL;
-	BOOL alloc = FALSE;
-	dwFlags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS;
-#ifdef FORMAT_MESSAGE_ALLOCATE_BUFFER
-	alloc = TRUE;
-	dwFlags |= FORMAT_MESSAGE_ALLOCATE_BUFFER;
+#ifdef __STDC_LIB_EXT1__
+	(void)strerror_s(dw, dmsg, size);
+#elif defined(WINPR_HAVE_STRERROR_R)
+	(void)strerror_r(dw, dmsg, size);
 #else
-	nSize = (DWORD)(size * 2);
-	msg = (LPTSTR)calloc(nSize, sizeof(TCHAR));
+	(void)_snprintf(dmsg, size, "%s", strerror(dw));
 #endif
-	rc = FormatMessage(dwFlags, NULL, dw, 0, alloc ? (LPTSTR)&msg : msg, nSize, NULL);
-
-	if (rc)
-	{
-#if defined(UNICODE)
-		WideCharToMultiByte(CP_ACP, 0, msg, rc, dmsg, size - 1, NULL, NULL);
-#else  /* defined(UNICODE) */
-		memcpy(dmsg, msg, min(rc, size - 1));
-#endif /* defined(UNICODE) */
-		dmsg[min(rc, size - 1)] = 0;
-#ifdef FORMAT_MESSAGE_ALLOCATE_BUFFER
-		LocalFree(msg);
-#else
-		free(msg);
-#endif
-	}
-	else
-	{
-		_snprintf(dmsg, size, "FAILURE: 0x%08" PRIX32 "", GetLastError());
-	}
-
-#else  /* defined(_WIN32) */
-	_snprintf(dmsg, size, "%s", strerror(dw));
-#endif /* defined(_WIN32) */
 	return dmsg;
+}
+
+WINPR_ATTR_NODISCARD
+static BOOL starts_with(const char* tok, const char* val)
+{
+	const size_t len = strlen(val);
+	if (strncmp(tok, val, len) != 0)
+		return FALSE;
+
+	if (!strchr(tok, '='))
+		return FALSE;
+	return TRUE;
+}
+
+WINPR_ATTR_NODISCARD
+static BOOL option_equals(const char* what, const char* val)
+{
+	return _stricmp(what, val) == 0;
+}
+
+WINPR_ATTR_NODISCARD
+static BOOL parse_on_off_option(const char* value)
+{
+	WINPR_ASSERT(value);
+	const char* sep = strchr(value, '=');
+	if (!sep)
+		return TRUE;
+	if (option_equals("on", &sep[1]))
+		return TRUE;
+	if (option_equals("true", &sep[1]))
+		return TRUE;
+	if (option_equals("off", &sep[1]))
+		return FALSE;
+	if (option_equals("false", &sep[1]))
+		return FALSE;
+
+	errno = 0;
+	long val = strtol(value, nullptr, 0);
+	if (errno == 0)
+		return (val != 0);
+
+	return FALSE;
+}
+
+WINPR_ATTR_NODISCARD
+static BOOL option_is_debug(wLog* log, DWORD level, const char* tok)
+{
+	WINPR_ASSERT(log);
+	WINPR_UNUSED(log);
+	WINPR_UNUSED(level);
+
+	if (starts_with(tok, "WITH_DEBUG_"))
+		return parse_on_off_option(tok);
+
+	return FALSE;
+}
+
+static void log_build_warn(wLog* log, DWORD level, const char* what, const char* msg,
+                           BOOL (*cmp)(wLog* log, DWORD level, const char* tok), const char* input,
+                           size_t ilen)
+{
+	WINPR_ASSERT(log);
+
+	if (!input || (ilen == 0))
+		return;
+
+	char* list = calloc(ilen, sizeof(char));
+	char* config = _strdup(input);
+
+	if (config && list)
+	{
+		char* saveptr = nullptr;
+		char* tok = strtok_s(config, " ", &saveptr);
+		while (tok)
+		{
+			if (!cmp || cmp(log, level, tok))
+				winpr_str_append(tok, list, ilen, " ");
+
+			tok = strtok_s(nullptr, " ", &saveptr);
+		}
+	}
+	free(config);
+
+	if (list)
+	{
+		if (strlen(list) > 0)
+		{
+			WLog_Print(log, level, "*************************************************");
+			WLog_Print(log, level, "This WinPR build is using [%s] build options:", what);
+
+			char* saveptr = nullptr;
+			char* tok = strtok_s(list, " ", &saveptr);
+			while (tok)
+			{
+				WLog_Print(log, level, "* '%s'", tok);
+				tok = strtok_s(nullptr, " ", &saveptr);
+			}
+			WLog_Print(log, level, "*");
+			WLog_Print(log, level, "[%s] build options %s", what, msg);
+			WLog_Print(log, level, "*************************************************");
+		}
+	}
+	free(list);
+}
+
+void winpr_log_build_warn(wLog* log, DWORD level)
+{
+#if !defined(WINPR_ARCH_SUPPORTED) || (WINPR_ARCH_SUPPORTED == 0) || \
+    defined(DISABLE_SUPPORTED_ARCH_CHECKS)
+#define STR(x) #x
+#endif
+
+	const char configurations[] = {
+#if !defined(WINPR_ARCH_SUPPORTED) || (WINPR_ARCH_SUPPORTED == 0)
+		STR(WINPR_ARCH_SUPPORTED) "==0 "
+#endif
+#if defined(DISABLE_SUPPORTED_ARCH_CHECKS)
+		STR(DISABLE_SUPPORTED_ARCH_CHECKS) " "
+#endif
+		                                   "\0"
+	};
+	WINPR_ASSERT(log);
+	log_build_warn(log, level, "experimental",
+	               "might crash, overwrite data or steal your kitten, you have been warned!",
+	               nullptr, configurations, sizeof(configurations));
+
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_OVERLENGTH_STRINGS
+	log_build_warn(log, level, "debug",
+	               "might leak sensitive information (credentials, ...), slow down runtime, "
+	               "increase memory usage",
+	               option_is_debug, WINPR_BUILD_CONFIG, sizeof(WINPR_BUILD_CONFIG));
+	WINPR_PRAGMA_DIAG_POP
 }

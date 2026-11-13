@@ -16,82 +16,77 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <freerdp/server/shadow.h>
+#include <freerdp/log.h>
 
-struct _RDP_SHADOW_SUBSYSTEM
+#define TAG SERVER_TAG("shadow")
+
+typedef struct
 {
-	const char* name;
+	const char* (*name)(void);
 	pfnShadowSubsystemEntry entry;
-};
-typedef struct _RDP_SHADOW_SUBSYSTEM RDP_SHADOW_SUBSYSTEM;
+} RDP_SHADOW_SUBSYSTEM;
 
-#ifdef WITH_SHADOW_X11
-extern int X11_ShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints);
+#if defined(WITH_SHADOW_MUTTER)
+extern int MutterShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints);
+extern const char* MutterShadowSubsystemName(void);
 #endif
 
-#ifdef WITH_SHADOW_MAC
-extern int Mac_ShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints);
+#if defined(WITH_SHADOW_PLATFORM)
+/* The platform's own: Win, Mac, X11 or Sample */
+extern int ShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints);
+extern const char* ShadowSubsystemName(void);
 #endif
 
-#ifdef WITH_SHADOW_WIN
-extern int Win_ShadowSubsystemEntry(RDP_SHADOW_ENTRY_POINTS* pEntryPoints);
+/* In the order they are tried. Mutter comes first: inside a GNOME session on
+ * Wayland, X11 would only see Xwayland, and outside GNOME Mutter finds nothing. */
+static const RDP_SHADOW_SUBSYSTEM g_Subsystems[] = {
+#if defined(WITH_SHADOW_MUTTER)
+	{ MutterShadowSubsystemName, MutterShadowSubsystemEntry },
 #endif
-
-static RDP_SHADOW_SUBSYSTEM g_Subsystems[] = {
-
-#ifdef WITH_SHADOW_X11
-	{ "X11", X11_ShadowSubsystemEntry },
+#if defined(WITH_SHADOW_PLATFORM)
+	{ ShadowSubsystemName, ShadowSubsystemEntry },
 #endif
-
-#ifdef WITH_SHADOW_MAC
-	{ "Mac", Mac_ShadowSubsystemEntry },
-#endif
-
-#ifdef WITH_SHADOW_WIN
-	{ "Win", Win_ShadowSubsystemEntry },
-#endif
-
-	{ "", NULL }
 };
 
-static int g_SubsystemCount = (sizeof(g_Subsystems) / sizeof(g_Subsystems[0]));
+static const size_t g_SubsystemCount = ARRAYSIZE(g_Subsystems);
 
+WINPR_ATTR_NODISCARD
 static pfnShadowSubsystemEntry shadow_subsystem_load_static_entry(const char* name)
 {
-	int index;
+	WINPR_ASSERT(name);
 
-	if (!name)
+	for (size_t index = 0; index < g_SubsystemCount; index++)
 	{
-		for (index = 0; index < g_SubsystemCount; index++)
-		{
-			if (g_Subsystems[index].name)
-				return g_Subsystems[index].entry;
-		}
+		const RDP_SHADOW_SUBSYSTEM* cur = &g_Subsystems[index];
+		WINPR_ASSERT(cur->name);
+		WINPR_ASSERT(cur->entry);
 
-		return NULL;
+		if (strcmp(name, cur->name()) == 0)
+			return cur->entry;
 	}
 
-	for (index = 0; index < g_SubsystemCount; index++)
-	{
-		if (strcmp(name, g_Subsystems[index].name) == 0)
-			return g_Subsystems[index].entry;
-	}
-
-	return NULL;
+	return nullptr;
 }
 
 void shadow_subsystem_set_entry_builtin(const char* name)
 {
-	pfnShadowSubsystemEntry entry;
+	if (!name)
+	{
+		/* all of them: the server picks one when it starts (see /subsystem) */
+		for (size_t index = 0; index < g_SubsystemCount; index++)
+		{
+			const RDP_SHADOW_SUBSYSTEM* cur = &g_Subsystems[index];
+			if (!shadow_subsystem_add_entry(cur->name(), cur->entry))
+				WLog_ERR(TAG, "cannot add the %s subsystem", cur->name());
+		}
+		return;
+	}
 
-	entry = shadow_subsystem_load_static_entry(name);
+	pfnShadowSubsystemEntry entry = shadow_subsystem_load_static_entry(name);
 
 	if (entry)
 		shadow_subsystem_set_entry(entry);
-
-	return;
 }

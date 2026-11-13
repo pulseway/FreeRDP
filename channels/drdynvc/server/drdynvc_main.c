@@ -19,99 +19,17 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/print.h>
 #include <winpr/stream.h>
 #include <freerdp/channels/log.h>
+#include <freerdp/channels/drdynvc.h>
 
 #include "drdynvc_main.h"
 
 #define TAG CHANNELS_TAG("drdynvc.server")
-
-static DWORD WINAPI drdynvc_server_thread(LPVOID arg)
-{
-#if 0
-	wStream* s;
-	DWORD status;
-	DWORD nCount;
-	void* buffer;
-	HANDLE events[8];
-	HANDLE ChannelEvent;
-	DWORD BytesReturned;
-	DrdynvcServerContext* context;
-	UINT error = ERROR_INTERNAL_ERROR;
-	context = (DrdynvcServerContext*) arg;
-	buffer = NULL;
-	BytesReturned = 0;
-	ChannelEvent = NULL;
-
-	s = Stream_New(NULL, 4096);
-
-	if (!s)
-	{
-		WLog_ERR(TAG, "Stream_New failed!");
-		ExitThread((DWORD) CHANNEL_RC_NO_MEMORY);
-		return CHANNEL_RC_NO_MEMORY;
-	}
-
-	if (WTSVirtualChannelQuery(context->priv->ChannelHandle, WTSVirtualEventHandle,
-	                           &buffer, &BytesReturned) == TRUE)
-	{
-		if (BytesReturned == sizeof(HANDLE))
-			CopyMemory(&ChannelEvent, buffer, sizeof(HANDLE));
-
-		WTSFreeMemory(buffer);
-	}
-
-	nCount = 0;
-	events[nCount++] = ChannelEvent;
-	events[nCount++] = context->priv->StopEvent;
-
-	while (1)
-	{
-		status = WaitForMultipleObjects(nCount, events, FALSE, INFINITE);
-
-		if (WaitForSingleObject(context->priv->StopEvent, 0) == WAIT_OBJECT_0)
-		{
-			error = CHANNEL_RC_OK;
-			break;
-		}
-
-		if (!WTSVirtualChannelRead(context->priv->ChannelHandle, 0, NULL, 0,
-		                           &BytesReturned))
-		{
-			WLog_ERR(TAG, "WTSVirtualChannelRead failed!");
-			break;
-		}
-
-		if (BytesReturned < 1)
-			continue;
-
-		if (!Stream_EnsureRemainingCapacity(s, BytesReturned))
-		{
-			WLog_ERR(TAG, "Stream_EnsureRemainingCapacity failed!");
-			break;
-		}
-
-		if (!WTSVirtualChannelRead(context->priv->ChannelHandle, 0,
-		                           (PCHAR) Stream_Buffer(s), Stream_Capacity(s), &BytesReturned))
-		{
-			WLog_ERR(TAG, "WTSVirtualChannelRead failed!");
-			break;
-		}
-	}
-
-	Stream_Free(s, TRUE);
-	ExitThread((DWORD) error);
-#endif
-	// WTF ... this code only reads data into the stream until there is no more memory
-	ExitThread(0);
-	return 0;
-}
 
 /**
  * Function description
@@ -121,7 +39,7 @@ static DWORD WINAPI drdynvc_server_thread(LPVOID arg)
 static UINT drdynvc_server_start(DrdynvcServerContext* context)
 {
 	context->priv->ChannelHandle =
-	    WTSVirtualChannelOpen(context->vcm, WTS_CURRENT_SESSION, "drdynvc");
+	    WTSVirtualChannelOpen(context->vcm, WTS_CURRENT_SESSION, DRDYNVC_SVC_CHANNEL_NAME);
 
 	if (!context->priv->ChannelHandle)
 	{
@@ -129,22 +47,13 @@ static UINT drdynvc_server_start(DrdynvcServerContext* context)
 		return CHANNEL_RC_NO_MEMORY;
 	}
 
-	if (!(context->priv->StopEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
+	if (!(context->priv->StopEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr)))
 	{
 		WLog_ERR(TAG, "CreateEvent failed!");
 		return ERROR_INTERNAL_ERROR;
 	}
 
-	if (!(context->priv->Thread =
-	          CreateThread(NULL, 0, drdynvc_server_thread, (void*)context, 0, NULL)))
-	{
-		WLog_ERR(TAG, "CreateThread failed!");
-		CloseHandle(context->priv->StopEvent);
-		context->priv->StopEvent = NULL;
-		return ERROR_INTERNAL_ERROR;
-	}
-
-	return CHANNEL_RC_OK;
+	return ERROR_INTERNAL_ERROR;
 }
 
 /**
@@ -154,8 +63,8 @@ static UINT drdynvc_server_start(DrdynvcServerContext* context)
  */
 static UINT drdynvc_server_stop(DrdynvcServerContext* context)
 {
-	UINT error;
-	SetEvent(context->priv->StopEvent);
+	UINT error = 0;
+	(void)SetEvent(context->priv->StopEvent);
 
 	if (WaitForSingleObject(context->priv->Thread, INFINITE) == WAIT_FAILED)
 	{
@@ -164,13 +73,13 @@ static UINT drdynvc_server_stop(DrdynvcServerContext* context)
 		return error;
 	}
 
-	CloseHandle(context->priv->Thread);
+	(void)CloseHandle(context->priv->Thread);
 	return CHANNEL_RC_OK;
 }
 
 DrdynvcServerContext* drdynvc_server_context_new(HANDLE vcm)
 {
-	DrdynvcServerContext* context;
+	DrdynvcServerContext* context = nullptr;
 	context = (DrdynvcServerContext*)calloc(1, sizeof(DrdynvcServerContext));
 
 	if (context)
@@ -184,7 +93,7 @@ DrdynvcServerContext* drdynvc_server_context_new(HANDLE vcm)
 		{
 			WLog_ERR(TAG, "calloc failed!");
 			free(context);
-			return NULL;
+			return nullptr;
 		}
 	}
 	else

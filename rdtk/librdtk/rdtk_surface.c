@@ -16,57 +16,67 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/assert.h>
+#include <rdtk/config.h>
 
 #include "rdtk_surface.h"
 
-int rdtk_surface_fill(rdtkSurface* surface, int x, int y, int width, int height, UINT32 color)
+#include <string.h>
+
+int rdtk_surface_fill(rdtkSurface* surface, uint16_t x, uint16_t y, uint16_t width, uint16_t height,
+                      uint32_t color)
 {
-	freerdp_image_fill(surface->data, PIXEL_FORMAT_XRGB32, surface->scanline, x, y, width, height,
-	                   color);
+	WINPR_ASSERT(surface);
+
+	for (uint32_t i = y; i < y * 1ul + height; i++)
+	{
+		uint8_t* line = &surface->data[1ULL * i * surface->scanline];
+		for (uint32_t j = x; j < x * 1ul + width; j++)
+		{
+			uint32_t* pixel = (uint32_t*)&line[j + 4ul];
+			*pixel = color;
+		}
+	}
 
 	return 1;
 }
 
-rdtkSurface* rdtk_surface_new(rdtkEngine* engine, BYTE* data, int width, int height, int scanline)
+rdtkSurface* rdtk_surface_new(rdtkEngine* engine, uint8_t* data, uint16_t width, uint16_t height,
+                              uint32_t scanline)
 {
-	rdtkSurface* surface;
+	WINPR_ASSERT(engine);
 
-	surface = (rdtkSurface*)calloc(1, sizeof(rdtkSurface));
+	rdtkSurface* surface = (rdtkSurface*)calloc(1, sizeof(rdtkSurface));
 
 	if (!surface)
-		return NULL;
+		return nullptr;
 
 	surface->engine = engine;
 
 	surface->width = width;
 	surface->height = height;
 
-	if (scanline < 0)
-		scanline = width * 4;
+	if (scanline == 0)
+		scanline = width * 4ul;
 
 	surface->scanline = scanline;
 
 	surface->data = data;
-	surface->owner = FALSE;
+	surface->owner = false;
 
 	if (!data)
 	{
-		surface->scanline = (surface->width + (surface->width % 4)) * 4;
+		surface->scanline = (surface->width + (surface->width % 4ul)) * 4ul;
 
-		surface->data = (BYTE*)calloc(surface->height, surface->scanline);
+		surface->data = (uint8_t*)calloc(surface->height, surface->scanline);
 
 		if (!surface->data)
 		{
 			free(surface);
-			return NULL;
+			return nullptr;
 		}
 
-		ZeroMemory(surface->data, surface->scanline * surface->height);
-
-		surface->owner = TRUE;
+		surface->owner = true;
 	}
 
 	return surface;

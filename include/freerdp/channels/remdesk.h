@@ -23,6 +23,16 @@
 #include <freerdp/api.h>
 #include <freerdp/types.h>
 
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/** The command line name of the channel
+ *
+ *  \since version 3.0.0
+ */
+#define REMDESK_CHANNEL_NAME "remdesk"
 #define REMDESK_SVC_CHANNEL_NAME "remdesk"
 
 #define REMDESK_ERROR_NOERROR 0
@@ -74,24 +84,21 @@
 #define REMDESK_ERROR_SHADOWEND_CONFIGCHANGE 301
 #define REMDESK_ERROR_SHADOWEND_UNKNOWN 302
 
-struct _REMDESK_CHANNEL_HEADER
+typedef struct
 {
 	UINT32 DataLength;
 	char ChannelName[32];
-};
-typedef struct _REMDESK_CHANNEL_HEADER REMDESK_CHANNEL_HEADER;
+} REMDESK_CHANNEL_HEADER;
 
 #define REMDESK_CHANNEL_CTL_NAME "RC_CTL"
 #define REMDESK_CHANNEL_CTL_SIZE 22
 
-struct _REMDESK_CTL_HEADER
+typedef struct
 {
-	UINT32 DataLength;
-	char ChannelName[32];
+	REMDESK_CHANNEL_HEADER ch;
 
 	UINT32 msgType;
-};
-typedef struct _REMDESK_CTL_HEADER REMDESK_CTL_HEADER;
+} REMDESK_CTL_HEADER;
 
 #define REMDESK_CTL_REMOTE_CONTROL_DESKTOP 1
 #define REMDESK_CTL_RESULT 2
@@ -106,55 +113,53 @@ typedef struct _REMDESK_CTL_HEADER REMDESK_CTL_HEADER;
 #define REMDESK_CTL_RAEXPERT_NAME 11
 #define REMDESK_CTL_TOKEN 12
 
-struct _REMDESK_CTL_RESULT_PDU
+typedef struct
 {
 	REMDESK_CTL_HEADER ctlHeader;
 
 	UINT32 result;
-};
-typedef struct _REMDESK_CTL_RESULT_PDU REMDESK_CTL_RESULT_PDU;
+} REMDESK_CTL_RESULT_PDU;
 
-struct _REMDESK_CTL_VERSION_INFO_PDU
+typedef struct
 {
 	REMDESK_CTL_HEADER ctlHeader;
 
 	UINT32 versionMajor;
 	UINT32 versionMinor;
-};
-typedef struct _REMDESK_CTL_VERSION_INFO_PDU REMDESK_CTL_VERSION_INFO_PDU;
+} REMDESK_CTL_VERSION_INFO_PDU;
 
-struct _REMDESK_CTL_AUTHENTICATE_PDU
+typedef struct
 {
 	REMDESK_CTL_HEADER ctlHeader;
 
 	char* raConnectionString;
 	char* expertBlob;
-};
-typedef struct _REMDESK_CTL_AUTHENTICATE_PDU REMDESK_CTL_AUTHENTICATE_PDU;
+} REMDESK_CTL_AUTHENTICATE_PDU;
 
-struct _REMDESK_CTL_REMOTE_CONTROL_DESKTOP_PDU
+typedef struct
 {
 	REMDESK_CTL_HEADER ctlHeader;
 
 	char* raConnectionString;
-};
-typedef struct _REMDESK_CTL_REMOTE_CONTROL_DESKTOP_PDU REMDESK_CTL_REMOTE_CONTROL_DESKTOP_PDU;
+} REMDESK_CTL_REMOTE_CONTROL_DESKTOP_PDU;
 
-struct _REMDESK_CTL_VERIFY_PASSWORD_PDU
+typedef struct
 {
 	REMDESK_CTL_HEADER ctlHeader;
 
 	char* expertBlob;
-};
-typedef struct _REMDESK_CTL_VERIFY_PASSWORD_PDU REMDESK_CTL_VERIFY_PASSWORD_PDU;
+} REMDESK_CTL_VERIFY_PASSWORD_PDU;
 
-struct _REMDESK_CTL_EXPERT_ON_VISTA_PDU
+typedef struct
 {
 	REMDESK_CTL_HEADER ctlHeader;
 
 	BYTE* EncryptedPassword;
 	UINT32 EncryptedPasswordLength;
-};
-typedef struct _REMDESK_CTL_EXPERT_ON_VISTA_PDU REMDESK_CTL_EXPERT_ON_VISTA_PDU;
+} REMDESK_CTL_EXPERT_ON_VISTA_PDU;
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_CHANNEL_REMDESK_H */

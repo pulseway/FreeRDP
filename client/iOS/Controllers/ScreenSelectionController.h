@@ -19,13 +19,13 @@
 	NSString *_keyPath;
 	ConnectionParams *_params;
 
-	// avaiable options
+	// available options
 	OrderedDictionary *_color_options;
 	NSArray *_resolution_modes;
 
 	// current selections
-	int _selection_color;
-	int _selection_resolution;
+	NSInteger _selection_color;
+	NSInteger _selection_resolution;
 }
 
 - (id)initWithConnectionParams:(ConnectionParams *)params;

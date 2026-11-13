@@ -1,4 +1,4 @@
-/**
+/*
  * FreeRDP: A Remote Desktop Protocol Implementation
  * GDI Device Context Functions
  *
@@ -21,9 +21,7 @@
 
 /* Device Context Functions: http://msdn.microsoft.com/en-us/library/dd183554 */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,8 +34,9 @@
 #include <freerdp/gdi/dc.h>
 
 /**
- * Get the current device context (a new one is created each time).\n
- * @msdn{dd144871}
+ * @brief Get the current device context (a new one is created each time).
+ * msdn{dd144871}
+ *
  * @return current device context
  */
 
@@ -46,7 +45,7 @@ HGDI_DC gdi_GetDC(void)
 	HGDI_DC hDC = (HGDI_DC)calloc(1, sizeof(GDI_DC));
 
 	if (!hDC)
-		return NULL;
+		return nullptr;
 
 	hDC->format = PIXEL_FORMAT_XRGB32;
 	hDC->drawMode = GDI_R2_BLACK;
@@ -55,26 +54,27 @@ HGDI_DC gdi_GetDC(void)
 	if (!hDC->clip)
 	{
 		free(hDC);
-		return NULL;
+		return nullptr;
 	}
 
 	hDC->clip->null = TRUE;
-	hDC->hwnd = NULL;
+	hDC->hwnd = nullptr;
 	return hDC;
 }
 
 /**
- * Create a device context.\n
- * @msdn{dd144871}
+ * @brief Create a device context.
+ * msdn{dd144871}
+ *
  * @return new device context
  */
 
 HGDI_DC gdi_CreateDC(UINT32 format)
 {
-	HGDI_DC hDC;
+	HGDI_DC hDC = nullptr;
 
 	if (!(hDC = (HGDI_DC)calloc(1, sizeof(GDI_DC))))
-		return NULL;
+		return nullptr;
 
 	hDC->drawMode = GDI_R2_BLACK;
 
@@ -82,7 +82,7 @@ HGDI_DC gdi_CreateDC(UINT32 format)
 		goto fail;
 
 	hDC->clip->null = TRUE;
-	hDC->hwnd = NULL;
+	hDC->hwnd = nullptr;
 	hDC->format = format;
 
 	if (!(hDC->hwnd = (HGDI_WND)calloc(1, sizeof(GDI_WND))))
@@ -94,19 +94,19 @@ HGDI_DC gdi_CreateDC(UINT32 format)
 	hDC->hwnd->invalid->null = TRUE;
 	hDC->hwnd->count = 32;
 
-	if (!(hDC->hwnd->cinvalid = (HGDI_RGN)calloc(hDC->hwnd->count, sizeof(GDI_RGN))))
+	if (!(hDC->hwnd->cinvalid = (GDI_RGN*)calloc(hDC->hwnd->count, sizeof(GDI_RGN))))
 		goto fail;
 
 	hDC->hwnd->ninvalid = 0;
 	return hDC;
 fail:
 	gdi_DeleteDC(hDC);
-	return NULL;
+	return nullptr;
 }
 
 /**
- * Create a new device context compatible with the given device context.\n
- * @msdn{dd183489}
+ * @brief Create a new device context compatible with the given device context.
+ * msdn{dd183489}
  * @param hdc device context
  * @return new compatible device context
  */
@@ -116,24 +116,25 @@ HGDI_DC gdi_CreateCompatibleDC(HGDI_DC hdc)
 	HGDI_DC hDC = (HGDI_DC)calloc(1, sizeof(GDI_DC));
 
 	if (!hDC)
-		return NULL;
+		return nullptr;
 
 	if (!(hDC->clip = gdi_CreateRectRgn(0, 0, 0, 0)))
 	{
 		free(hDC);
-		return NULL;
+		return nullptr;
 	}
 
 	hDC->clip->null = TRUE;
 	hDC->format = hdc->format;
 	hDC->drawMode = hdc->drawMode;
-	hDC->hwnd = NULL;
+	hDC->hwnd = nullptr;
 	return hDC;
 }
 
 /**
- * Select a GDI object in the current device context.\n
- * @msdn{dd162957}
+ * @brief Select a GDI object in the current device context.
+ * msdn{dd162957}
+ *
  * @param hdc device context
  * @param hgdiobject new selected GDI object
  * @return previous selected GDI object
@@ -143,8 +144,8 @@ HGDIOBJECT gdi_SelectObject(HGDI_DC hdc, HGDIOBJECT hgdiobject)
 {
 	HGDIOBJECT previousSelectedObject = hdc->selectedObject;
 
-	if (hgdiobject == NULL)
-		return NULL;
+	if (hgdiobject == nullptr)
+		return nullptr;
 
 	if (hgdiobject->objectType == GDIOBJECT_BITMAP)
 	{
@@ -152,36 +153,36 @@ HGDIOBJECT gdi_SelectObject(HGDI_DC hdc, HGDIOBJECT hgdiobject)
 	}
 	else if (hgdiobject->objectType == GDIOBJECT_PEN)
 	{
-		previousSelectedObject = (HGDIOBJECT)hdc->pen;
-		hdc->pen = (HGDI_PEN)hgdiobject;
+		previousSelectedObject = WINPR_PACKED_ALIGN_CAST(HGDIOBJECT, hdc->pen);
+		hdc->pen = WINPR_PACKED_ALIGN_CAST(HGDI_PEN, hgdiobject);
 	}
 	else if (hgdiobject->objectType == GDIOBJECT_BRUSH)
 	{
 		previousSelectedObject = (HGDIOBJECT)hdc->brush;
-		hdc->brush = (HGDI_BRUSH)hgdiobject;
+		hdc->brush = WINPR_PACKED_ALIGN_CAST(HGDI_BRUSH, hgdiobject);
 	}
 	else if (hgdiobject->objectType == GDIOBJECT_REGION)
 	{
 		hdc->selectedObject = hgdiobject;
-		previousSelectedObject = (HGDIOBJECT)COMPLEXREGION;
+		previousSelectedObject = WINPR_PACKED_ALIGN_CAST(HGDIOBJECT, COMPLEXREGION);
 	}
 	else if (hgdiobject->objectType == GDIOBJECT_RECT)
 	{
 		hdc->selectedObject = hgdiobject;
-		previousSelectedObject = (HGDIOBJECT)SIMPLEREGION;
+		previousSelectedObject = WINPR_PACKED_ALIGN_CAST(HGDIOBJECT, SIMPLEREGION);
 	}
 	else
 	{
 		/* Unknown GDI Object Type */
-		return NULL;
+		return nullptr;
 	}
 
 	return previousSelectedObject;
 }
 
 /**
- * Delete a GDI object.\n
- * @msdn{dd183539}
+ * @brief Delete a GDI object.
+ * msdn{dd183539}
  * @param hgdiobject GDI object
  * @return nonzero if successful, 0 otherwise
  */
@@ -193,24 +194,24 @@ BOOL gdi_DeleteObject(HGDIOBJECT hgdiobject)
 
 	if (hgdiobject->objectType == GDIOBJECT_BITMAP)
 	{
-		HGDI_BITMAP hBitmap = (HGDI_BITMAP)hgdiobject;
+		HGDI_BITMAP hBitmap = WINPR_PACKED_ALIGN_CAST(HGDI_BITMAP, hgdiobject);
 
 		if (hBitmap->data && hBitmap->free)
 		{
 			hBitmap->free(hBitmap->data);
-			hBitmap->data = NULL;
+			hBitmap->data = nullptr;
 		}
 
 		free(hBitmap);
 	}
 	else if (hgdiobject->objectType == GDIOBJECT_PEN)
 	{
-		HGDI_PEN hPen = (HGDI_PEN)hgdiobject;
+		HGDI_PEN hPen = WINPR_PACKED_ALIGN_CAST(HGDI_PEN, hgdiobject);
 		free(hPen);
 	}
 	else if (hgdiobject->objectType == GDIOBJECT_BRUSH)
 	{
-		HGDI_BRUSH hBrush = (HGDI_BRUSH)hgdiobject;
+		HGDI_BRUSH hBrush = WINPR_PACKED_ALIGN_CAST(HGDI_BRUSH, hgdiobject);
 		free(hBrush);
 	}
 	else if (hgdiobject->objectType == GDIOBJECT_REGION)
@@ -232,8 +233,8 @@ BOOL gdi_DeleteObject(HGDIOBJECT hgdiobject)
 }
 
 /**
- * Delete device context.\n
- * @msdn{dd183533}
+ * @brief Delete device context.
+ * msdn{dd183533}
  * @param hdc device context
  * @return nonzero if successful, 0 otherwise
  */

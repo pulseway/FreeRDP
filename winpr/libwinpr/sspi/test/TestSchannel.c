@@ -15,10 +15,10 @@
 static BOOL g_ClientWait = FALSE;
 static BOOL g_ServerWait = FALSE;
 
-static HANDLE g_ClientReadPipe = NULL;
-static HANDLE g_ClientWritePipe = NULL;
-static HANDLE g_ServerReadPipe = NULL;
-static HANDLE g_ServerWritePipe = NULL;
+static HANDLE g_ClientReadPipe = nullptr;
+static HANDLE g_ClientWritePipe = nullptr;
+static HANDLE g_ServerReadPipe = nullptr;
+static HANDLE g_ServerWritePipe = nullptr;
 
 static const BYTE test_localhost_crt[1029] = {
 	0x2D, 0x2D, 0x2D, 0x2D, 0x2D, 0x42, 0x45, 0x47, 0x49, 0x4E, 0x20, 0x43, 0x45, 0x52, 0x54, 0x49,
@@ -218,12 +218,12 @@ static int schannel_send(PSecurityFunctionTable table, HANDLE hPipe, PCtxtHandle
 	BYTE* ioBuffer;
 	UINT32 ioBufferLength;
 	BYTE* pMessageBuffer;
-	SecBuffer Buffers[4];
+	SecBuffer Buffers[4] = WINPR_C_ARRAY_INIT;
 	SecBufferDesc Message;
 	SECURITY_STATUS status;
 	DWORD NumberOfBytesWritten;
-	SecPkgContext_StreamSizes StreamSizes;
-	ZeroMemory(&StreamSizes, sizeof(SecPkgContext_StreamSizes));
+	SecPkgContext_StreamSizes StreamSizes = WINPR_C_ARRAY_INIT;
+
 	status = table->QueryContextAttributes(phContext, SECPKG_ATTR_STREAM_SIZES, &StreamSizes);
 	ioBufferLength = StreamSizes.cbHeader + StreamSizes.cbMaximumMessage + StreamSizes.cbTrailer;
 	ioBuffer = (BYTE*)calloc(1, ioBufferLength);
@@ -240,7 +240,7 @@ static int schannel_send(PSecurityFunctionTable table, HANDLE hPipe, PCtxtHandle
 	Buffers[2].pvBuffer = pMessageBuffer + length;
 	Buffers[2].cbBuffer = StreamSizes.cbTrailer;
 	Buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
-	Buffers[3].pvBuffer = NULL;
+	Buffers[3].pvBuffer = nullptr;
 	Buffers[3].cbBuffer = 0;
 	Buffers[3].BufferType = SECBUFFER_EMPTY;
 	Message.ulVersion = SECBUFFER_VERSION;
@@ -264,7 +264,7 @@ static int schannel_send(PSecurityFunctionTable table, HANDLE hPipe, PCtxtHandle
 	printf("Client > Server (%" PRIu32 ")\n", ioBufferLength);
 	winpr_HexDump("sspi.test", WLOG_DEBUG, ioBuffer, ioBufferLength);
 
-	if (!WriteFile(hPipe, ioBuffer, ioBufferLength, &NumberOfBytesWritten, NULL))
+	if (!WriteFile(hPipe, ioBuffer, ioBufferLength, &NumberOfBytesWritten, nullptr))
 	{
 		printf("schannel_send: failed to write to pipe\n");
 		return -1;
@@ -278,19 +278,19 @@ static int schannel_recv(PSecurityFunctionTable table, HANDLE hPipe, PCtxtHandle
 	BYTE* ioBuffer;
 	UINT32 ioBufferLength;
 	// BYTE* pMessageBuffer;
-	SecBuffer Buffers[4];
+	SecBuffer Buffers[4] = WINPR_C_ARRAY_INIT;
 	SecBufferDesc Message;
 	SECURITY_STATUS status;
 	DWORD NumberOfBytesRead;
-	SecPkgContext_StreamSizes StreamSizes;
-	ZeroMemory(&StreamSizes, sizeof(SecPkgContext_StreamSizes));
+	SecPkgContext_StreamSizes StreamSizes = WINPR_C_ARRAY_INIT;
+
 	status = table->QueryContextAttributes(phContext, SECPKG_ATTR_STREAM_SIZES, &StreamSizes);
 	ioBufferLength = StreamSizes.cbHeader + StreamSizes.cbMaximumMessage + StreamSizes.cbTrailer;
 	ioBuffer = (BYTE*)calloc(1, ioBufferLength);
 	if (!ioBuffer)
 		return -1;
 
-	if (!ReadFile(hPipe, ioBuffer, ioBufferLength, &NumberOfBytesRead, NULL))
+	if (!ReadFile(hPipe, ioBuffer, ioBufferLength, &NumberOfBytesRead, nullptr))
 	{
 		printf("schannel_recv: failed to read from pipe\n");
 		return -1;
@@ -299,19 +299,19 @@ static int schannel_recv(PSecurityFunctionTable table, HANDLE hPipe, PCtxtHandle
 	Buffers[0].pvBuffer = ioBuffer;
 	Buffers[0].cbBuffer = NumberOfBytesRead;
 	Buffers[0].BufferType = SECBUFFER_DATA;
-	Buffers[1].pvBuffer = NULL;
+	Buffers[1].pvBuffer = nullptr;
 	Buffers[1].cbBuffer = 0;
 	Buffers[1].BufferType = SECBUFFER_EMPTY;
-	Buffers[2].pvBuffer = NULL;
+	Buffers[2].pvBuffer = nullptr;
 	Buffers[2].cbBuffer = 0;
 	Buffers[2].BufferType = SECBUFFER_EMPTY;
-	Buffers[3].pvBuffer = NULL;
+	Buffers[3].pvBuffer = nullptr;
 	Buffers[3].cbBuffer = 0;
 	Buffers[3].BufferType = SECBUFFER_EMPTY;
 	Message.ulVersion = SECBUFFER_VERSION;
 	Message.cBuffers = 4;
 	Message.pBuffers = Buffers;
-	status = table->DecryptMessage(phContext, &Message, 0, NULL);
+	status = table->DecryptMessage(phContext, &Message, 0, nullptr);
 	printf("DecryptMessage status: 0x%08" PRIX32 "\n", status);
 	printf("DecryptMessage output: cBuffers: %" PRIu32 " [0]: %" PRIu32 " / %" PRIu32
 	       " [1]: %" PRIu32 " / %" PRIu32 " [2]: %" PRIu32 " / %" PRIu32 " [3]: %" PRIu32
@@ -344,7 +344,7 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 	UINT32 cbMaxToken;
 	UINT32 fContextReq;
 	ULONG fContextAttr;
-	SCHANNEL_CRED cred;
+	SCHANNEL_CRED cred = WINPR_C_ARRAY_INIT;
 	CtxtHandle context;
 	CredHandle credentials;
 	DWORD cchNameString;
@@ -352,8 +352,8 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 	HCERTSTORE hCertStore;
 	PCCERT_CONTEXT pCertContext;
 	PSecBuffer pSecBuffer;
-	SecBuffer SecBuffer_in[2];
-	SecBuffer SecBuffer_out[2];
+	SecBuffer SecBuffer_in[2] = WINPR_C_ARRAY_INIT;
+	SecBuffer SecBuffer_out[2] = WINPR_C_ARRAY_INIT;
 	SecBufferDesc SecBufferDesc_in;
 	SecBufferDesc SecBufferDesc_out;
 	DWORD NumberOfBytesRead;
@@ -379,44 +379,43 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 	if (!hCertStore)
 	{
 		printf("Error opening system store\n");
-		// return NULL;
+		// return nullptr;
 	}
 
 #ifdef CERT_FIND_HAS_PRIVATE_KEY
 	pCertContext = CertFindCertificateInStore(hCertStore, X509_ASN_ENCODING, 0,
-	                                          CERT_FIND_HAS_PRIVATE_KEY, NULL, NULL);
+	                                          CERT_FIND_HAS_PRIVATE_KEY, nullptr, nullptr);
 #else
-	pCertContext =
-	    CertFindCertificateInStore(hCertStore, X509_ASN_ENCODING, 0, CERT_FIND_ANY, NULL, NULL);
+	pCertContext = CertFindCertificateInStore(hCertStore, X509_ASN_ENCODING, 0, CERT_FIND_ANY,
+	                                          nullptr, nullptr);
 #endif
 
 	if (!pCertContext)
 	{
 		printf("Error finding certificate in store\n");
-		// return NULL;
+		// return nullptr;
 	}
 
 	cchNameString =
-	    CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, NULL, 0);
+	    CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, nullptr, 0);
 	pszNameString = (LPTSTR)malloc(cchNameString * sizeof(TCHAR));
 	if (!pszNameString)
 	{
 		printf("Memory allocation failed\n");
 		return 0;
 	}
-	cchNameString = CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL,
+	cchNameString = CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr,
 	                                  pszNameString, cchNameString);
 	_tprintf(_T("Certificate Name: %s\n"), pszNameString);
-	ZeroMemory(&cred, sizeof(SCHANNEL_CRED));
 	cred.dwVersion = SCHANNEL_CRED_VERSION;
 	cred.cCreds = 1;
 	cred.paCred = &pCertContext;
 	cred.cSupportedAlgs = 0;
-	cred.palgSupportedAlgs = NULL;
+	cred.palgSupportedAlgs = nullptr;
 	cred.grbitEnabledProtocols = SP_PROT_TLS1_SERVER;
 	cred.dwFlags = SCH_CRED_NO_SYSTEM_MAPPER;
-	status = table->AcquireCredentialsHandle(NULL, SCHANNEL_NAME, SECPKG_CRED_INBOUND, NULL, &cred,
-	                                         NULL, NULL, &credentials, NULL);
+	status = table->AcquireCredentialsHandle(nullptr, SCHANNEL_NAME, SECPKG_CRED_INBOUND, nullptr,
+	                                         &cred, nullptr, nullptr, &credentials, nullptr);
 
 	if (status != SEC_E_OK)
 	{
@@ -446,10 +445,10 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 		{
 			if (g_ServerWait)
 			{
-				if (!ReadFile(g_ServerReadPipe, lpTokenIn, cbMaxToken, &NumberOfBytesRead, NULL))
+				if (!ReadFile(g_ServerReadPipe, lpTokenIn, cbMaxToken, &NumberOfBytesRead, nullptr))
 				{
 					printf("Failed to read from server pipe\n");
-					return NULL;
+					return nullptr;
 				}
 			}
 			else
@@ -464,7 +463,7 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 		SecBuffer_in[0].pvBuffer = lpTokenIn;
 		SecBuffer_in[0].cbBuffer = NumberOfBytesRead;
 		SecBuffer_in[1].BufferType = SECBUFFER_EMPTY;
-		SecBuffer_in[1].pvBuffer = NULL;
+		SecBuffer_in[1].pvBuffer = nullptr;
 		SecBuffer_in[1].cbBuffer = 0;
 		SecBufferDesc_in.ulVersion = SECBUFFER_VERSION;
 		SecBufferDesc_in.cBuffers = 2;
@@ -476,14 +475,14 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 		SecBufferDesc_out.cBuffers = 1;
 		SecBufferDesc_out.pBuffers = SecBuffer_out;
 		status = table->AcceptSecurityContext(
-		    &credentials, SecIsValidHandle(&context) ? &context : NULL, &SecBufferDesc_in,
+		    &credentials, SecIsValidHandle(&context) ? &context : nullptr, &SecBufferDesc_in,
 		    fContextReq, 0, &context, &SecBufferDesc_out, &fContextAttr, &expiry);
 
 		if ((status != SEC_E_OK) && (status != SEC_I_CONTINUE_NEEDED) &&
 		    (status != SEC_E_INCOMPLETE_MESSAGE))
 		{
 			printf("AcceptSecurityContext unexpected status: 0x%08" PRIX32 "\n", status);
-			return NULL;
+			return nullptr;
 		}
 
 		NumberOfBytesWritten = 0;
@@ -525,10 +524,10 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 				              pSecBuffer->cbBuffer);
 
 				if (!WriteFile(g_ClientWritePipe, pSecBuffer->pvBuffer, pSecBuffer->cbBuffer,
-				               &NumberOfBytesWritten, NULL))
+				               &NumberOfBytesWritten, nullptr))
 				{
 					printf("failed to write to client pipe\n");
-					return NULL;
+					return nullptr;
 				}
 			}
 		}
@@ -552,7 +551,7 @@ static DWORD WINAPI schannel_test_server_thread(LPVOID arg)
 static int dump_test_certificate_files(void)
 {
 	FILE* fp;
-	char* fullpath = NULL;
+	char* fullpath = nullptr;
 	int ret = -1;
 
 	/*
@@ -562,13 +561,13 @@ static int dump_test_certificate_files(void)
 	if (!fullpath)
 		return -1;
 
-	fp = fopen(fullpath, "w+");
+	fp = winpr_fopen(fullpath, "w+");
 	if (fp)
 	{
 		if (fwrite((void*)test_localhost_crt, sizeof(test_localhost_crt), 1, fp) != 1)
 			goto out_fail;
 		fclose(fp);
-		fp = NULL;
+		fp = nullptr;
 	}
 	free(fullpath);
 
@@ -578,7 +577,7 @@ static int dump_test_certificate_files(void)
 	fullpath = GetCombinedPath("/tmp", "localhost.key");
 	if (!fullpath)
 		return -1;
-	fp = fopen(fullpath, "w+");
+	fp = winpr_fopen(fullpath, "w+");
 	if (fp && fwrite((void*)test_localhost_key, sizeof(test_localhost_key), 1, fp) != 1)
 		goto out_fail;
 
@@ -593,14 +592,13 @@ out_fail:
 int TestSchannel(int argc, char* argv[])
 {
 	int count;
-	DWORD index;
 	ALG_ID algId;
 	HANDLE thread;
 	BYTE* lpTokenIn;
 	BYTE* lpTokenOut;
 	TimeStamp expiry;
 	UINT32 cbMaxToken;
-	SCHANNEL_CRED cred;
+	SCHANNEL_CRED cred = WINPR_C_ARRAY_INIT;
 	UINT32 fContextReq;
 	ULONG fContextAttr;
 	CtxtHandle context;
@@ -608,35 +606,31 @@ int TestSchannel(int argc, char* argv[])
 	SECURITY_STATUS status;
 	PSecPkgInfo pPackageInfo;
 	PSecBuffer pSecBuffer;
-	SecBuffer SecBuffer_in[2];
-	SecBuffer SecBuffer_out[1];
-	SecBufferDesc SecBufferDesc_in;
-	SecBufferDesc SecBufferDesc_out;
 	PSecurityFunctionTable table;
 	DWORD NumberOfBytesRead;
 	DWORD NumberOfBytesWritten;
-	SecPkgCred_SupportedAlgs SupportedAlgs;
-	SecPkgCred_CipherStrengths CipherStrengths;
-	SecPkgCred_SupportedProtocols SupportedProtocols;
+	SecPkgCred_SupportedAlgs SupportedAlgs = WINPR_C_ARRAY_INIT;
+	SecPkgCred_CipherStrengths CipherStrengths = WINPR_C_ARRAY_INIT;
+	SecPkgCred_SupportedProtocols SupportedProtocols = WINPR_C_ARRAY_INIT;
 	return 0; /* disable by default - causes crash */
 	sspi_GlobalInit();
 	dump_test_certificate_files();
 	SecInvalidateHandle(&context);
 	SecInvalidateHandle(&credentials);
 
-	if (!CreatePipe(&g_ClientReadPipe, &g_ClientWritePipe, NULL, 0))
+	if (!CreatePipe(&g_ClientReadPipe, &g_ClientWritePipe, nullptr, 0))
 	{
 		printf("Failed to create client pipe\n");
 		return -1;
 	}
 
-	if (!CreatePipe(&g_ServerReadPipe, &g_ServerWritePipe, NULL, 0))
+	if (!CreatePipe(&g_ServerReadPipe, &g_ServerWritePipe, nullptr, 0))
 	{
 		printf("Failed to create server pipe\n");
 		return -1;
 	}
 
-	if (!(thread = CreateThread(NULL, 0, schannel_test_server_thread, NULL, 0, NULL)))
+	if (!(thread = CreateThread(nullptr, 0, schannel_test_server_thread, nullptr, 0, nullptr)))
 	{
 		printf("Failed to create server thread\n");
 		return -1;
@@ -652,18 +646,17 @@ int TestSchannel(int argc, char* argv[])
 	}
 
 	cbMaxToken = pPackageInfo->cbMaxToken;
-	ZeroMemory(&cred, sizeof(SCHANNEL_CRED));
 	cred.dwVersion = SCHANNEL_CRED_VERSION;
 	cred.cCreds = 0;
-	cred.paCred = NULL;
+	cred.paCred = nullptr;
 	cred.cSupportedAlgs = 0;
-	cred.palgSupportedAlgs = NULL;
+	cred.palgSupportedAlgs = nullptr;
 	cred.grbitEnabledProtocols = SP_PROT_SSL3TLS1_CLIENTS;
 	cred.dwFlags = SCH_CRED_NO_DEFAULT_CREDS;
 	cred.dwFlags |= SCH_CRED_MANUAL_CRED_VALIDATION;
 	cred.dwFlags |= SCH_CRED_NO_SERVERNAME_CHECK;
-	status = table->AcquireCredentialsHandle(NULL, SCHANNEL_NAME, SECPKG_CRED_OUTBOUND, NULL, &cred,
-	                                         NULL, NULL, &credentials, NULL);
+	status = table->AcquireCredentialsHandle(nullptr, SCHANNEL_NAME, SECPKG_CRED_OUTBOUND, nullptr,
+	                                         &cred, nullptr, nullptr, &credentials, nullptr);
 
 	if (status != SEC_E_OK)
 	{
@@ -671,7 +664,6 @@ int TestSchannel(int argc, char* argv[])
 		return -1;
 	}
 
-	ZeroMemory(&SupportedAlgs, sizeof(SecPkgCred_SupportedAlgs));
 	status =
 	    table->QueryCredentialsAttributes(&credentials, SECPKG_ATTR_SUPPORTED_ALGS, &SupportedAlgs);
 
@@ -689,7 +681,7 @@ int TestSchannel(int argc, char* argv[])
 	 */
 	printf("SupportedAlgs: %" PRIu32 "\n", SupportedAlgs.cSupportedAlgs);
 
-	for (index = 0; index < SupportedAlgs.cSupportedAlgs; index++)
+	for (DWORD index = 0; index < SupportedAlgs.cSupportedAlgs; index++)
 	{
 		algId = SupportedAlgs.palgSupportedAlgs[index];
 		printf("\t0x%08" PRIX32 " CLASS: %" PRIu32 " TYPE: %" PRIu32 " SID: %" PRIu32 "\n", algId,
@@ -697,7 +689,6 @@ int TestSchannel(int argc, char* argv[])
 	}
 
 	printf("\n");
-	ZeroMemory(&CipherStrengths, sizeof(SecPkgCred_CipherStrengths));
 	status = table->QueryCredentialsAttributes(&credentials, SECPKG_ATTR_CIPHER_STRENGTHS,
 	                                           &CipherStrengths);
 
@@ -711,7 +702,6 @@ int TestSchannel(int argc, char* argv[])
 	/* CipherStrengths: Minimum: 40 Maximum: 256 */
 	printf("CipherStrengths: Minimum: %" PRIu32 " Maximum: %" PRIu32 "\n",
 	       CipherStrengths.dwMinimumCipherStrength, CipherStrengths.dwMaximumCipherStrength);
-	ZeroMemory(&SupportedProtocols, sizeof(SecPkgCred_SupportedProtocols));
 	status = table->QueryCredentialsAttributes(&credentials, SECPKG_ATTR_SUPPORTED_PROTOCOLS,
 	                                           &SupportedProtocols);
 
@@ -738,17 +728,17 @@ int TestSchannel(int argc, char* argv[])
 		printf("Memory allocation failed\n");
 		return -1;
 	}
-	ZeroMemory(&SecBuffer_in, sizeof(SecBuffer_in));
-	ZeroMemory(&SecBuffer_out, sizeof(SecBuffer_out));
-	ZeroMemory(&SecBufferDesc_in, sizeof(SecBufferDesc));
-	ZeroMemory(&SecBufferDesc_out, sizeof(SecBufferDesc));
 	g_ClientWait = FALSE;
 
 	do
 	{
+		SecBuffer SecBuffer_in[2] = WINPR_C_ARRAY_INIT;
+		SecBuffer SecBuffer_out[1] = WINPR_C_ARRAY_INIT;
+		SecBufferDesc SecBufferDesc_in = WINPR_C_ARRAY_INIT;
+		SecBufferDesc SecBufferDesc_out = WINPR_C_ARRAY_INIT;
 		if (g_ClientWait)
 		{
-			if (!ReadFile(g_ClientReadPipe, lpTokenIn, cbMaxToken, &NumberOfBytesRead, NULL))
+			if (!ReadFile(g_ClientReadPipe, lpTokenIn, cbMaxToken, &NumberOfBytesRead, nullptr))
 			{
 				printf("failed to read from server pipe\n");
 				return -1;
@@ -764,7 +754,7 @@ int TestSchannel(int argc, char* argv[])
 		SecBuffer_in[0].BufferType = SECBUFFER_TOKEN;
 		SecBuffer_in[0].pvBuffer = lpTokenIn;
 		SecBuffer_in[0].cbBuffer = NumberOfBytesRead;
-		SecBuffer_in[1].pvBuffer = NULL;
+		SecBuffer_in[1].pvBuffer = nullptr;
 		SecBuffer_in[1].cbBuffer = 0;
 		SecBuffer_in[1].BufferType = SECBUFFER_EMPTY;
 		SecBufferDesc_in.ulVersion = SECBUFFER_VERSION;
@@ -777,7 +767,7 @@ int TestSchannel(int argc, char* argv[])
 		SecBufferDesc_out.cBuffers = 1;
 		SecBufferDesc_out.pBuffers = SecBuffer_out;
 		status = table->InitializeSecurityContext(
-		    &credentials, SecIsValidHandle(&context) ? &context : NULL, _T("localhost"),
+		    &credentials, SecIsValidHandle(&context) ? &context : nullptr, _T("localhost"),
 		    fContextReq, 0, 0, &SecBufferDesc_in, 0, &context, &SecBufferDesc_out, &fContextAttr,
 		    &expiry);
 
@@ -817,7 +807,7 @@ int TestSchannel(int argc, char* argv[])
 				              pSecBuffer->cbBuffer);
 
 				if (!WriteFile(g_ServerWritePipe, pSecBuffer->pvBuffer, pSecBuffer->cbBuffer,
-				               &NumberOfBytesWritten, NULL))
+				               &NumberOfBytesWritten, nullptr))
 				{
 					printf("failed to write to server pipe\n");
 					return -1;
@@ -840,7 +830,7 @@ int TestSchannel(int argc, char* argv[])
 		                  sizeof(test_DummyMessage)) < 0)
 			break;
 
-		for (index = 0; index < sizeof(test_DummyMessage); index++)
+		for (DWORD index = 0; index < sizeof(test_DummyMessage); index++)
 		{
 			BYTE b, ln, hn;
 			b = test_DummyMessage[index];
@@ -858,7 +848,7 @@ int TestSchannel(int argc, char* argv[])
 
 	schannel_send(table, g_ServerWritePipe, &context, test_LastDummyMessage,
 	              sizeof(test_LastDummyMessage));
-	WaitForSingleObject(thread, INFINITE);
+	(void)WaitForSingleObject(thread, INFINITE);
 	sspi_GlobalFinish();
 	return 0;
 }

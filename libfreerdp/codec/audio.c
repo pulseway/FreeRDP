@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 
@@ -30,8 +28,8 @@
 
 UINT32 audio_format_compute_time_length(const AUDIO_FORMAT* format, size_t size)
 {
-	UINT32 mstime;
-	UINT32 wSamples;
+	UINT32 mstime = 0;
+	UINT32 wSamples = 0;
 
 	/**
 	 * [MSDN-AUDIOFORMAT]:
@@ -40,7 +38,9 @@ UINT32 audio_format_compute_time_length(const AUDIO_FORMAT* format, size_t size)
 
 	if (format->wBitsPerSample)
 	{
-		wSamples = (size * 8) / format->wBitsPerSample;
+		const size_t samples = (size * 8) / format->wBitsPerSample;
+		WINPR_ASSERT(samples <= UINT32_MAX);
+		wSamples = (UINT32)samples;
 		mstime = (((wSamples * 1000) / format->nSamplesPerSec) / format->nChannels);
 	}
 	else
@@ -49,12 +49,14 @@ UINT32 audio_format_compute_time_length(const AUDIO_FORMAT* format, size_t size)
 
 		if (format->wFormatTag == WAVE_FORMAT_GSM610)
 		{
-			UINT16 nSamplesPerBlock;
+			UINT16 nSamplesPerBlock = 0;
 
 			if ((format->cbSize == 2) && (format->data))
 			{
-				nSamplesPerBlock = *((UINT16*)format->data);
-				wSamples = (size / format->nBlockAlign) * nSamplesPerBlock;
+				nSamplesPerBlock = *(WINPR_PACKED_ALIGN_CAST(UINT16*, format->data));
+				const size_t samples = (size / format->nBlockAlign) * nSamplesPerBlock;
+				WINPR_ASSERT(samples <= UINT32_MAX);
+				wSamples = (UINT32)samples;
 				mstime = (((wSamples * 1000) / format->nSamplesPerSec) / format->nChannels);
 			}
 			else
@@ -73,7 +75,7 @@ UINT32 audio_format_compute_time_length(const AUDIO_FORMAT* format, size_t size)
 	return mstime;
 }
 
-char* audio_format_get_tag_string(UINT16 wFormatTag)
+const char* audio_format_get_tag_string(UINT16 wFormatTag)
 {
 	switch (wFormatTag)
 	{
@@ -99,7 +101,7 @@ char* audio_format_get_tag_string(UINT16 wFormatTag)
 			return "WAVE_FORMAT_MSG723";
 
 		case WAVE_FORMAT_DSPGROUP_TRUESPEECH:
-			return "WAVE_FORMAT_DSPGROUP_TRUESPEECH	";
+			return "WAVE_FORMAT_DSPGROUP_TRUESPEECH";
 
 		case WAVE_FORMAT_MPEGLAYER3:
 			return "WAVE_FORMAT_MPEGLAYER3";
@@ -109,9 +111,13 @@ char* audio_format_get_tag_string(UINT16 wFormatTag)
 
 		case WAVE_FORMAT_AAC_MS:
 			return "WAVE_FORMAT_AAC_MS";
-	}
 
-	return "WAVE_FORMAT_UNKNOWN";
+		case WAVE_FORMAT_OPUS:
+			return "WAVE_FORMAT_OPUS";
+
+		default:
+			return "WAVE_FORMAT_UNKNOWN";
+	}
 }
 
 void audio_format_print(wLog* log, DWORD level, const AUDIO_FORMAT* format)
@@ -128,16 +134,13 @@ void audio_format_print(wLog* log, DWORD level, const AUDIO_FORMAT* format)
 
 void audio_formats_print(wLog* log, DWORD level, const AUDIO_FORMAT* formats, UINT16 count)
 {
-	UINT16 index;
-	const AUDIO_FORMAT* format;
-
 	if (formats)
 	{
 		WLog_Print(log, level, "AUDIO_FORMATS (%" PRIu16 ") ={", count);
 
-		for (index = 0; index < count; index++)
+		for (UINT32 index = 0; index < count; index++)
 		{
-			format = &formats[index];
+			const AUDIO_FORMAT* format = &formats[index];
 			WLog_Print(log, level, "\t");
 			audio_format_print(log, level, format);
 		}
@@ -151,7 +154,7 @@ BOOL audio_format_read(wStream* s, AUDIO_FORMAT* format)
 	if (!s || !format)
 		return FALSE;
 
-	if (Stream_GetRemainingLength(s) < 18)
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 18))
 		return FALSE;
 
 	Stream_Read_UINT16(s, format->wFormatTag);
@@ -162,10 +165,10 @@ BOOL audio_format_read(wStream* s, AUDIO_FORMAT* format)
 	Stream_Read_UINT16(s, format->wBitsPerSample);
 	Stream_Read_UINT16(s, format->cbSize);
 
-	if (Stream_GetRemainingLength(s) < format->cbSize)
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, format->cbSize))
 		return FALSE;
 
-	format->data = NULL;
+	format->data = nullptr;
 
 	if (format->cbSize > 0)
 	{
@@ -185,7 +188,7 @@ BOOL audio_format_write(wStream* s, const AUDIO_FORMAT* format)
 	if (!s || !format)
 		return FALSE;
 
-	if (!Stream_EnsureRemainingCapacity(s, 18 + format->cbSize))
+	if (!Stream_EnsureRemainingCapacity(s, 18ull + format->cbSize))
 		return FALSE;
 
 	Stream_Write_UINT16(s, format->wFormatTag);      /* wFormatTag (WAVE_FORMAT_PCM) */
@@ -202,7 +205,8 @@ BOOL audio_format_write(wStream* s, const AUDIO_FORMAT* format)
 	return TRUE;
 }
 
-BOOL audio_format_copy(const AUDIO_FORMAT* srcFormat, AUDIO_FORMAT* dstFormat)
+BOOL audio_format_copy(const AUDIO_FORMAT* WINPR_RESTRICT srcFormat,
+                       AUDIO_FORMAT* WINPR_RESTRICT dstFormat)
 {
 	if (!srcFormat || !dstFormat)
 		return FALSE;
@@ -254,20 +258,6 @@ BOOL audio_format_compatible(const AUDIO_FORMAT* with, const AUDIO_FORMAT* what)
 	return TRUE;
 }
 
-static BOOL audio_format_valid(const AUDIO_FORMAT* format)
-{
-	if (!format)
-		return FALSE;
-
-	if (format->nChannels == 0)
-		return FALSE;
-
-	if (format->nSamplesPerSec == 0)
-		return FALSE;
-
-	return TRUE;
-}
-
 AUDIO_FORMAT* audio_format_new(void)
 {
 	return audio_formats_new(1);
@@ -286,11 +276,9 @@ void audio_format_free(AUDIO_FORMAT* format)
 
 void audio_formats_free(AUDIO_FORMAT* formats, size_t count)
 {
-	size_t index;
-
 	if (formats)
 	{
-		for (index = 0; index < count; index++)
+		for (size_t index = 0; index < count; index++)
 		{
 			AUDIO_FORMAT* format = &formats[index];
 			audio_format_free(format);

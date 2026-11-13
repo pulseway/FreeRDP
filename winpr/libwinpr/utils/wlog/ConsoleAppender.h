@@ -22,6 +22,8 @@
 
 #include "wlog.h"
 
-wLogAppender* WLog_ConsoleAppender_New(wLog* log);
+WINPR_ATTR_MALLOC(WLog_Appender_Free, 2)
+WINPR_ATTR_NODISCARD
+WINPR_LOCAL wLogAppender* WLog_ConsoleAppender_New(wLog* log);
 
 #endif /* WINPR_WLOG_CONSOLE_APPENDER_PRIVATE_H */

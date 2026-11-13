@@ -12,12 +12,15 @@ static const TCHAR testPathExtension[] = _T("C:\\Windows\\System32\\cmd.exe");
 
 int TestPathCchAddExtension(int argc, char* argv[])
 {
-	HRESULT status;
-	TCHAR Path[PATHCCH_MAX_CCH];
+	HRESULT status = 0;
+	TCHAR Path[PATHCCH_MAX_CCH] = WINPR_C_ARRAY_INIT;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	/* Path: no extension, Extension: dot */
 
-	_tcscpy(Path, testPathNoExtension);
+	_tcsncpy(Path, testPathNoExtension, ARRAYSIZE(Path));
 
 	status = PathCchAddExtension(Path, PATHCCH_MAX_CCH, testExtDot);
 
@@ -27,7 +30,7 @@ int TestPathCchAddExtension(int argc, char* argv[])
 		return -1;
 	}
 
-	if (_tcscmp(Path, testPathExtension) != 0)
+	if (_tcsncmp(Path, testPathExtension, ARRAYSIZE(Path)) != 0)
 	{
 		_tprintf(_T("Path Mismatch: Actual: %s, Expected: %s\n"), Path, testPathExtension);
 		return -1;
@@ -35,7 +38,7 @@ int TestPathCchAddExtension(int argc, char* argv[])
 
 	/* Path: no extension, Extension: no dot */
 
-	_tcscpy(Path, testPathNoExtension);
+	_tcsncpy(Path, testPathNoExtension, ARRAYSIZE(Path));
 
 	status = PathCchAddExtension(Path, PATHCCH_MAX_CCH, testExtNoDot);
 
@@ -45,7 +48,7 @@ int TestPathCchAddExtension(int argc, char* argv[])
 		return -1;
 	}
 
-	if (_tcscmp(Path, testPathExtension) != 0)
+	if (_tcsncmp(Path, testPathExtension, ARRAYSIZE(Path)) != 0)
 	{
 		_tprintf(_T("Path Mismatch: Actual: %s, Expected: %s\n"), Path, testPathExtension);
 		return -1;
@@ -53,7 +56,7 @@ int TestPathCchAddExtension(int argc, char* argv[])
 
 	/* Path: extension, Extension: dot */
 
-	_tcscpy(Path, testPathExtension);
+	_tcsncpy(Path, testPathExtension, ARRAYSIZE(Path));
 
 	status = PathCchAddExtension(Path, PATHCCH_MAX_CCH, testExtDot);
 
@@ -63,7 +66,7 @@ int TestPathCchAddExtension(int argc, char* argv[])
 		return -1;
 	}
 
-	if (_tcscmp(Path, testPathExtension) != 0)
+	if (_tcsncmp(Path, testPathExtension, ARRAYSIZE(Path)) != 0)
 	{
 		_tprintf(_T("Path Mismatch: Actual: %s, Expected: %s\n"), Path, testPathExtension);
 		return -1;
@@ -71,7 +74,7 @@ int TestPathCchAddExtension(int argc, char* argv[])
 
 	/* Path: extension, Extension: no dot */
 
-	_tcscpy(Path, testPathExtension);
+	_tcsncpy(Path, testPathExtension, ARRAYSIZE(Path));
 
 	status = PathCchAddExtension(Path, PATHCCH_MAX_CCH, testExtDot);
 
@@ -81,15 +84,15 @@ int TestPathCchAddExtension(int argc, char* argv[])
 		return -1;
 	}
 
-	if (_tcscmp(Path, testPathExtension) != 0)
+	if (_tcsncmp(Path, testPathExtension, ARRAYSIZE(Path)) != 0)
 	{
 		_tprintf(_T("Path Mismatch: Actual: %s, Expected: %s\n"), Path, testPathExtension);
 		return -1;
 	}
 
-	/* Path: NULL */
+	/* Path: nullptr */
 
-	status = PathCchAddExtension(NULL, PATHCCH_MAX_CCH, testExtDot);
+	status = PathCchAddExtension(nullptr, PATHCCH_MAX_CCH, testExtDot);
 	if (status != E_INVALIDARG)
 	{
 		_tprintf(_T("PathCchAddExtension with null buffer returned status: 0x%08") _T(
@@ -98,9 +101,9 @@ int TestPathCchAddExtension(int argc, char* argv[])
 		return -1;
 	}
 
-	/* Extension: NULL */
+	/* Extension: nullptr */
 
-	status = PathCchAddExtension(Path, PATHCCH_MAX_CCH, NULL);
+	status = PathCchAddExtension(Path, PATHCCH_MAX_CCH, nullptr);
 	if (status != E_INVALIDARG)
 	{
 		_tprintf(_T("PathCchAddExtension with null extension returned status: 0x%08") _T(
@@ -111,7 +114,7 @@ int TestPathCchAddExtension(int argc, char* argv[])
 
 	/* Insufficient Buffer size */
 
-	_tcscpy(Path, _T("C:\\456789"));
+	_tcsncpy(Path, _T("C:\\456789"), ARRAYSIZE(Path));
 	status = PathCchAddExtension(Path, 9 + 4, _T(".jpg"));
 	if (SUCCEEDED(status))
 	{
@@ -123,7 +126,7 @@ int TestPathCchAddExtension(int argc, char* argv[])
 
 	/* Minimum required buffer size */
 
-	_tcscpy(Path, _T("C:\\456789"));
+	_tcsncpy(Path, _T("C:\\456789"), ARRAYSIZE(Path));
 	status = PathCchAddExtension(Path, 9 + 4 + 1, _T(".jpg"));
 	if (FAILED(status))
 	{

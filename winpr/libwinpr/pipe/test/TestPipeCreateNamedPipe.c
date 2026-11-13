@@ -18,40 +18,40 @@
 
 static HANDLE ReadyEvent;
 
-static LPTSTR lpszPipeNameMt = _T("\\\\.\\pipe\\winpr_test_pipe_mt");
-static LPTSTR lpszPipeNameSt = _T("\\\\.\\pipe\\winpr_test_pipe_st");
+static const char lpszPipeNameMt[] = "\\\\.\\pipe\\winpr_test_pipe_mt";
+static const char lpszPipeNameSt[] = "\\\\.\\pipe\\winpr_test_pipe_st";
 
 static BOOL testFailed = FALSE;
 
 static DWORD WINAPI named_pipe_client_thread(LPVOID arg)
 {
-	HANDLE hNamedPipe = NULL;
-	BYTE* lpReadBuffer = NULL;
-	BYTE* lpWriteBuffer = NULL;
+	HANDLE hNamedPipe = nullptr;
+	BYTE* lpReadBuffer = nullptr;
+	BYTE* lpWriteBuffer = nullptr;
 	BOOL fSuccess = FALSE;
-	DWORD nNumberOfBytesToRead;
-	DWORD nNumberOfBytesToWrite;
-	DWORD lpNumberOfBytesRead;
-	DWORD lpNumberOfBytesWritten;
-	WaitForSingleObject(ReadyEvent, INFINITE);
-	hNamedPipe =
-	    CreateFile(lpszPipeNameMt, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+	DWORD nNumberOfBytesToRead = 0;
+	DWORD nNumberOfBytesToWrite = 0;
+	DWORD lpNumberOfBytesRead = 0;
+	DWORD lpNumberOfBytesWritten = 0;
+	(void)WaitForSingleObject(ReadyEvent, INFINITE);
+	hNamedPipe = winpr_CreateFile(lpszPipeNameMt, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+	                              OPEN_EXISTING, 0, nullptr);
 
 	if (hNamedPipe == INVALID_HANDLE_VALUE)
 	{
-		printf("%s: Named Pipe CreateFile failure: INVALID_HANDLE_VALUE\n", __FUNCTION__);
+		printf("%s: Named Pipe CreateFile failure: INVALID_HANDLE_VALUE\n", __func__);
 		goto out;
 	}
 
 	if (!(lpReadBuffer = (BYTE*)malloc(PIPE_BUFFER_SIZE)))
 	{
-		printf("%s: Error allocating read buffer\n", __FUNCTION__);
+		printf("%s: Error allocating read buffer\n", __func__);
 		goto out;
 	}
 
 	if (!(lpWriteBuffer = (BYTE*)malloc(PIPE_BUFFER_SIZE)))
 	{
-		printf("%s: Error allocating write buffer\n", __FUNCTION__);
+		printf("%s: Error allocating write buffer\n", __func__);
 		goto out;
 	}
 
@@ -60,10 +60,10 @@ static DWORD WINAPI named_pipe_client_thread(LPVOID arg)
 	FillMemory(lpWriteBuffer, PIPE_BUFFER_SIZE, 0x59);
 
 	if (!WriteFile(hNamedPipe, lpWriteBuffer, nNumberOfBytesToWrite, &lpNumberOfBytesWritten,
-	               NULL) ||
+	               nullptr) ||
 	    lpNumberOfBytesWritten != nNumberOfBytesToWrite)
 	{
-		printf("%s: Client NamedPipe WriteFile failure\n", __FUNCTION__);
+		printf("%s: Client NamedPipe WriteFile failure\n", __func__);
 		goto out;
 	}
 
@@ -71,10 +71,10 @@ static DWORD WINAPI named_pipe_client_thread(LPVOID arg)
 	nNumberOfBytesToRead = PIPE_BUFFER_SIZE;
 	ZeroMemory(lpReadBuffer, PIPE_BUFFER_SIZE);
 
-	if (!ReadFile(hNamedPipe, lpReadBuffer, nNumberOfBytesToRead, &lpNumberOfBytesRead, NULL) ||
+	if (!ReadFile(hNamedPipe, lpReadBuffer, nNumberOfBytesToRead, &lpNumberOfBytesRead, nullptr) ||
 	    lpNumberOfBytesRead != nNumberOfBytesToRead)
 	{
-		printf("%s: Client NamedPipe ReadFile failure\n", __FUNCTION__);
+		printf("%s: Client NamedPipe ReadFile failure\n", __func__);
 		goto out;
 	}
 
@@ -84,7 +84,7 @@ static DWORD WINAPI named_pipe_client_thread(LPVOID arg)
 out:
 	free(lpReadBuffer);
 	free(lpWriteBuffer);
-	CloseHandle(hNamedPipe);
+	(void)CloseHandle(hNamedPipe);
 
 	if (!fSuccess)
 		testFailed = TRUE;
@@ -95,32 +95,38 @@ out:
 
 static DWORD WINAPI named_pipe_server_thread(LPVOID arg)
 {
-	HANDLE hNamedPipe = NULL;
-	BYTE* lpReadBuffer = NULL;
-	BYTE* lpWriteBuffer = NULL;
+	BYTE* lpReadBuffer = nullptr;
+	BYTE* lpWriteBuffer = nullptr;
 	BOOL fSuccess = FALSE;
 	BOOL fConnected = FALSE;
-	DWORD nNumberOfBytesToRead;
-	DWORD nNumberOfBytesToWrite;
-	DWORD lpNumberOfBytesRead;
-	DWORD lpNumberOfBytesWritten;
-	hNamedPipe = CreateNamedPipe(
-	    lpszPipeNameMt, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-	    PIPE_UNLIMITED_INSTANCES, PIPE_BUFFER_SIZE, PIPE_BUFFER_SIZE, 0, NULL);
+	DWORD nNumberOfBytesToRead = 0;
+	DWORD nNumberOfBytesToWrite = 0;
+	DWORD lpNumberOfBytesRead = 0;
+	DWORD lpNumberOfBytesWritten = 0;
 
+#if defined(UNICODE)
+	WCHAR* str = ConvertUtf8ToWCharAlloc(lpszPipeNameMt, nullptr);
+#else
+	char* str = _strdup(lpszPipeNameMt);
+#endif
+
+	HANDLE hNamedPipe =
+	    CreateNamedPipe(str, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+	                    PIPE_UNLIMITED_INSTANCES, PIPE_BUFFER_SIZE, PIPE_BUFFER_SIZE, 0, nullptr);
+	free(str);
 	if (!hNamedPipe)
 	{
-		printf("%s: CreateNamedPipe failure: NULL handle\n", __FUNCTION__);
+		printf("%s: CreateNamedPipe failure: nullptr handle\n", __func__);
 		goto out;
 	}
 
 	if (hNamedPipe == INVALID_HANDLE_VALUE)
 	{
-		printf("%s: CreateNamedPipe failure: INVALID_HANDLE_VALUE\n", __FUNCTION__);
+		printf("%s: CreateNamedPipe failure: INVALID_HANDLE_VALUE\n", __func__);
 		goto out;
 	}
 
-	SetEvent(ReadyEvent);
+	(void)SetEvent(ReadyEvent);
 
 	/**
 	 * Note:
@@ -131,33 +137,33 @@ static DWORD WINAPI named_pipe_server_thread(LPVOID arg)
 	 * the function returns zero.
 	 */
 	fConnected =
-	    ConnectNamedPipe(hNamedPipe, NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+	    ConnectNamedPipe(hNamedPipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
 
 	if (!fConnected)
 	{
-		printf("%s: ConnectNamedPipe failure\n", __FUNCTION__);
+		printf("%s: ConnectNamedPipe failure\n", __func__);
 		goto out;
 	}
 
 	if (!(lpReadBuffer = (BYTE*)calloc(1, PIPE_BUFFER_SIZE)))
 	{
-		printf("%s: Error allocating read buffer\n", __FUNCTION__);
+		printf("%s: Error allocating read buffer\n", __func__);
 		goto out;
 	}
 
 	if (!(lpWriteBuffer = (BYTE*)malloc(PIPE_BUFFER_SIZE)))
 	{
-		printf("%s: Error allocating write buffer\n", __FUNCTION__);
+		printf("%s: Error allocating write buffer\n", __func__);
 		goto out;
 	}
 
 	lpNumberOfBytesRead = 0;
 	nNumberOfBytesToRead = PIPE_BUFFER_SIZE;
 
-	if (!ReadFile(hNamedPipe, lpReadBuffer, nNumberOfBytesToRead, &lpNumberOfBytesRead, NULL) ||
+	if (!ReadFile(hNamedPipe, lpReadBuffer, nNumberOfBytesToRead, &lpNumberOfBytesRead, nullptr) ||
 	    lpNumberOfBytesRead != nNumberOfBytesToRead)
 	{
-		printf("%s: Server NamedPipe ReadFile failure\n", __FUNCTION__);
+		printf("%s: Server NamedPipe ReadFile failure\n", __func__);
 		goto out;
 	}
 
@@ -168,10 +174,10 @@ static DWORD WINAPI named_pipe_server_thread(LPVOID arg)
 	FillMemory(lpWriteBuffer, PIPE_BUFFER_SIZE, 0x45);
 
 	if (!WriteFile(hNamedPipe, lpWriteBuffer, nNumberOfBytesToWrite, &lpNumberOfBytesWritten,
-	               NULL) ||
+	               nullptr) ||
 	    lpNumberOfBytesWritten != nNumberOfBytesToWrite)
 	{
-		printf("%s: Server NamedPipe WriteFile failure\n", __FUNCTION__);
+		printf("%s: Server NamedPipe WriteFile failure\n", __func__);
 		goto out;
 	}
 
@@ -179,7 +185,7 @@ static DWORD WINAPI named_pipe_server_thread(LPVOID arg)
 out:
 	free(lpReadBuffer);
 	free(lpWriteBuffer);
-	CloseHandle(hNamedPipe);
+	(void)CloseHandle(hNamedPipe);
 
 	if (!fSuccess)
 		testFailed = TRUE;
@@ -191,76 +197,76 @@ out:
 #define TESTNUMPIPESST 16
 static DWORD WINAPI named_pipe_single_thread(LPVOID arg)
 {
-	HANDLE servers[TESTNUMPIPESST];
-	HANDLE clients[TESTNUMPIPESST];
-	char sndbuf[PIPE_BUFFER_SIZE];
-	char rcvbuf[PIPE_BUFFER_SIZE];
-	DWORD dwRead;
-	DWORD dwWritten;
-	int i;
-	int numPipes;
+	HANDLE servers[TESTNUMPIPESST] = WINPR_C_ARRAY_INIT;
+	HANDLE clients[TESTNUMPIPESST] = WINPR_C_ARRAY_INIT;
+	DWORD dwRead = 0;
+	DWORD dwWritten = 0;
+	int numPipes = 0;
 	BOOL bSuccess = FALSE;
 	numPipes = TESTNUMPIPESST;
-	memset(servers, 0, sizeof(servers));
-	memset(clients, 0, sizeof(clients));
-	WaitForSingleObject(ReadyEvent, INFINITE);
+	(void)WaitForSingleObject(ReadyEvent, INFINITE);
 
-	for (i = 0; i < numPipes; i++)
+	for (int i = 0; i < numPipes; i++)
 	{
-		if (!(servers[i] = CreateNamedPipe(lpszPipeNameSt, PIPE_ACCESS_DUPLEX,
-		                                   PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-		                                   PIPE_UNLIMITED_INSTANCES, PIPE_BUFFER_SIZE,
-		                                   PIPE_BUFFER_SIZE, 0, NULL)))
+#if defined(UNICODE)
+		WCHAR* str = ConvertUtf8ToWCharAlloc(lpszPipeNameSt, nullptr);
+#else
+		char* str = _strdup(lpszPipeNameSt);
+#endif
+		servers[i] = CreateNamedPipe(
+		    str, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+		    PIPE_UNLIMITED_INSTANCES, PIPE_BUFFER_SIZE, PIPE_BUFFER_SIZE, 0, nullptr);
+		free(str);
+		if (!servers[i])
 		{
-			printf("%s: CreateNamedPipe #%d failed\n", __FUNCTION__, i);
+			printf("%s: CreateNamedPipe #%d failed\n", __func__, i);
 			goto out;
 		}
 	}
 
 #ifndef _WIN32
 
-	for (i = 0; i < numPipes; i++)
+	for (int i = 0; i < numPipes; i++)
 	{
 		WINPR_NAMED_PIPE* p = (WINPR_NAMED_PIPE*)servers[i];
 
-		if (strcmp(lpszPipeNameSt, p->name))
+		if (strcmp(lpszPipeNameSt, p->name) != 0)
 		{
-			printf("%s: Pipe name mismatch for pipe #%d ([%s] instead of [%s])\n", __FUNCTION__, i,
+			printf("%s: Pipe name mismatch for pipe #%d ([%s] instead of [%s])\n", __func__, i,
 			       p->name, lpszPipeNameSt);
 			goto out;
 		}
 
 		if (p->clientfd != -1)
 		{
-			printf("%s: Unexpected client fd value for pipe #%d (%d instead of -1)\n", __FUNCTION__,
-			       i, p->clientfd);
+			printf("%s: Unexpected client fd value for pipe #%d (%d instead of -1)\n", __func__, i,
+			       p->clientfd);
 			goto out;
 		}
 
 		if (p->serverfd < 1)
 		{
-			printf("%s: Unexpected server fd value for pipe #%d (%d is not > 0)\n", __FUNCTION__, i,
+			printf("%s: Unexpected server fd value for pipe #%d (%d is not > 0)\n", __func__, i,
 			       p->serverfd);
 			goto out;
 		}
 
 		if (p->ServerMode == FALSE)
 		{
-			printf("%s: Unexpected ServerMode value for pipe #%d (0 instead of 1)\n", __FUNCTION__,
-			       i);
+			printf("%s: Unexpected ServerMode value for pipe #%d (0 instead of 1)\n", __func__, i);
 			goto out;
 		}
 	}
 
 #endif
 
-	for (i = 0; i < numPipes; i++)
+	for (int i = 0; i < numPipes; i++)
 	{
-		BOOL fConnected;
-		if ((clients[i] = CreateFile(lpszPipeNameSt, GENERIC_READ | GENERIC_WRITE, 0, NULL,
-		                             OPEN_EXISTING, 0, NULL)) == INVALID_HANDLE_VALUE)
+		BOOL fConnected = 0;
+		if ((clients[i] = winpr_CreateFile(lpszPipeNameSt, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+		                                   OPEN_EXISTING, 0, nullptr)) == INVALID_HANDLE_VALUE)
 		{
-			printf("%s: CreateFile #%d failed\n", __FUNCTION__, i);
+			printf("%s: CreateFile #%d failed\n", __func__, i);
 			goto out;
 		}
 
@@ -273,85 +279,88 @@ static DWORD WINAPI named_pipe_single_thread(LPVOID arg)
 		 * the function returns zero.
 		 */
 		fConnected =
-		    ConnectNamedPipe(servers[i], NULL) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
+		    ConnectNamedPipe(servers[i], nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
 
 		if (!fConnected)
 		{
-			printf("%s: ConnectNamedPipe #%d failed. (%" PRIu32 ")\n", __FUNCTION__, i,
-			       GetLastError());
+			printf("%s: ConnectNamedPipe #%d failed. (%" PRIu32 ")\n", __func__, i, GetLastError());
 			goto out;
 		}
 	}
 
 #ifndef _WIN32
 
-	for (i = 0; i < numPipes; i++)
+	for (int i = 0; i < numPipes; i++)
 	{
 		WINPR_NAMED_PIPE* p = servers[i];
 
 		if (p->clientfd < 1)
 		{
-			printf("%s: Unexpected client fd value for pipe #%d (%d is not > 0)\n", __FUNCTION__, i,
+			printf("%s: Unexpected client fd value for pipe #%d (%d is not > 0)\n", __func__, i,
 			       p->clientfd);
 			goto out;
 		}
 
 		if (p->ServerMode)
 		{
-			printf("%s: Unexpected ServerMode value for pipe #%d (1 instead of 0)\n", __FUNCTION__,
-			       i);
+			printf("%s: Unexpected ServerMode value for pipe #%d (1 instead of 0)\n", __func__, i);
 			goto out;
 		}
 	}
 
-	for (i = 0; i < numPipes; i++)
+	for (int i = 0; i < numPipes; i++)
 	{
-		/* Test writing from clients to servers */
-		ZeroMemory(sndbuf, sizeof(sndbuf));
-		ZeroMemory(rcvbuf, sizeof(rcvbuf));
-		sprintf_s(sndbuf, sizeof(sndbuf), "CLIENT->SERVER ON PIPE #%05d", i);
-
-		if (!WriteFile(clients[i], sndbuf, sizeof(sndbuf), &dwWritten, NULL) ||
-		    dwWritten != sizeof(sndbuf))
 		{
-			printf("%s: Error writing to client end of pipe #%d\n", __FUNCTION__, i);
-			goto out;
+			char sndbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+			char rcvbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+			/* Test writing from clients to servers */
+			(void)sprintf_s(sndbuf, sizeof(sndbuf), "CLIENT->SERVER ON PIPE #%05d", i);
+
+			if (!WriteFile(clients[i], sndbuf, sizeof(sndbuf), &dwWritten, nullptr) ||
+			    dwWritten != sizeof(sndbuf))
+			{
+				printf("%s: Error writing to client end of pipe #%d\n", __func__, i);
+				goto out;
+			}
+
+			if (!ReadFile(servers[i], rcvbuf, dwWritten, &dwRead, nullptr) || dwRead != dwWritten)
+			{
+				printf("%s: Error reading on server end of pipe #%d\n", __func__, i);
+				goto out;
+			}
+
+			if (memcmp(sndbuf, rcvbuf, sizeof(sndbuf)) != 0)
+			{
+				printf("%s: Error data read on server end of pipe #%d is corrupted\n", __func__, i);
+				goto out;
+			}
 		}
-
-		if (!ReadFile(servers[i], rcvbuf, dwWritten, &dwRead, NULL) || dwRead != dwWritten)
 		{
-			printf("%s: Error reading on server end of pipe #%d\n", __FUNCTION__, i);
-			goto out;
-		}
 
-		if (memcmp(sndbuf, rcvbuf, sizeof(sndbuf)))
-		{
-			printf("%s: Error data read on server end of pipe #%d is corrupted\n", __FUNCTION__, i);
-			goto out;
-		}
+			char sndbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+			char rcvbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+			/* Test writing from servers to clients */
 
-		/* Test writing from servers to clients */
-		ZeroMemory(sndbuf, sizeof(sndbuf));
-		ZeroMemory(rcvbuf, sizeof(rcvbuf));
-		sprintf_s(sndbuf, sizeof(sndbuf), "SERVER->CLIENT ON PIPE #%05d", i);
+			(void)sprintf_s(sndbuf, sizeof(sndbuf), "SERVER->CLIENT ON PIPE #%05d", i);
 
-		if (!WriteFile(servers[i], sndbuf, sizeof(sndbuf), &dwWritten, NULL) ||
-		    dwWritten != sizeof(sndbuf))
-		{
-			printf("%s: Error writing to server end of pipe #%d\n", __FUNCTION__, i);
-			goto out;
-		}
+			if (!WriteFile(servers[i], sndbuf, sizeof(sndbuf), &dwWritten, nullptr) ||
+			    dwWritten != sizeof(sndbuf))
+			{
+				printf("%s: Error writing to server end of pipe #%d\n", __func__, i);
+				goto out;
+			}
 
-		if (!ReadFile(clients[i], rcvbuf, dwWritten, &dwRead, NULL) || dwRead != dwWritten)
-		{
-			printf("%s: Error reading on client end of pipe #%d\n", __FUNCTION__, i);
-			goto out;
-		}
+			if (!ReadFile(clients[i], rcvbuf, dwWritten, &dwRead, nullptr) || dwRead != dwWritten)
+			{
+				printf("%s: Error reading on client end of pipe #%d\n", __func__, i);
+				goto out;
+			}
 
-		if (memcmp(sndbuf, rcvbuf, sizeof(sndbuf)))
-		{
-			printf("%s: Error data read on client end of pipe #%d is corrupted\n", __FUNCTION__, i);
-			goto out;
+			if (memcmp(sndbuf, rcvbuf, sizeof(sndbuf)) != 0)
+			{
+				printf("%s: Error data read on client end of pipe #%d is corrupted\n", __func__, i);
+				goto out;
+			}
 		}
 	}
 
@@ -360,82 +369,106 @@ static DWORD WINAPI named_pipe_single_thread(LPVOID arg)
 	 * After DisconnectNamedPipe on server end
 	 * ReadFile/WriteFile must fail on client end
 	 */
-	i = numPipes - 1;
-	DisconnectNamedPipe(servers[i]);
-
-	if (ReadFile(clients[i], rcvbuf, sizeof(rcvbuf), &dwRead, NULL))
-	{
-		printf(
-		    "%s: Error ReadFile on client should have failed after DisconnectNamedPipe on server\n",
-		    __FUNCTION__);
+	int i = numPipes - 1;
+	if (!DisconnectNamedPipe(servers[i]))
 		goto out;
-	}
-
-	if (WriteFile(clients[i], sndbuf, sizeof(sndbuf), &dwWritten, NULL))
 	{
-		printf("%s: Error WriteFile on client end should have failed after DisconnectNamedPipe on "
-		       "server\n",
-		       __FUNCTION__);
-		goto out;
-	}
+		char sndbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+		char rcvbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+		if (ReadFile(clients[i], rcvbuf, sizeof(rcvbuf), &dwRead, nullptr))
+		{
+			printf("%s: Error ReadFile on client should have failed after DisconnectNamedPipe on "
+			       "server\n",
+			       __func__);
+			goto out;
+		}
 
-	CloseHandle(servers[i]);
-	CloseHandle(clients[i]);
+		if (WriteFile(clients[i], sndbuf, sizeof(sndbuf), &dwWritten, nullptr))
+		{
+			printf(
+			    "%s: Error WriteFile on client end should have failed after DisconnectNamedPipe on "
+			    "server\n",
+			    __func__);
+			goto out;
+		}
+	}
+	if (!CloseHandle(servers[i]))
+		goto out;
+	if (!CloseHandle(clients[i]))
+		goto out;
 	numPipes--;
 	/**
 	 * After CloseHandle (without calling DisconnectNamedPipe first) on server end
 	 * ReadFile/WriteFile must fail on client end
 	 */
 	i = numPipes - 1;
-	CloseHandle(servers[i]);
+	(void)CloseHandle(servers[i]);
 
-	if (ReadFile(clients[i], rcvbuf, sizeof(rcvbuf), &dwRead, NULL))
 	{
-		printf("%s: Error ReadFile on client end should have failed after CloseHandle on server\n",
-		       __FUNCTION__);
-		goto out;
-	}
+		char sndbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+		char rcvbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
 
-	if (WriteFile(clients[i], sndbuf, sizeof(sndbuf), &dwWritten, NULL))
-	{
-		printf("%s: Error WriteFile on client end should have failed after CloseHandle on server\n",
-		       __FUNCTION__);
-		goto out;
-	}
+		if (ReadFile(clients[i], rcvbuf, sizeof(rcvbuf), &dwRead, nullptr))
+		{
+			printf(
+			    "%s: Error ReadFile on client end should have failed after CloseHandle on server\n",
+			    __func__);
+			goto out;
+		}
 
-	CloseHandle(clients[i]);
+		if (WriteFile(clients[i], sndbuf, sizeof(sndbuf), &dwWritten, nullptr))
+		{
+			printf("%s: Error WriteFile on client end should have failed after CloseHandle on "
+			       "server\n",
+			       __func__);
+			goto out;
+		}
+	}
+	(void)CloseHandle(clients[i]);
 	numPipes--;
 	/**
 	 * After CloseHandle on client end
 	 * ReadFile/WriteFile must fail on server end
 	 */
 	i = numPipes - 1;
-	CloseHandle(clients[i]);
+	(void)CloseHandle(clients[i]);
 
-	if (ReadFile(servers[i], rcvbuf, sizeof(rcvbuf), &dwRead, NULL))
 	{
-		printf("%s: Error ReadFile on server end should have failed after CloseHandle on client\n",
-		       __FUNCTION__);
-		goto out;
+		char sndbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+		char rcvbuf[PIPE_BUFFER_SIZE] = WINPR_C_ARRAY_INIT;
+
+		if (ReadFile(servers[i], rcvbuf, sizeof(rcvbuf), &dwRead, nullptr))
+		{
+			printf(
+			    "%s: Error ReadFile on server end should have failed after CloseHandle on client\n",
+			    __func__);
+			goto out;
+		}
+
+		if (WriteFile(servers[i], sndbuf, sizeof(sndbuf), &dwWritten, nullptr))
+		{
+			printf("%s: Error WriteFile on server end should have failed after CloseHandle on "
+			       "client\n",
+			       __func__);
+			goto out;
+		}
 	}
 
-	if (WriteFile(servers[i], sndbuf, sizeof(sndbuf), &dwWritten, NULL))
-	{
-		printf("%s: Error WriteFile on server end should have failed after CloseHandle on client\n",
-		       __FUNCTION__);
+	if (!DisconnectNamedPipe(servers[i]))
 		goto out;
-	}
-
-	DisconnectNamedPipe(servers[i]);
-	CloseHandle(servers[i]);
+	if (!CloseHandle(servers[i]))
+		goto out;
 	numPipes--;
 
 	/* Close all remaining pipes */
-	for (i = 0; i < numPipes; i++)
+	for (int i = 0; i < numPipes; i++)
 	{
-		DisconnectNamedPipe(servers[i]);
-		CloseHandle(servers[i]);
-		CloseHandle(clients[i]);
+		if (!DisconnectNamedPipe(servers[i]))
+			goto out;
+		if (!CloseHandle(servers[i]))
+			goto out;
+		if (!CloseHandle(clients[i]))
+			goto out;
 	}
 
 	bSuccess = TRUE;
@@ -449,13 +482,14 @@ out:
 
 int TestPipeCreateNamedPipe(int argc, char* argv[])
 {
-	HANDLE SingleThread;
-	HANDLE ClientThread;
-	HANDLE ServerThread;
-	HANDLE hPipe;
-
+	HANDLE SingleThread = nullptr;
+	HANDLE ClientThread = nullptr;
+	HANDLE ServerThread = nullptr;
+	HANDLE hPipe = nullptr;
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 	/* Verify that CreateNamedPipe returns INVALID_HANDLE_VALUE on failure */
-	hPipe = CreateNamedPipeA(NULL, 0, 0, 0, 0, 0, 0, NULL);
+	hPipe = CreateNamedPipeA(nullptr, 0, 0, 0, 0, 0, 0, nullptr);
 	if (hPipe != INVALID_HANDLE_VALUE)
 	{
 		printf("CreateNamedPipe unexpectedly returned %p instead of INVALID_HANDLE_VALUE (%p)\n",
@@ -464,33 +498,33 @@ int TestPipeCreateNamedPipe(int argc, char* argv[])
 	}
 
 #ifndef _WIN32
-	signal(SIGPIPE, SIG_IGN);
+	(void)signal(SIGPIPE, SIG_IGN);
 #endif
-	if (!(ReadyEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
+	if (!(ReadyEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr)))
 	{
 		printf("CreateEvent failure: (%" PRIu32 ")\n", GetLastError());
 		return -1;
 	}
-	if (!(SingleThread = CreateThread(NULL, 0, named_pipe_single_thread, NULL, 0, NULL)))
+	if (!(SingleThread = CreateThread(nullptr, 0, named_pipe_single_thread, nullptr, 0, nullptr)))
 	{
 		printf("CreateThread (SingleThread) failure: (%" PRIu32 ")\n", GetLastError());
 		return -1;
 	}
-	if (!(ClientThread = CreateThread(NULL, 0, named_pipe_client_thread, NULL, 0, NULL)))
+	if (!(ClientThread = CreateThread(nullptr, 0, named_pipe_client_thread, nullptr, 0, nullptr)))
 	{
 		printf("CreateThread (ClientThread) failure: (%" PRIu32 ")\n", GetLastError());
 		return -1;
 	}
-	if (!(ServerThread = CreateThread(NULL, 0, named_pipe_server_thread, NULL, 0, NULL)))
+	if (!(ServerThread = CreateThread(nullptr, 0, named_pipe_server_thread, nullptr, 0, nullptr)))
 	{
 		printf("CreateThread (ServerThread) failure: (%" PRIu32 ")\n", GetLastError());
 		return -1;
 	}
-	WaitForSingleObject(SingleThread, INFINITE);
-	WaitForSingleObject(ClientThread, INFINITE);
-	WaitForSingleObject(ServerThread, INFINITE);
-	CloseHandle(SingleThread);
-	CloseHandle(ClientThread);
-	CloseHandle(ServerThread);
+	(void)WaitForSingleObject(SingleThread, INFINITE);
+	(void)WaitForSingleObject(ClientThread, INFINITE);
+	(void)WaitForSingleObject(ServerThread, INFINITE);
+	(void)CloseHandle(SingleThread);
+	(void)CloseHandle(ClientThread);
+	(void)CloseHandle(ServerThread);
 	return testFailed;
 }

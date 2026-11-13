@@ -33,7 +33,7 @@ extern "C"
 
 #ifndef _WIN32
 
-	typedef struct _STARTUPINFOA
+	typedef struct
 	{
 		DWORD cb;
 		LPSTR lpReserved;
@@ -55,7 +55,7 @@ extern "C"
 		HANDLE hStdError;
 	} STARTUPINFOA, *LPSTARTUPINFOA;
 
-	typedef struct _STARTUPINFOW
+	typedef struct
 	{
 		DWORD cb;
 		LPWSTR lpReserved;
@@ -85,6 +85,59 @@ extern "C"
 	typedef LPSTARTUPINFOA LPSTARTUPINFO;
 #endif
 
+	/** @brief opaque attribute list built by InitializeProcThreadAttributeList() /
+	 *  UpdateProcThreadAttribute(), consumed by CreateProcess* when passed via a STARTUPINFOEX
+	 *  and EXTENDED_STARTUPINFO_PRESENT.
+	 *  @since version 3.31.0
+	 */
+	typedef struct WINPR_PROC_THREAD_ATTRIBUTE_LIST* LPPROC_THREAD_ATTRIBUTE_LIST;
+
+	/** @brief Attribute for UpdateProcThreadAttribute() restricting handle inheritance to
+	 *  exactly the HANDLE array passed as lpValue (each of which must itself be marked
+	 *  inheritable), overriding any other handle's own inheritable state.
+	 *  @since version 3.31.0
+	 */
+#define PROC_THREAD_ATTRIBUTE_HANDLE_LIST 0x00020002
+
+	typedef struct
+	{
+		STARTUPINFOA StartupInfo;
+		LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList;
+	} STARTUPINFOEXA, *LPSTARTUPINFOEXA;
+
+	typedef struct
+	{
+		STARTUPINFOW StartupInfo;
+		LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList;
+	} STARTUPINFOEXW, *LPSTARTUPINFOEXW;
+
+#ifdef UNICODE
+	typedef STARTUPINFOEXW STARTUPINFOEX;
+	typedef LPSTARTUPINFOEXW LPSTARTUPINFOEX;
+#else
+	typedef STARTUPINFOEXA STARTUPINFOEX;
+	typedef LPSTARTUPINFOEXA LPSTARTUPINFOEX;
+#endif
+
+	/** @brief First call: pass lpAttributeList=NULL to have lpSize receive the required buffer
+	 *  size; this call always returns FALSE (matches real Windows behavior). Second call: pass
+	 *  a caller-allocated buffer of at least that size as lpAttributeList.
+	 *  @since version 3.31.0 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList,
+	                                                 DWORD dwAttributeCount, DWORD dwFlags,
+	                                                 PSIZE_T lpSize);
+
+	/** @since version 3.31.0 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL UpdateProcThreadAttribute(LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList,
+	                                         DWORD dwFlags, DWORD_PTR Attribute, PVOID lpValue,
+	                                         SIZE_T cbSize, PVOID lpPreviousValue,
+	                                         PSIZE_T lpReturnSize);
+
+	/** @since version 3.31.0 */
+	WINPR_API VOID DeleteProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList);
+
 #define STARTF_USESHOWWINDOW 0x00000001
 #define STARTF_USESIZE 0x00000002
 #define STARTF_USEPOSITION 0x00000004
@@ -105,6 +158,11 @@ extern "C"
 #define LOGON_NETCREDENTIALS_ONLY 0x00000002
 #define LOGON_ZERO_PASSWORD_BUFFER 0x80000000
 
+	/** @brief dwCreationFlags bit telling CreateProcess* that lpStartupInfo actually points to a
+	 *  STARTUPINFOEX (its lpAttributeList is consulted). @since version 3.31.0 */
+#define EXTENDED_STARTUPINFO_PRESENT 0x00080000
+
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CreateProcessA(LPCSTR lpApplicationName, LPSTR lpCommandLine,
 	                              LPSECURITY_ATTRIBUTES lpProcessAttributes,
 	                              LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles,
@@ -112,6 +170,7 @@ extern "C"
 	                              LPCSTR lpCurrentDirectory, LPSTARTUPINFOA lpStartupInfo,
 	                              LPPROCESS_INFORMATION lpProcessInformation);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CreateProcessW(LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
 	                              LPSECURITY_ATTRIBUTES lpProcessAttributes,
 	                              LPSECURITY_ATTRIBUTES lpThreadAttributes, BOOL bInheritHandles,
@@ -119,6 +178,7 @@ extern "C"
 	                              LPCWSTR lpCurrentDirectory, LPSTARTUPINFOW lpStartupInfo,
 	                              LPPROCESS_INFORMATION lpProcessInformation);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CreateProcessAsUserA(HANDLE hToken, LPCSTR lpApplicationName,
 	                                    LPSTR lpCommandLine,
 	                                    LPSECURITY_ATTRIBUTES lpProcessAttributes,
@@ -128,6 +188,7 @@ extern "C"
 	                                    LPSTARTUPINFOA lpStartupInfo,
 	                                    LPPROCESS_INFORMATION lpProcessInformation);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CreateProcessAsUserW(HANDLE hToken, LPCWSTR lpApplicationName,
 	                                    LPWSTR lpCommandLine,
 	                                    LPSECURITY_ATTRIBUTES lpProcessAttributes,
@@ -137,6 +198,7 @@ extern "C"
 	                                    LPSTARTUPINFOW lpStartupInfo,
 	                                    LPPROCESS_INFORMATION lpProcessInformation);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CreateProcessWithLogonA(LPCSTR lpUsername, LPCSTR lpDomain, LPCSTR lpPassword,
 	                                       DWORD dwLogonFlags, LPCSTR lpApplicationName,
 	                                       LPSTR lpCommandLine, DWORD dwCreationFlags,
@@ -144,6 +206,7 @@ extern "C"
 	                                       LPSTARTUPINFOA lpStartupInfo,
 	                                       LPPROCESS_INFORMATION lpProcessInformation);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CreateProcessWithLogonW(LPCWSTR lpUsername, LPCWSTR lpDomain, LPCWSTR lpPassword,
 	                                       DWORD dwLogonFlags, LPCWSTR lpApplicationName,
 	                                       LPWSTR lpCommandLine, DWORD dwCreationFlags,
@@ -151,12 +214,14 @@ extern "C"
 	                                       LPSTARTUPINFOW lpStartupInfo,
 	                                       LPPROCESS_INFORMATION lpProcessInformation);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CreateProcessWithTokenA(HANDLE hToken, DWORD dwLogonFlags,
 	                                       LPCSTR lpApplicationName, LPSTR lpCommandLine,
 	                                       DWORD dwCreationFlags, LPVOID lpEnvironment,
 	                                       LPCSTR lpCurrentDirectory, LPSTARTUPINFOA lpStartupInfo,
 	                                       LPPROCESS_INFORMATION lpProcessInformation);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CreateProcessWithTokenW(HANDLE hToken, DWORD dwLogonFlags,
 	                                       LPCWSTR lpApplicationName, LPWSTR lpCommandLine,
 	                                       DWORD dwCreationFlags, LPVOID lpEnvironment,
@@ -176,15 +241,26 @@ extern "C"
 #endif
 
 	DECLSPEC_NORETURN WINPR_API VOID ExitProcess(UINT uExitCode);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetExitCodeProcess(HANDLE hProcess, LPDWORD lpExitCode);
 
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_RESERVED_IDENTIFIER
+
+	// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
+	WINPR_ATTR_NODISCARD
 	WINPR_API HANDLE _GetCurrentProcess(void);
+
+	WINPR_PRAGMA_DIAG_POP
+
+	WINPR_ATTR_NODISCARD
 	WINPR_API DWORD GetCurrentProcessId(void);
 
 	WINPR_API BOOL TerminateProcess(HANDLE hProcess, UINT uExitCode);
 
 	/* Process Argument Vector Parsing */
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API LPWSTR* CommandLineToArgvW(LPCWSTR lpCmdLine, int* pNumArgs);
 
 #ifdef UNICODE
@@ -194,64 +270,121 @@ extern "C"
 #endif
 
 	/* Thread */
+#define THREAD_MODE_BACKGROUND_BEGIN 0x00010000 /** @since version 3.6.0 */
+#define THREAD_MODE_BACKGROUND_END 0x00020000   /** @since version 3.6.0 */
+
+	/** @defgroup THREAD_PRIORITY THREAD_PRIORITY
+	 *  @brief Known THREAD_PRIORITY values
+	 *  @since version 3.6.0
+	 *  @{
+	 */
+#define THREAD_PRIORITY_ABOVE_NORMAL 1   /** @since version 3.6.0 */
+#define THREAD_PRIORITY_BELOW_NORMAL -1  /** @since version 3.6.0 */
+#define THREAD_PRIORITY_HIGHEST 2        /** @since version 3.6.0 */
+#define THREAD_PRIORITY_IDLE -15         /** @since version 3.6.0 */
+#define THREAD_PRIORITY_LOWEST -2        /** @since version 3.6.0 */
+#define THREAD_PRIORITY_NORMAL 0         /** @since version 3.6.0 */
+#define THREAD_PRIORITY_TIME_CRITICAL 15 /** @since version 3.6.0 */
+	                                     /** @} */
+
+	/**
+	 *  @brief Change the thread priority
+	 *
+	 *  @param hThread the thhread handle to manipulate
+	 *  @param nPriority The priority to set, see @ref THREAD_PRIORITY
+	 *  @return \b TRUE for success, \b FALSE otherwise
+	 *  @since version 3.6.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL SetThreadPriority(HANDLE hThread, int nPriority);
 
 #define CREATE_SUSPENDED 0x00000004
 #define STACK_SIZE_PARAM_IS_A_RESERVATION 0x00010000
 
-	WINPR_API HANDLE CreateThread(LPSECURITY_ATTRIBUTES lpThreadAttributes, SIZE_T dwStackSize,
+	WINPR_ATTR_MALLOC(CloseHandle, 1)
+	WINPR_ATTR_NODISCARD
+	WINPR_API HANDLE CreateThread(LPSECURITY_ATTRIBUTES lpThreadAttributes, size_t dwStackSize,
 	                              LPTHREAD_START_ROUTINE lpStartAddress, LPVOID lpParameter,
 	                              DWORD dwCreationFlags, LPDWORD lpThreadId);
 
+	WINPR_ATTR_MALLOC(CloseHandle, 1)
+	WINPR_ATTR_NODISCARD
 	WINPR_API HANDLE CreateRemoteThread(HANDLE hProcess, LPSECURITY_ATTRIBUTES lpThreadAttributes,
-	                                    SIZE_T dwStackSize, LPTHREAD_START_ROUTINE lpStartAddress,
+	                                    size_t dwStackSize, LPTHREAD_START_ROUTINE lpStartAddress,
 	                                    LPVOID lpParameter, DWORD dwCreationFlags,
 	                                    LPDWORD lpThreadId);
 
-	WINPR_API DECLSPEC_NORETURN VOID ExitThread(DWORD dwExitCode);
+	WINPR_API VOID ExitThread(DWORD dwExitCode);
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetExitCodeThread(HANDLE hThread, LPDWORD lpExitCode);
 
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_RESERVED_IDENTIFIER
+	// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
+	WINPR_ATTR_NODISCARD
 	WINPR_API HANDLE _GetCurrentThread(void);
+	WINPR_PRAGMA_DIAG_POP
+
+	WINPR_ATTR_NODISCARD
 	WINPR_API DWORD GetCurrentThreadId(void);
 
 	typedef void (*PAPCFUNC)(ULONG_PTR Parameter);
+	WINPR_ATTR_NODISCARD
 	WINPR_API DWORD QueueUserAPC(PAPCFUNC pfnAPC, HANDLE hThread, ULONG_PTR dwData);
 
 	WINPR_API DWORD ResumeThread(HANDLE hThread);
+
+	WINPR_ATTR_NODISCARD
 	WINPR_API DWORD SuspendThread(HANDLE hThread);
+
 	WINPR_API BOOL SwitchToThread(void);
 
 	WINPR_API BOOL TerminateThread(HANDLE hThread, DWORD dwExitCode);
 
 	/* Processor */
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API DWORD GetCurrentProcessorNumber(void);
 
 	/* Thread-Local Storage */
 
+#if !defined(WITHOUT_WINPR_3x_DEPRECATED)
 #define TLS_OUT_OF_INDEXES ((DWORD)0xFFFFFFFF)
 
-	WINPR_API DWORD TlsAlloc(void);
-	WINPR_API LPVOID TlsGetValue(DWORD dwTlsIndex);
-	WINPR_API BOOL TlsSetValue(DWORD dwTlsIndex, LPVOID lpTlsValue);
-	WINPR_API BOOL TlsFree(DWORD dwTlsIndex);
+	WINPR_DEPRECATED_VAR("[since 3.31.0]", WINPR_ATTR_NODISCARD WINPR_API DWORD TlsAlloc(void));
+
+	WINPR_DEPRECATED_VAR("[since 3.31.0]",
+	                     WINPR_ATTR_NODISCARD WINPR_API LPVOID TlsGetValue(DWORD dwTlsIndex));
+
+	WINPR_DEPRECATED_VAR("[since 3.31.0]",
+	                     WINPR_ATTR_NODISCARD WINPR_API BOOL TlsSetValue(DWORD dwTlsIndex,
+	                                                                     LPVOID lpTlsValue));
+
+	WINPR_DEPRECATED_VAR("[since 3.31.0]",
+	                     WINPR_ATTR_NODISCARD WINPR_API BOOL TlsFree(DWORD dwTlsIndex));
+#endif
 
 #else
 
 /*
  * GetCurrentProcess / GetCurrentThread cause a conflict on Mac OS X
  */
+WINPR_PRAGMA_DIAG_PUSH
+WINPR_PRAGMA_DIAG_IGNORED_RESERVED_IDENTIFIER
+
 #define _GetCurrentProcess GetCurrentProcess
 #define _GetCurrentThread GetCurrentThread
+
+WINPR_PRAGMA_DIAG_POP
 
 #endif
 
 	/* CommandLineToArgvA is not present in the original Windows API, WinPR always exports it */
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API LPSTR* CommandLineToArgvA(LPCSTR lpCmdLine, int* pNumArgs);
 
-#if defined(WITH_DEBUG_THREADS)
 	WINPR_API VOID DumpThreadHandles(void);
-#endif
 
 #ifdef __cplusplus
 }

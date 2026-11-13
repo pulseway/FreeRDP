@@ -27,7 +27,7 @@
 #include <freerdp/listener.h>
 #include <freerdp/server/rdpsnd.h>
 
-#include "mf_interface.h"
+#include "mf_types.h"
 #include "mfreerdp.h"
 
 void mf_rdpsnd_derive_buffer_size(AudioQueueRef audioQueue,
@@ -40,7 +40,7 @@ void mf_peer_rdpsnd_input_callback(void* inUserData, AudioQueueRef inAQ,
                                    const AudioStreamPacketDescription* inPacketDescs);
 
 #define SND_NUMBUFFERS 3
-struct _AQRecorderState
+typedef struct
 {
 	AudioStreamBasicDescription dataFormat;
 	AudioQueueRef queue;
@@ -50,11 +50,9 @@ struct _AQRecorderState
 	SInt64 currentPacket;
 	bool isRunning;
 	RdpsndServerContext* snd_context;
-};
+} AQRecorderState;
 
-typedef struct _AQRecorderState AQRecorderState;
-
-BOOL mf_peer_rdpsnd_init(mfPeerContext* context);
-BOOL mf_peer_rdpsnd_stop(void);
+WINPR_ATTR_NODISCARD BOOL mf_peer_rdpsnd_init(mfPeerContext* context);
+WINPR_ATTR_NODISCARD BOOL mf_peer_rdpsnd_stop(void);
 
 #endif /* FREERDP_SERVER_MAC_RDPSND_H */

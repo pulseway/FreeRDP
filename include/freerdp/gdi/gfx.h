@@ -23,45 +23,63 @@
 #include <freerdp/api.h>
 #include <freerdp/gdi/gdi.h>
 
-struct gdi_gfx_surface
-{
-	UINT16 surfaceId;
-	rdpCodecs* codecs;
-	H264_CONTEXT* h264;
-	UINT32 width;
-	UINT32 height;
-	UINT32 mappedWidth;
-	UINT32 mappedHeight;
-	BYTE* data;
-	UINT32 scanline;
-	UINT32 format;
-	BOOL outputMapped;
-	UINT32 outputOriginX;
-	UINT32 outputOriginY;
-	REGION16 invalidRegion;
-	UINT64 windowId;
-	UINT32 outputTargetWidth;
-	UINT32 outputTargetHeight;
-};
-typedef struct gdi_gfx_surface gdiGfxSurface;
-
-struct gdi_gfx_cache_entry
-{
-	UINT64 cacheKey;
-	UINT32 width;
-	UINT32 height;
-	BYTE* data;
-	UINT32 scanline;
-	UINT32 format;
-};
-typedef struct gdi_gfx_cache_entry gdiGfxCacheEntry;
-
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
+	struct gdi_gfx_surface
+	{
+		UINT16 surfaceId;
+		rdpCodecs* codecs;
+		H264_CONTEXT* h264;
+		UINT32 width;
+		UINT32 height;
+		UINT32 mappedWidth;
+		UINT32 mappedHeight;
+		BYTE* data;
+		UINT32 scanline;
+		UINT32 format;
+		BOOL outputMapped;
+		UINT32 outputOriginX;
+		UINT32 outputOriginY;
+		REGION16 invalidRegion;
+		UINT64 windowId;
+		UINT32 outputTargetWidth;
+		UINT32 outputTargetHeight;
+		BOOL windowMapped;
+		BOOL handleInUpdateSurfaceArea;
+#if defined(WITH_GFX_AV1)
+		FREERDP_AV1_CONTEXT* av1; /** @since version 3.25.0 */
+#else
+	    void* reservedAV1;
+#endif
+#if defined(WITH_GFX_AV2)
+		FREERDP_AV2_CONTEXT* av2; /** @since version 3.34.0 */
+#else
+	    void* reservedAV2;
+#endif
+#if defined(WITH_GFX_AZURE)
+		FREERDP_HEVC_CONTEXT* hevc; /** @since version 3.34.0 */
+#else
+	    void* reservedHEVC;
+#endif
+	};
+	typedef struct gdi_gfx_surface gdiGfxSurface;
+
+	struct gdi_gfx_cache_entry
+	{
+		UINT64 cacheKey;
+		UINT32 width;
+		UINT32 height;
+		BYTE* data;
+		UINT32 scanline;
+		UINT32 format;
+	};
+	typedef struct gdi_gfx_cache_entry gdiGfxCacheEntry;
+
 	FREERDP_API BOOL gdi_graphics_pipeline_init(rdpGdi* gdi, RdpgfxClientContext* gfx);
+
 	FREERDP_API BOOL gdi_graphics_pipeline_init_ex(rdpGdi* gdi, RdpgfxClientContext* gfx,
 	                                               pcRdpgfxMapWindowForSurface map,
 	                                               pcRdpgfxUnmapWindowForSurface unmap,

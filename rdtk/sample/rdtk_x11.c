@@ -16,11 +16,13 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <rdtk/config.h>
 
-#include <freerdp/log.h>
+#include <stdint.h>
+
+#include <winpr/wlog.h>
+#include <winpr/assert.h>
+#include <winpr/cast.h>
 #include <rdtk/rdtk.h>
 
 #include <X11/Xlib.h>
@@ -30,33 +32,18 @@
 
 int main(int argc, char** argv)
 {
-	GC gc;
-	int index;
-	int depth;
-	int x, y;
-	int width;
-	int height;
-	BYTE* buffer;
-	int scanline;
-	int pf_count;
+	int rc = 1;
+	int pf_count = 0;
 	XEvent event;
-	XImage* image;
-	Pixmap pixmap;
-	Screen* screen;
-	Visual* visual;
-	int scanline_pad;
-	int screen_number;
-	Display* display;
-	Window window;
-	Window root_window;
-	rdtkEngine* engine;
-	rdtkSurface* surface;
-	unsigned long border;
-	unsigned long background;
-	XPixmapFormatValues* pf;
-	XPixmapFormatValues* pfs;
+	XImage* image = nullptr;
+	Pixmap pixmap = 0;
+	Window window = 0;
+	rdtkSurface* surface = nullptr;
 
-	display = XOpenDisplay(NULL);
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
+	Display* display = XOpenDisplay(nullptr);
 
 	if (!display)
 	{
@@ -64,27 +51,27 @@ int main(int argc, char** argv)
 		return 1;
 	}
 
-	x = 10;
-	y = 10;
-	width = 640;
-	height = 480;
+	const INT32 x = 10;
+	const INT32 y = 10;
+	const UINT32 width = 640;
+	const UINT32 height = 480;
 
-	screen_number = DefaultScreen(display);
-	screen = ScreenOfDisplay(display, screen_number);
-	visual = DefaultVisual(display, screen_number);
-	gc = DefaultGC(display, screen_number);
-	depth = DefaultDepthOfScreen(screen);
-	root_window = RootWindow(display, screen_number);
-	border = BlackPixel(display, screen_number);
-	background = WhitePixel(display, screen_number);
+	const int screen_number = DefaultScreen(display);
+	const Screen* screen = ScreenOfDisplay(display, screen_number);
+	Visual* visual = DefaultVisual(display, screen_number);
+	const GC gc = DefaultGC(display, screen_number);
+	const int depth = DefaultDepthOfScreen(screen);
+	const Window root_window = RootWindow(display, screen_number);
+	const unsigned long border = BlackPixel(display, screen_number);
+	const unsigned long background = WhitePixel(display, screen_number);
 
-	scanline_pad = 0;
+	int scanline_pad = 0;
 
-	pfs = XListPixmapFormats(display, &pf_count);
+	XPixmapFormatValues* pfs = XListPixmapFormats(display, &pf_count);
 
-	for (index = 0; index < pf_count; index++)
+	for (int index = 0; index < pf_count; index++)
 	{
-		pf = &pfs[index];
+		XPixmapFormatValues* pf = &pfs[index];
 
 		if (pf->depth == depth)
 		{
@@ -95,21 +82,22 @@ int main(int argc, char** argv)
 
 	XFree(pfs);
 
-	engine = rdtk_engine_new();
-	if (!engine)
-		return 1;
-
-	scanline = width * 4;
-	buffer = (BYTE*)calloc(height, scanline);
-	if (!buffer)
-		return 1;
+	rdtkEngine* engine = rdtk_engine_new();
+	const size_t scanline = width * 4ULL;
+	uint8_t* buffer = (uint8_t*)calloc(height, scanline);
+	if (!engine || !buffer || (depth < 0))
+		goto fail;
 
 	surface = rdtk_surface_new(engine, buffer, width, height, scanline);
 
-	rdtk_surface_fill(surface, 0, 0, width, height, 0x3BB9FF);
-	rdtk_label_draw(surface, 16, 16, 128, 32, NULL, "label", 0, 0);
-	rdtk_button_draw(surface, 16, 64, 128, 32, NULL, "button");
-	rdtk_text_field_draw(surface, 16, 128, 128, 32, NULL, "text field");
+	if (rdtk_surface_fill(surface, 0, 0, width, height, 0x3BB9FF) < 0)
+		goto fail;
+	if (rdtk_label_draw(surface, 16, 16, 128, 32, nullptr, "label", 0, 0) < 0)
+		goto fail;
+	if (rdtk_button_draw(surface, 16, 64, 128, 32, nullptr, "button") < 0)
+		goto fail;
+	if (rdtk_text_field_draw(surface, 16, 128, 128, 32, nullptr, "text field") < 0)
+		goto fail;
 
 	window = XCreateSimpleWindow(display, root_window, x, y, width, height, 1, border, background);
 
@@ -119,9 +107,9 @@ int main(int argc, char** argv)
 	XSetFunction(display, gc, GXcopy);
 	XSetFillStyle(display, gc, FillSolid);
 
-	pixmap = XCreatePixmap(display, window, width, height, depth);
+	pixmap = XCreatePixmap(display, window, width, height, (unsigned)depth);
 
-	image = XCreateImage(display, visual, depth, ZPixmap, 0, (char*)buffer, width, height,
+	image = XCreateImage(display, visual, (unsigned)depth, ZPixmap, 0, (char*)buffer, width, height,
 	                     scanline_pad, 0);
 
 	while (1)
@@ -143,7 +131,10 @@ int main(int argc, char** argv)
 
 	XFlush(display);
 
-	XDestroyImage(image);
+	rc = 0;
+fail:
+	if (image)
+		XDestroyImage(image);
 	XCloseDisplay(display);
 
 	rdtk_surface_free(surface);
@@ -151,5 +142,5 @@ int main(int argc, char** argv)
 
 	rdtk_engine_free(engine);
 
-	return 0;
+	return rc;
 }

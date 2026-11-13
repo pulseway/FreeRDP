@@ -19,7 +19,9 @@
 #ifndef FREERDP_SERVER_SHADOW_WIN_WDS_H
 #define FREERDP_SERVER_SHADOW_WIN_WDS_H
 
+#if !defined(WITH_DXGI_1_2)
 #define WITH_WDS_API 1
+#endif
 
 #ifndef CINTERFACE
 #define CINTERFACE
@@ -38,8 +40,8 @@ extern "C"
 {
 #endif
 
-	int win_shadow_wds_init(winShadowSubsystem* subsystem);
-	int win_shadow_wds_uninit(winShadowSubsystem* subsystem);
+	WINPR_ATTR_NODISCARD int win_shadow_wds_init(winShadowSubsystem* subsystem);
+	WINPR_ATTR_NODISCARD int win_shadow_wds_uninit(winShadowSubsystem* subsystem);
 
 #ifdef __cplusplus
 }

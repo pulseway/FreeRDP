@@ -20,27 +20,35 @@
 #ifndef FREERDP_METRICS_H
 #define FREERDP_METRICS_H
 
+#include <winpr/wtypes.h>
+
 #include <freerdp/api.h>
-
-struct rdp_metrics
-{
-	rdpContext* context;
-
-	UINT64 TotalCompressedBytes;
-	UINT64 TotalUncompressedBytes;
-	double TotalCompressionRatio;
-};
+#include <freerdp/types.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
+	struct rdp_metrics
+	{
+		rdpContext* context;
+
+		UINT64 TotalCompressedBytes;
+		UINT64 TotalUncompressedBytes;
+		double TotalCompressionRatio;
+	};
+	typedef struct rdp_metrics rdpMetrics;
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API double metrics_write_bytes(rdpMetrics* metrics, UINT32 UncompressedBytes,
 	                                       UINT32 CompressedBytes);
 
-	FREERDP_API rdpMetrics* metrics_new(rdpContext* context);
 	FREERDP_API void metrics_free(rdpMetrics* metrics);
+
+	WINPR_ATTR_MALLOC(metrics_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_API rdpMetrics* metrics_new(rdpContext* context);
 
 #ifdef __cplusplus
 }

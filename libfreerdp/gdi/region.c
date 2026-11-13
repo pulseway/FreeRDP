@@ -19,13 +19,13 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+
+#include <winpr/wtypes.h>
 
 #include <freerdp/api.h>
 #include <freerdp/freerdp.h>
@@ -37,45 +37,48 @@
 
 #define TAG FREERDP_TAG("gdi.region")
 
-static char* gdi_rect_str(char* buffer, size_t size, const HGDI_RECT rect)
+static char* gdi_rect_str(char* buffer, size_t size, const GDI_RECT* rect)
 {
 	if (!buffer || (size < 1) || !rect)
-		return NULL;
+		return nullptr;
 
-	_snprintf(buffer, size - 1,
-	          "[top/left=%" PRId32 "x%" PRId32 "-bottom/right%" PRId32 "x%" PRId32 "]", rect->top,
-	          rect->left, rect->bottom, rect->right);
+	(void)_snprintf(buffer, size - 1,
+	                "[top/left=%" PRId32 "x%" PRId32 "-bottom/right%" PRId32 "x%" PRId32 "]",
+	                rect->top, rect->left, rect->bottom, rect->right);
 	buffer[size - 1] = '\0';
 
 	return buffer;
 }
 
-static char* gdi_regn_str(char* buffer, size_t size, const HGDI_RGN rgn)
+static char* gdi_regn_str(char* buffer, size_t size, const GDI_RGN* rgn)
 {
 	if (!buffer || (size < 1) || !rgn)
-		return NULL;
+		return nullptr;
 
-	_snprintf(buffer, size - 1, "[%" PRId32 "x%" PRId32 "-%" PRId32 "x%" PRId32 "]", rgn->x, rgn->y,
-	          rgn->w, rgn->h);
+	(void)_snprintf(buffer, size - 1, "[%" PRId32 "x%" PRId32 "-%" PRId32 "x%" PRId32 "]", rgn->x,
+	                rgn->y, rgn->w, rgn->h);
 	buffer[size - 1] = '\0';
 
 	return buffer;
 }
 
 /**
- * Create a region from rectangular coordinates.\n
- * @msdn{dd183514}
+ * Create a region from rectangular coordinates.
+ * msdn{dd183514}
+ *
  * @param nLeftRect x1
  * @param nTopRect y1
  * @param nRightRect x2
  * @param nBottomRect y2
+ *
  * @return new region
  */
 
-HGDI_RGN gdi_CreateRectRgn(INT32 nLeftRect, INT32 nTopRect, INT32 nRightRect, INT32 nBottomRect)
+GDI_RGN* gdi_CreateRectRgn(INT32 nLeftRect, INT32 nTopRect, INT32 nRightRect, INT32 nBottomRect)
 {
-	INT64 w, h;
-	HGDI_RGN hRgn;
+	INT64 w = 0;
+	INT64 h = 0;
+	GDI_RGN* hRgn = nullptr;
 
 	w = nRightRect - nLeftRect + 1ll;
 	h = nBottomRect - nTopRect + 1ll;
@@ -85,18 +88,18 @@ HGDI_RGN gdi_CreateRectRgn(INT32 nLeftRect, INT32 nTopRect, INT32 nRightRect, IN
 		         "Can not create region top/left=%" PRId32 "x%" PRId32 "-bottom/right=%" PRId32
 		         "x%" PRId32,
 		         nTopRect, nLeftRect, nBottomRect, nRightRect);
-		return NULL;
+		return nullptr;
 	}
-	hRgn = (HGDI_RGN)calloc(1, sizeof(GDI_RGN));
+	hRgn = (GDI_RGN*)calloc(1, sizeof(GDI_RGN));
 
 	if (!hRgn)
-		return NULL;
+		return nullptr;
 
 	hRgn->objectType = GDIOBJECT_REGION;
 	hRgn->x = nLeftRect;
 	hRgn->y = nTopRect;
-	hRgn->w = w;
-	hRgn->h = h;
+	hRgn->w = (INT32)w;
+	hRgn->h = (INT32)h;
 	hRgn->null = FALSE;
 	return hRgn;
 }
@@ -110,19 +113,19 @@ HGDI_RGN gdi_CreateRectRgn(INT32 nLeftRect, INT32 nTopRect, INT32 nRightRect, IN
  * @return new rectangle
  */
 
-HGDI_RECT gdi_CreateRect(INT32 xLeft, INT32 yTop, INT32 xRight, INT32 yBottom)
+GDI_RECT* gdi_CreateRect(INT32 xLeft, INT32 yTop, INT32 xRight, INT32 yBottom)
 {
-	HGDI_RECT hRect;
+	GDI_RECT* hRect = nullptr;
 
 	if (xLeft > xRight)
-		return NULL;
+		return nullptr;
 	if (yTop > yBottom)
-		return NULL;
+		return nullptr;
 
-	hRect = (HGDI_RECT)calloc(1, sizeof(GDI_RECT));
+	hRect = (GDI_RECT*)calloc(1, sizeof(GDI_RECT));
 
 	if (!hRect)
-		return NULL;
+		return nullptr;
 
 	hRect->objectType = GDIOBJECT_RECT;
 	hRect->left = xLeft;
@@ -138,12 +141,14 @@ HGDI_RECT gdi_CreateRect(INT32 xLeft, INT32 yTop, INT32 xRight, INT32 yBottom)
  * @param rgn destination region
  */
 
-BOOL gdi_RectToRgn(const HGDI_RECT rect, HGDI_RGN rgn)
+BOOL gdi_RectToRgn(const GDI_RECT* rect, GDI_RGN* rgn)
 {
+	WINPR_ASSERT(rect);
+	WINPR_ASSERT(rgn);
+
 	BOOL rc = TRUE;
-	INT64 w, h;
-	w = rect->right - rect->left + 1ll;
-	h = rect->bottom - rect->top + 1ll;
+	INT64 w = rect->right - rect->left + 1ll;
+	INT64 h = rect->bottom - rect->top + 1ll;
 
 	if ((w < 0) || (h < 0) || (w > INT32_MAX) || (h > INT32_MAX))
 	{
@@ -158,8 +163,8 @@ BOOL gdi_RectToRgn(const HGDI_RECT rect, HGDI_RGN rgn)
 
 	rgn->x = rect->left;
 	rgn->y = rect->top;
-	rgn->w = w;
-	rgn->h = h;
+	rgn->w = (INT32)w;
+	rgn->h = (INT32)h;
 
 	return rc;
 }
@@ -173,10 +178,11 @@ BOOL gdi_RectToRgn(const HGDI_RECT rect, HGDI_RGN rgn)
  * @param rgn destination region
  */
 
-BOOL gdi_CRectToRgn(INT32 left, INT32 top, INT32 right, INT32 bottom, HGDI_RGN rgn)
+BOOL gdi_CRectToRgn(INT32 left, INT32 top, INT32 right, INT32 bottom, GDI_RGN* rgn)
 {
 	BOOL rc = TRUE;
-	INT64 w, h;
+	INT64 w = 0;
+	INT64 h = 0;
 	w = right - left + 1ll;
 	h = bottom - top + 1ll;
 
@@ -196,8 +202,8 @@ BOOL gdi_CRectToRgn(INT32 left, INT32 top, INT32 right, INT32 bottom, HGDI_RGN r
 
 	rgn->x = left;
 	rgn->y = top;
-	rgn->w = w;
-	rgn->h = h;
+	rgn->w = (INT32)w;
+	rgn->h = (INT32)h;
 	return rc;
 }
 
@@ -210,34 +216,31 @@ BOOL gdi_CRectToRgn(INT32 left, INT32 top, INT32 right, INT32 bottom, HGDI_RGN r
  * @param h height
  */
 
-BOOL gdi_RectToCRgn(const HGDI_RECT rect, INT32* x, INT32* y, INT32* w, INT32* h)
+BOOL gdi_RectToCRgn(const GDI_RECT* rect, INT32* x, INT32* y, INT32* w, INT32* h)
 {
 	BOOL rc = TRUE;
-	INT64 tmp;
 	*x = rect->left;
 	*y = rect->top;
-	tmp = rect->right - rect->left + 1;
+	INT64 tmp = rect->right - rect->left + 1;
 	if ((tmp < 0) || (tmp > INT32_MAX))
 	{
 		char buffer[256];
-		WLog_ERR(TAG, "[%s] rectangle invalid %s", __FUNCTION__,
-		         gdi_rect_str(buffer, sizeof(buffer), rect));
+		WLog_ERR(TAG, "rectangle invalid %s", gdi_rect_str(buffer, sizeof(buffer), rect));
 		*w = 0;
 		rc = FALSE;
 	}
 	else
-		*w = tmp;
+		*w = (INT32)tmp;
 	tmp = rect->bottom - rect->top + 1;
 	if ((tmp < 0) || (tmp > INT32_MAX))
 	{
 		char buffer[256];
-		WLog_ERR(TAG, "[%s] rectangle invalid %s", __FUNCTION__,
-		         gdi_rect_str(buffer, sizeof(buffer), rect));
+		WLog_ERR(TAG, "rectangle invalid %s", gdi_rect_str(buffer, sizeof(buffer), rect));
 		*h = 0;
 		rc = FALSE;
 	}
 	else
-		*h = tmp;
+		*h = (INT32)tmp;
 	return rc;
 }
 
@@ -256,7 +259,8 @@ BOOL gdi_RectToCRgn(const HGDI_RECT rect, INT32* x, INT32* y, INT32* w, INT32* h
 BOOL gdi_CRectToCRgn(INT32 left, INT32 top, INT32 right, INT32 bottom, INT32* x, INT32* y, INT32* w,
                      INT32* h)
 {
-	INT64 wl, hl;
+	INT64 wl = 0;
+	INT64 hl = 0;
 	BOOL rc = TRUE;
 	wl = right - left + 1ll;
 	hl = bottom - top + 1ll;
@@ -275,8 +279,8 @@ BOOL gdi_CRectToCRgn(INT32 left, INT32 top, INT32 right, INT32 bottom, INT32* x,
 
 	*x = left;
 	*y = top;
-	*w = wl;
-	*h = hl;
+	*w = (INT32)wl;
+	*h = (INT32)hl;
 	return rc;
 }
 
@@ -286,9 +290,10 @@ BOOL gdi_CRectToCRgn(INT32 left, INT32 top, INT32 right, INT32 bottom, INT32* x,
  * @param rect destination rectangle
  */
 
-BOOL gdi_RgnToRect(const HGDI_RGN rgn, HGDI_RECT rect)
+BOOL gdi_RgnToRect(const GDI_RGN* rgn, GDI_RECT* rect)
 {
-	INT64 r, b;
+	INT64 r = 0;
+	INT64 b = 0;
 	BOOL rc = TRUE;
 	r = rgn->x + rgn->w - 1ll;
 	b = rgn->y + rgn->h - 1ll;
@@ -303,8 +308,8 @@ BOOL gdi_RgnToRect(const HGDI_RGN rgn, HGDI_RECT rect)
 	}
 	rect->left = rgn->x;
 	rect->top = rgn->y;
-	rect->right = r;
-	rect->bottom = b;
+	rect->right = (INT32)r;
+	rect->bottom = (INT32)b;
 
 	return rc;
 }
@@ -318,26 +323,30 @@ BOOL gdi_RgnToRect(const HGDI_RGN rgn, HGDI_RECT rect)
  * @param rect destination rectangle
  */
 
-INLINE BOOL gdi_CRgnToRect(INT64 x, INT64 y, INT32 w, INT32 h, HGDI_RECT rect)
+BOOL gdi_CRgnToRect(INT64 x, INT64 y, INT32 w, INT32 h, GDI_RECT* rect)
 {
 	BOOL invalid = FALSE;
 	const INT64 r = x + w - 1;
 	const INT64 b = y + h - 1;
-	rect->left = (x > 0) ? x : 0;
-	rect->top = (y > 0) ? y : 0;
+	WINPR_ASSERT(x <= INT32_MAX);
+	WINPR_ASSERT(y <= INT32_MAX);
+	WINPR_ASSERT(r <= INT32_MAX);
+	WINPR_ASSERT(b <= INT32_MAX);
+	rect->left = (x > 0) ? (INT32)x : 0;
+	rect->top = (y > 0) ? (INT32)y : 0;
 	rect->right = rect->left;
 	rect->bottom = rect->top;
 
 	if ((w <= 0) || (h <= 0))
 		invalid = TRUE;
 
-	if (r > 0)
-		rect->right = r;
+	if (r >= 0)
+		rect->right = (INT32)r;
 	else
 		invalid = TRUE;
 
-	if (b > 0)
-		rect->bottom = b;
+	if (b >= 0)
+		rect->bottom = (INT32)b;
 	else
 		invalid = TRUE;
 
@@ -360,9 +369,11 @@ INLINE BOOL gdi_CRgnToRect(INT64 x, INT64 y, INT32 w, INT32 h, HGDI_RECT rect)
  * @param bottom y2
  */
 
-INLINE BOOL gdi_RgnToCRect(const HGDI_RGN rgn, INT32* left, INT32* top, INT32* right, INT32* bottom)
+BOOL gdi_RgnToCRect(const GDI_RGN* rgn, INT32* left, INT32* top, INT32* right, INT32* bottom)
 {
 	BOOL rc = TRUE;
+
+	WINPR_ASSERT(rgn);
 	if ((rgn->w < 0) || (rgn->h < 0))
 	{
 		char buffer[256];
@@ -390,8 +401,8 @@ INLINE BOOL gdi_RgnToCRect(const HGDI_RGN rgn, INT32* left, INT32* top, INT32* r
  * @param bottom y2
  */
 
-INLINE BOOL gdi_CRgnToCRect(INT32 x, INT32 y, INT32 w, INT32 h, INT32* left, INT32* top,
-                            INT32* right, INT32* bottom)
+BOOL gdi_CRgnToCRect(INT32 x, INT32 y, INT32 w, INT32 h, INT32* left, INT32* top, INT32* right,
+                     INT32* bottom)
 {
 	BOOL rc = TRUE;
 	*left = x;
@@ -430,12 +441,14 @@ INLINE BOOL gdi_CRgnToCRect(INT32 x, INT32 y, INT32 w, INT32 h, INT32* left, INT
  * @return nonzero if there is an overlap, 0 otherwise
  */
 
-INLINE BOOL gdi_CopyOverlap(INT32 x, INT32 y, INT32 width, INT32 height, INT32 srcx, INT32 srcy)
+inline BOOL gdi_CopyOverlap(INT32 x, INT32 y, INT32 width, INT32 height, INT32 srcx, INT32 srcy)
 {
 	GDI_RECT dst;
 	GDI_RECT src;
-	gdi_CRgnToRect(x, y, width, height, &dst);
-	gdi_CRgnToRect(srcx, srcy, width, height, &src);
+	if (!gdi_CRgnToRect(x, y, width, height, &dst))
+		return FALSE;
+	if (!gdi_CRgnToRect(srcx, srcy, width, height, &src))
+		return FALSE;
 
 	if (dst.right < src.left)
 		return FALSE;
@@ -449,17 +462,19 @@ INLINE BOOL gdi_CopyOverlap(INT32 x, INT32 y, INT32 width, INT32 height, INT32 s
 }
 
 /**
- * Set the coordinates of a given rectangle.\n
- * @msdn{dd145085}
+ * Set the coordinates of a given rectangle.
+ * msdn{dd145085}
+ *
  * @param rc rectangle
  * @param xLeft x1
  * @param yTop y1
  * @param xRight x2
  * @param yBottom y2
+ *
  * @return nonzero if successful, 0 otherwise
  */
 
-INLINE BOOL gdi_SetRect(HGDI_RECT rc, INT32 xLeft, INT32 yTop, INT32 xRight, INT32 yBottom)
+inline BOOL gdi_SetRect(GDI_RECT* rc, INT32 xLeft, INT32 yTop, INT32 xRight, INT32 yBottom)
 {
 	if (!rc)
 		return FALSE;
@@ -485,7 +500,7 @@ INLINE BOOL gdi_SetRect(HGDI_RECT rc, INT32 xLeft, INT32 yTop, INT32 xRight, INT
  * @return nonzero if successful, 0 otherwise
  */
 
-INLINE BOOL gdi_SetRgn(HGDI_RGN hRgn, INT32 nXLeft, INT32 nYLeft, INT32 nWidth, INT32 nHeight)
+inline BOOL gdi_SetRgn(GDI_RGN* hRgn, INT32 nXLeft, INT32 nYLeft, INT32 nWidth, INT32 nHeight)
 {
 	if (!hRgn)
 		return FALSE;
@@ -511,7 +526,7 @@ INLINE BOOL gdi_SetRgn(HGDI_RGN hRgn, INT32 nXLeft, INT32 nYLeft, INT32 nWidth, 
  * @return nonzero if successful, 0 otherwise
  */
 
-INLINE BOOL gdi_SetRectRgn(HGDI_RGN hRgn, INT32 nLeftRect, INT32 nTopRect, INT32 nRightRect,
+inline BOOL gdi_SetRectRgn(GDI_RGN* hRgn, INT32 nLeftRect, INT32 nTopRect, INT32 nRightRect,
                            INT32 nBottomRect)
 {
 	if (!gdi_CRectToRgn(nLeftRect, nTopRect, nRightRect, nBottomRect, hRgn))
@@ -521,33 +536,32 @@ INLINE BOOL gdi_SetRectRgn(HGDI_RGN hRgn, INT32 nLeftRect, INT32 nTopRect, INT32
 }
 
 /**
- * Compare two regions for equality.\n
- * @msdn{dd162700}
+ * @brief Compare two regions for equality.
+ * msdn{dd162700}
+ *
  * @param hSrcRgn1 first region
  * @param hSrcRgn2 second region
  * @return nonzero if both regions are equal, 0 otherwise
  */
 
-INLINE BOOL gdi_EqualRgn(const HGDI_RGN hSrcRgn1, const HGDI_RGN hSrcRgn2)
+inline BOOL gdi_EqualRgn(const GDI_RGN* hSrcRgn1, const GDI_RGN* hSrcRgn2)
 {
-	if ((hSrcRgn1->x == hSrcRgn2->x) && (hSrcRgn1->y == hSrcRgn2->y) &&
-	    (hSrcRgn1->w == hSrcRgn2->w) && (hSrcRgn1->h == hSrcRgn2->h))
-	{
-		return TRUE;
-	}
-
-	return FALSE;
+	WINPR_ASSERT(hSrcRgn1);
+	WINPR_ASSERT(hSrcRgn2);
+	return ((hSrcRgn1->x == hSrcRgn2->x) && (hSrcRgn1->y == hSrcRgn2->y) &&
+	        (hSrcRgn1->w == hSrcRgn2->w) && (hSrcRgn1->h == hSrcRgn2->h));
 }
 
 /**
- * Copy coordinates from a rectangle to another rectangle
- * @msdn{dd183481}
+ * @brief Copy coordinates from a rectangle to another rectangle
+ * msdn{dd183481}
+ *
  * @param dst destination rectangle
  * @param src source rectangle
  * @return nonzero if successful, 0 otherwise
  */
 
-INLINE BOOL gdi_CopyRect(HGDI_RECT dst, const HGDI_RECT src)
+inline BOOL gdi_CopyRect(GDI_RECT* dst, const GDI_RECT* src)
 {
 	if (!dst || !src)
 		return FALSE;
@@ -560,15 +574,15 @@ INLINE BOOL gdi_CopyRect(HGDI_RECT dst, const HGDI_RECT src)
 }
 
 /**
- * Check if a point is inside a rectangle.\n
- * @msdn{dd162882}
+ * Check if a point is inside a rectangle.
+ * msdn{dd162882}
  * @param rc rectangle
  * @param x point x position
  * @param y point y position
  * @return nonzero if the point is inside, 0 otherwise
  */
 
-INLINE BOOL gdi_PtInRect(const HGDI_RECT rc, INT32 x, INT32 y)
+inline BOOL gdi_PtInRect(const GDI_RECT* rc, INT32 x, INT32 y)
 {
 	/*
 	 * points on the left and top sides are considered in,
@@ -586,8 +600,8 @@ INLINE BOOL gdi_PtInRect(const HGDI_RECT rc, INT32 x, INT32 y)
 }
 
 /**
- * Invalidate a given region, such that it is redrawn on the next region update.\n
- * @msdn{dd145003}
+ * Invalidate a given region, such that it is redrawn on the next region update.
+ * msdn{dd145003}
  * @param hdc device context
  * @param x x1
  * @param y y1
@@ -596,12 +610,10 @@ INLINE BOOL gdi_PtInRect(const HGDI_RECT rc, INT32 x, INT32 y)
  * @return nonzero on success, 0 otherwise
  */
 
-INLINE BOOL gdi_InvalidateRegion(HGDI_DC hdc, INT32 x, INT32 y, INT32 w, INT32 h)
+BOOL gdi_InvalidateRegion(HGDI_DC hdc, INT32 x, INT32 y, INT32 w, INT32 h)
 {
-	GDI_RECT inv;
-	GDI_RECT rgn;
-	HGDI_RGN invalid;
-	HGDI_RGN cinvalid;
+	GDI_RECT inv = WINPR_C_ARRAY_INIT;
+	GDI_RECT rgn = WINPR_C_ARRAY_INIT;
 
 	if (!hdc->hwnd)
 		return TRUE;
@@ -609,31 +621,50 @@ INLINE BOOL gdi_InvalidateRegion(HGDI_DC hdc, INT32 x, INT32 y, INT32 w, INT32 h
 	if (!hdc->hwnd->invalid)
 		return TRUE;
 
-	if (w == 0 || h == 0)
+	if ((w <= 0) || (h <= 0))
 		return TRUE;
 
-	cinvalid = hdc->hwnd->cinvalid;
-
-	if ((hdc->hwnd->ninvalid + 1) > (INT64)hdc->hwnd->count)
+	GDI_RGN* cinvalid = hdc->hwnd->cinvalid;
+	if (hdc->hwnd->ninvalid < 0)
 	{
-		size_t new_cnt;
-		HGDI_RGN new_rgn;
-		new_cnt = hdc->hwnd->count * 2;
+		WLog_ERR(TAG, "ninvalid %" PRId32 " < 0", hdc->hwnd->ninvalid);
+		return FALSE;
+	}
+
+	if ((hdc->hwnd->ninvalid + 1ll) > (INT64)hdc->hwnd->count)
+	{
+		const size_t new_cnt = (size_t)hdc->hwnd->ninvalid + 128ull;
 		if (new_cnt > UINT32_MAX)
 			return FALSE;
 
-		new_rgn = (HGDI_RGN)realloc(cinvalid, sizeof(GDI_RGN) * new_cnt);
+		const size_t diff = new_cnt - hdc->hwnd->count;
+		GDI_RGN* new_rgn = (GDI_RGN*)realloc(cinvalid, sizeof(GDI_RGN) * new_cnt);
 
 		if (!new_rgn)
 			return FALSE;
 
-		hdc->hwnd->count = new_cnt;
 		cinvalid = new_rgn;
+		memset(&cinvalid[hdc->hwnd->count], 0, sizeof(GDI_RGN) * diff);
+		hdc->hwnd->count = (UINT32)new_cnt;
 	}
 
-	gdi_SetRgn(&cinvalid[hdc->hwnd->ninvalid++], x, y, w, h);
 	hdc->hwnd->cinvalid = cinvalid;
-	invalid = hdc->hwnd->invalid;
+	GDI_RGN* invalid = hdc->hwnd->invalid;
+
+	if (!gdi_SetRgn(&cinvalid[hdc->hwnd->ninvalid], x, y, w, h))
+		return FALSE;
+
+	hdc->hwnd->ninvalid++;
+
+	if (!gdi_CRgnToRect(x, y, w, h, &rgn))
+	{
+		invalid->x = 0;
+		invalid->y = 0;
+		invalid->w = 0;
+		invalid->h = 0;
+		invalid->null = TRUE;
+		return TRUE;
+	}
 
 	if (invalid->null)
 	{
@@ -645,8 +676,8 @@ INLINE BOOL gdi_InvalidateRegion(HGDI_DC hdc, INT32 x, INT32 y, INT32 w, INT32 h
 		return TRUE;
 	}
 
-	gdi_CRgnToRect(x, y, w, h, &rgn);
-	gdi_RgnToRect(invalid, &inv);
+	if (!gdi_RgnToRect(invalid, &inv))
+		return FALSE;
 
 	if (rgn.left < inv.left)
 		inv.left = rgn.left;
@@ -660,6 +691,5 @@ INLINE BOOL gdi_InvalidateRegion(HGDI_DC hdc, INT32 x, INT32 y, INT32 w, INT32 h
 	if (rgn.bottom > inv.bottom)
 		inv.bottom = rgn.bottom;
 
-	gdi_RectToRgn(&inv, invalid);
-	return TRUE;
+	return gdi_RectToRgn(&inv, invalid);
 }

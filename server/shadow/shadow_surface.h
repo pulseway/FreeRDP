@@ -29,10 +29,15 @@ extern "C"
 {
 #endif
 
-	rdpShadowSurface* shadow_surface_new(rdpShadowServer* server, int x, int y, int width,
-	                                     int height);
 	void shadow_surface_free(rdpShadowSurface* surface);
-	BOOL shadow_surface_resize(rdpShadowSurface* surface, int x, int y, int width, int height);
+
+	WINPR_ATTR_MALLOC(shadow_surface_free, 1)
+	WINPR_ATTR_NODISCARD
+	rdpShadowSurface* shadow_surface_new(rdpShadowServer* server, UINT16 x, UINT16 y, UINT32 width,
+	                                     UINT32 height);
+
+	WINPR_ATTR_NODISCARD BOOL shadow_surface_resize(rdpShadowSurface* surface, UINT16 x, UINT16 y,
+	                                                UINT32 width, UINT32 height);
 
 #ifdef __cplusplus
 }

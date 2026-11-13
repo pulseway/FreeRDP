@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <ApplicationServices/ApplicationServices.h>
 #include <Carbon/Carbon.h>
@@ -290,7 +288,7 @@ static const CGKeyCode keymap[256] = {
 	0xFF,                    // 0xfe
 };
 
-BOOL mf_input_keyboard_event(rdpInput* input, UINT16 flags, UINT16 code)
+BOOL mf_input_keyboard_event(rdpInput* input, UINT16 flags, UINT8 code)
 {
 	CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
 	BOOL keyDown = TRUE;

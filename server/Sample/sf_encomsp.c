@@ -19,22 +19,22 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
+
+#include <winpr/assert.h>
 
 #include "sf_encomsp.h"
 
 BOOL sf_peer_encomsp_init(testPeerContext* context)
 {
-	context->encomsp = encomsp_server_context_new(context->vcm);
-	context->encomsp->rdpcontext = &context->_p;
+	WINPR_ASSERT(context);
 
+	context->encomsp = encomsp_server_context_new(context->vcm);
 	if (!context->encomsp)
 		return FALSE;
 
-	if (context->encomsp->Start(context->encomsp) != CHANNEL_RC_OK)
-		return FALSE;
+	context->encomsp->rdpcontext = &context->_p;
 
-	return TRUE;
+	WINPR_ASSERT(context->encomsp->Start);
+	return (context->encomsp->Start(context->encomsp) == CHANNEL_RC_OK);
 }

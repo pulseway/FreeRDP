@@ -12,9 +12,8 @@
  * permissions and limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
+
 #include <winpr/sysinfo.h>
 
 #include "prim_test.h"
@@ -24,15 +23,14 @@
 #define VALUE (0xA5A5A5A5U)
 
 /* ========================================================================= */
-static BOOL test_and_32u_impl(const char* name, __andC_32u_t fkt, const UINT32* src,
+static BOOL test_and_32u_impl(const char* name, fn_andC_32u_t fkt, const UINT32* src,
                               const UINT32 val, UINT32* dst, size_t size)
 {
-	size_t i;
-	pstatus_t status = fkt(src, val, dst, size);
+	pstatus_t status = fkt(src, val, dst, WINPR_ASSERTING_INT_CAST(int32_t, size));
 	if (status != PRIMITIVES_SUCCESS)
 		return FALSE;
 
-	for (i = 0; i < size; ++i)
+	for (size_t i = 0; i < size; ++i)
 	{
 		if (dst[i] != (src[i] & val))
 		{
@@ -50,10 +48,11 @@ static BOOL test_and_32u_impl(const char* name, __andC_32u_t fkt, const UINT32* 
 
 static BOOL test_and_32u_func(void)
 {
-	UINT32 ALIGN(src[FUNC_TEST_SIZE + 3]) = { 0 };
-	UINT32 ALIGN(dst[FUNC_TEST_SIZE + 3]) = { 0 };
+	UINT32 src[FUNC_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
+	UINT32 dst[FUNC_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
 
-	winpr_RAND((BYTE*)src, sizeof(src));
+	if (winpr_RAND(src, sizeof(src)) < 0)
+		return FALSE;
 
 	if (!test_and_32u_impl("generic->andC_32u aligned", generic->andC_32u, src + 1, VALUE, dst + 1,
 	                       FUNC_TEST_SIZE))
@@ -74,10 +73,11 @@ static BOOL test_and_32u_func(void)
 /* ------------------------------------------------------------------------- */
 static BOOL test_and_32u_speed(void)
 {
-	UINT32 ALIGN(src[MAX_TEST_SIZE + 3]) = { 0 };
-	UINT32 ALIGN(dst[MAX_TEST_SIZE + 3]) = { 0 };
+	UINT32 src[MAX_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
+	UINT32 dst[MAX_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
 
-	winpr_RAND((BYTE*)src, sizeof(src));
+	if (winpr_RAND(src, sizeof(src)) < 0)
+		return FALSE;
 
 	if (!speed_test("andC_32u", "aligned", g_Iterations, (speed_test_fkt)generic->andC_32u,
 	                (speed_test_fkt)optimized->andC_32u, src + 1, VALUE, dst + 1, MAX_TEST_SIZE))
@@ -92,9 +92,7 @@ static BOOL test_and_32u_speed(void)
 /* ========================================================================= */
 static BOOL check(const UINT32* src, const UINT32* dst, UINT32 size, UINT32 value)
 {
-	UINT32 i;
-
-	for (i = 0; i < size; ++i)
+	for (UINT32 i = 0; i < size; ++i)
 	{
 		if (dst[i] != (src[i] | value))
 		{
@@ -110,11 +108,12 @@ static BOOL check(const UINT32* src, const UINT32* dst, UINT32 size, UINT32 valu
 
 static BOOL test_or_32u_func(void)
 {
-	pstatus_t status;
-	UINT32 ALIGN(src[FUNC_TEST_SIZE + 3]) = { 0 };
-	UINT32 ALIGN(dst[FUNC_TEST_SIZE + 3]) = { 0 };
+	pstatus_t status = 0;
+	UINT32 src[FUNC_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
+	UINT32 dst[FUNC_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
 
-	winpr_RAND((BYTE*)src, sizeof(src));
+	if (winpr_RAND(src, sizeof(src)) < 0)
+		return FALSE;
 
 	status = generic->orC_32u(src + 1, VALUE, dst + 1, FUNC_TEST_SIZE);
 	if (status != PRIMITIVES_SUCCESS)
@@ -136,17 +135,15 @@ static BOOL test_or_32u_func(void)
 /* ------------------------------------------------------------------------- */
 static BOOL test_or_32u_speed(void)
 {
-	UINT32 ALIGN(src[FUNC_TEST_SIZE + 3]) = { 0 };
-	UINT32 ALIGN(dst[FUNC_TEST_SIZE + 3]) = { 0 };
-	char testStr[256];
-	testStr[0] = '\0';
-	winpr_RAND((BYTE*)src, sizeof(src));
+	UINT32 src[FUNC_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
+	UINT32 dst[FUNC_TEST_SIZE + 3] = WINPR_C_ARRAY_INIT;
 
-	if (!speed_test("add16s", "aligned", g_Iterations, (speed_test_fkt)generic->orC_32u,
-	                (speed_test_fkt)optimized->orC_32u, src + 1, VALUE, dst + 1, FUNC_TEST_SIZE))
+	if (winpr_RAND(src, sizeof(src)) < 0)
 		return FALSE;
 
-	return TRUE;
+	return (speed_test("add16s", "aligned", g_Iterations, (speed_test_fkt)generic->orC_32u,
+	                   (speed_test_fkt)optimized->orC_32u, src + 1, VALUE, dst + 1,
+	                   FUNC_TEST_SIZE));
 }
 
 int TestPrimitivesAndOr(int argc, char* argv[])

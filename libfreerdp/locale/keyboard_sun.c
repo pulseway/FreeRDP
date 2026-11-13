@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,14 +53,13 @@
  * keyboard layout indicated by the index given (in this case, 33, or US-English).
  */
 
-struct _SOLARIS_KEYBOARD
+typedef struct
 {
 	UINT32 type;             /* Solaris keyboard type */
 	UINT32 layout;           /* Layout */
 	char* xkbType;           /* XKB keyboard */
 	UINT32 keyboardLayoutId; /* XKB keyboard layout */
-};
-typedef struct _SOLARIS_KEYBOARD SOLARIS_KEYBOARD;
+} SOLARIS_KEYBOARD;
 
 static const SOLARIS_KEYBOARD SOLARIS_KEYBOARD_TABLE[] = {
 	{ 4, 0, "sun(type4)", KBD_US },                                      /*  US4 */
@@ -228,30 +225,30 @@ int freerdp_get_solaris_keyboard_layout_and_type(int* type, int* layout)
 	if (!kbd)
 		return -1;
 
-	while (fgets(buffer, sizeof(buffer), kbd) != NULL)
+	while (fgets(buffer, sizeof(buffer), kbd) != nullptr)
 	{
 		long val;
 
-		if ((pch = strstr(buffer, "type=")) != NULL)
+		if ((pch = strstr(buffer, "type=")) != nullptr)
 		{
 			beg = pch + sizeof("type=") - 1;
 			end = strchr(beg, '\n');
 			end[0] = '\0';
 			errno = 0;
-			val = strtol(beg, NULL, 0);
+			val = strtol(beg, nullptr, 0);
 
 			if ((errno != 0) || (val < INT32_MIN) || (val > INT32_MAX))
 				goto fail;
 
 			*type = val;
 		}
-		else if ((pch = strstr(buffer, "layout=")) != NULL)
+		else if ((pch = strstr(buffer, "layout=")) != nullptr)
 		{
 			beg = pch + sizeof("layout=") - 1;
 			end = strchr(beg, ' ');
 			end[0] = '\0';
 			errno = 0;
-			val = strtol(beg, NULL, 0);
+			val = strtol(beg, nullptr, 0);
 
 			if ((errno != 0) || (val < INT32_MIN) || (val > INT32_MAX))
 				goto fail;
@@ -268,14 +265,13 @@ fail:
 
 DWORD freerdp_detect_solaris_keyboard_layout()
 {
-	int i;
 	int type;
 	int layout;
 
 	if (freerdp_get_solaris_keyboard_layout_and_type(&type, &layout) < 0)
 		return 0;
 
-	for (i = 0; i < ARRAYSIZE(SOLARIS_KEYBOARD_TABLE); i++)
+	for (size_t i = 0; i < ARRAYSIZE(SOLARIS_KEYBOARD_TABLE); i++)
 	{
 		if (SOLARIS_KEYBOARD_TABLE[i].type == type)
 		{

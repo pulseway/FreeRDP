@@ -17,7 +17,7 @@
 # limitations under the License.
 
 winpr_module_add(handle.c handle.h nonehandle.c nonehandle.h)
-	
-if(${CMAKE_SYSTEM_NAME} MATCHES SunOS)
-	winpr_library_add_private(rt)
+
+if(BUILD_TESTING)
+  add_subdirectory(test)
 endif()

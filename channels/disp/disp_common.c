@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/stream.h>
@@ -34,16 +32,27 @@
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT disp_read_header(wStream* s, DISPLAY_CONTROL_HEADER* header)
+UINT disp_read_header(wStream* s, DISPLAY_CONTROL_HEADER* header, size_t* packetLen)
 {
-	if (Stream_GetRemainingLength(s) < 8)
-	{
-		WLog_ERR(TAG, "header parsing failed: not enough data!");
+	if (packetLen)
+		*packetLen = 0;
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, 8))
 		return ERROR_INVALID_DATA;
-	}
 
 	Stream_Read_UINT32(s, header->type);
 	Stream_Read_UINT32(s, header->length);
+	if (header->length < 8)
+	{
+		WLog_ERR(TAG, "Invalid header length %" PRIu32 ", require at least 8", header->length);
+		return ERROR_INVALID_DATA;
+	}
+	if (!Stream_CheckAndLogRequiredLength(TAG, s, header->length - 8))
+		return ERROR_INVALID_DATA;
+
+	if (packetLen)
+		*packetLen = header->length - 8;
+
 	return CHANNEL_RC_OK;
 }
 

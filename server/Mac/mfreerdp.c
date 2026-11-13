@@ -18,9 +18,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,59 +32,43 @@
 
 #include <winpr/crt.h>
 #include <winpr/wtsapi.h>
+#include <winpr/assert.h>
 
 #include <freerdp/freerdp.h>
 #include <freerdp/constants.h>
 #include <freerdp/channels/wtsvc.h>
 #include <freerdp/channels/channels.h>
+#include <freerdp/server/server-common.h>
 
 #include "mfreerdp.h"
 #include "mf_peer.h"
 
+#include <freerdp/log.h>
+#define TAG SERVER_TAG("mac")
+
 static void mf_server_main_loop(freerdp_listener* instance)
 {
-	int i;
-	int fds;
-	int max_fds;
-	int rcount;
-	void* rfds[32];
-	fd_set rfds_set;
-
-	memset(rfds, 0, sizeof(rfds));
+	WINPR_ASSERT(instance);
+	WINPR_ASSERT(instance->GetEventHandles);
+	WINPR_ASSERT(instance->CheckFileDescriptor);
 
 	while (1)
 	{
-		rcount = 0;
+		DWORD status;
+		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = WINPR_C_ARRAY_INIT;
+		DWORD count = instance->GetEventHandles(instance, handles, ARRAYSIZE(handles));
 
-		if (instance->GetFileDescriptor(instance, rfds, &rcount) != TRUE)
+		if (count == 0)
 		{
+			WLog_ERR(TAG, "Failed to get FreeRDP file descriptor");
 			break;
 		}
 
-		max_fds = 0;
-		FD_ZERO(&rfds_set);
-
-		for (i = 0; i < rcount; i++)
+		status = WaitForMultipleObjects(count, handles, FALSE, INFINITE);
+		if (status == WAIT_FAILED)
 		{
-			fds = (int)(long)(rfds[i]);
-
-			if (fds > max_fds)
-				max_fds = fds;
-
-			FD_SET(fds, &rfds_set);
-		}
-
-		if (max_fds == 0)
+			WLog_ERR(TAG, "WaitForMultipleObjects failed");
 			break;
-
-		if (select(max_fds + 1, &rfds_set, NULL, NULL, NULL) == -1)
-		{
-			/* these are not really errors */
-			if (!((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINPROGRESS) ||
-			      (errno == EINTR))) /* signal occurred */
-			{
-				break;
-			}
 		}
 
 		if (instance->CheckFileDescriptor(instance) != TRUE)
@@ -100,18 +82,23 @@ static void mf_server_main_loop(freerdp_listener* instance)
 
 int main(int argc, char* argv[])
 {
+	freerdp_server_warn_unmaintained(argc, argv);
+	mf_server_info info = { .key = "server.key", .cert = "server.crt" };
+
 	freerdp_listener* instance;
 
 	signal(SIGPIPE, SIG_IGN);
 
-	WTSRegisterWtsApiFunctionTable(FreeRDP_InitWtsApi());
+	if (!WTSRegisterWtsApiFunctionTable(FreeRDP_InitWtsApi()))
+		return -1;
 
 	if (!(instance = freerdp_listener_new()))
 		return 1;
 
+	instance->info = &info;
 	instance->PeerAccepted = mf_peer_accepted;
 
-	if (instance->Open(instance, NULL, 3389))
+	if (instance->Open(instance, nullptr, 3389))
 	{
 		mf_server_main_loop(instance);
 	}

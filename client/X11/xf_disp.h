@@ -22,14 +22,21 @@
 #include <freerdp/types.h>
 #include <freerdp/client/disp.h>
 
-#include "xf_client.h"
-#include "xfreerdp.h"
+#include <X11/Xlib.h>
+
+#include "xf_types.h"
+
+typedef struct s_xfDispContext xfDispContext;
 
 FREERDP_API BOOL xf_disp_init(xfDispContext* xfDisp, DispClientContext* disp);
 FREERDP_API BOOL xf_disp_uninit(xfDispContext* xfDisp, DispClientContext* disp);
 
-xfDispContext* xf_disp_new(xfContext* xfc);
 void xf_disp_free(xfDispContext* disp);
+
+WINPR_ATTR_MALLOC(xf_disp_free, 1)
+WINPR_ATTR_NODISCARD
+xfDispContext* xf_disp_new(xfContext* xfc);
+
 BOOL xf_disp_handle_xevent(xfContext* xfc, const XEvent* event);
 BOOL xf_disp_handle_configureNotify(xfContext* xfc, int width, int height);
 void xf_disp_resized(xfDispContext* disp);

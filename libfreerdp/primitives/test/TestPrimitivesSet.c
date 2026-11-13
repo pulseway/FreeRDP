@@ -12,9 +12,7 @@
  * permissions and limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/sysinfo.h>
 #include "prim_test.h"
@@ -22,9 +20,7 @@
 /* ------------------------------------------------------------------------- */
 static BOOL check8(const BYTE* src, UINT32 length, UINT32 offset, BYTE value)
 {
-	UINT32 i;
-
-	for (i = 0; i < length; ++i)
+	for (UINT32 i = 0; i < length; ++i)
 	{
 		if (src[offset + i] != value)
 		{
@@ -40,16 +36,14 @@ static BOOL check8(const BYTE* src, UINT32 length, UINT32 offset, BYTE value)
 
 static BOOL test_set8u_func(void)
 {
-	pstatus_t status;
-	UINT32 off;
-	BYTE dest[1024];
+	pstatus_t status = 0;
 
-	for (off = 0; off < 16; ++off)
+	for (UINT32 off = 0; off < 16; ++off)
 	{
-		UINT32 len;
-		memset(dest, 3, sizeof(dest));
+		BYTE dest[1024];
 
-		for (len = 1; len < 48 - off; ++len)
+		memset(dest, 3, sizeof(dest));
+		for (UINT32 len = 1; len < 48 - off; ++len)
 		{
 			status = generic->set_8u(0xa5, dest + off, len);
 
@@ -61,12 +55,12 @@ static BOOL test_set8u_func(void)
 		}
 	}
 
-	for (off = 0; off < 16; ++off)
+	for (UINT32 off = 0; off < 16; ++off)
 	{
-		UINT32 len;
-		memset(dest, 3, sizeof(dest));
+		BYTE dest[1024];
 
-		for (len = 1; len < 48 - off; ++len)
+		memset(dest, 3, sizeof(dest));
+		for (UINT32 len = 1; len < 48 - off; ++len)
 		{
 			status = optimized->set_8u(0xa5, dest + off, len);
 
@@ -85,12 +79,12 @@ static BOOL test_set8u_func(void)
 static BOOL test_set8u_speed(void)
 {
 	BYTE dest[1024];
-	BYTE value;
-	UINT32 x;
+	BYTE value = 0;
 
-	for (x = 0; x < 16; x++)
+	for (UINT32 x = 0; x < 16; x++)
 	{
-		winpr_RAND(&value, sizeof(value));
+		if (winpr_RAND(&value, sizeof(value)) < 0)
+			return FALSE;
 
 		if (!speed_test("set_8u", "", g_Iterations, (speed_test_fkt)generic->set_8u,
 		                (speed_test_fkt)optimized->set_8u, value, dest + x, x))
@@ -102,9 +96,7 @@ static BOOL test_set8u_speed(void)
 
 static BOOL check32s(const INT32* src, UINT32 length, UINT32 offset, INT32 value)
 {
-	UINT32 i;
-
-	for (i = 0; i < length; ++i)
+	for (UINT32 i = 0; i < length; ++i)
 	{
 		if (src[offset + i] != value)
 		{
@@ -121,17 +113,14 @@ static BOOL check32s(const INT32* src, UINT32 length, UINT32 offset, INT32 value
 /* ------------------------------------------------------------------------- */
 static BOOL test_set32s_func(void)
 {
-	pstatus_t status;
-	UINT32 off;
-	INT32 dest[1024];
+	pstatus_t status = 0;
 	const INT32 value = -0x12345678;
 
-	for (off = 0; off < 16; ++off)
+	for (UINT32 off = 0; off < 16; ++off)
 	{
-		UINT32 len;
-		memset(dest, 0, sizeof(dest));
+		INT32 dest[1024] = WINPR_C_ARRAY_INIT;
 
-		for (len = 1; len < 48 - off; ++len)
+		for (UINT32 len = 1; len < 48 - off; ++len)
 		{
 			status = generic->set_32s(value, dest + off, len);
 
@@ -143,12 +132,11 @@ static BOOL test_set32s_func(void)
 		}
 	}
 
-	for (off = 0; off < 16; ++off)
+	for (UINT32 off = 0; off < 16; ++off)
 	{
-		UINT32 len;
-		memset(dest, 0, sizeof(dest));
+		INT32 dest[1024] = WINPR_C_ARRAY_INIT;
 
-		for (len = 1; len < 48 - off; ++len)
+		for (UINT32 len = 1; len < 48 - off; ++len)
 		{
 			status = optimized->set_32s(value, dest + off, len);
 
@@ -165,9 +153,7 @@ static BOOL test_set32s_func(void)
 
 static BOOL check32u(const UINT32* src, UINT32 length, UINT32 offset, UINT32 value)
 {
-	UINT32 i;
-
-	for (i = 0; i < length; ++i)
+	for (UINT32 i = 0; i < length; ++i)
 	{
 		if (src[offset + i] != value)
 		{
@@ -184,17 +170,14 @@ static BOOL check32u(const UINT32* src, UINT32 length, UINT32 offset, UINT32 val
 /* ------------------------------------------------------------------------- */
 static BOOL test_set32u_func(void)
 {
-	pstatus_t status;
-	UINT32 off;
-	UINT32 dest[1024];
+	pstatus_t status = 0;
 	const UINT32 value = 0xABCDEF12;
 
-	for (off = 0; off < 16; ++off)
+	for (UINT32 off = 0; off < 16; ++off)
 	{
-		UINT32 len;
-		memset(dest, 0, sizeof(dest));
+		UINT32 dest[1024] = WINPR_C_ARRAY_INIT;
 
-		for (len = 1; len < 48 - off; ++len)
+		for (UINT32 len = 1; len < 48 - off; ++len)
 		{
 			status = generic->set_32u(value, dest + off, len);
 
@@ -206,12 +189,11 @@ static BOOL test_set32u_func(void)
 		}
 	}
 
-	for (off = 0; off < 16; ++off)
+	for (UINT32 off = 0; off < 16; ++off)
 	{
-		UINT32 len;
-		memset(dest, 0, sizeof(dest));
+		UINT32 dest[1024] = WINPR_C_ARRAY_INIT;
 
-		for (len = 1; len < 48 - off; ++len)
+		for (UINT32 len = 1; len < 48 - off; ++len)
 		{
 			status = optimized->set_32u(value, dest + off, len);
 
@@ -230,12 +212,12 @@ static BOOL test_set32u_func(void)
 static BOOL test_set32u_speed(void)
 {
 	UINT32 dest[1024];
-	BYTE value;
-	UINT32 x;
+	BYTE value = 0;
 
-	for (x = 0; x < 16; x++)
+	for (UINT32 x = 0; x < 16; x++)
 	{
-		winpr_RAND(&value, sizeof(value));
+		if (winpr_RAND(&value, sizeof(value)) < 0)
+			return FALSE;
 
 		if (!speed_test("set_32u", "", g_Iterations, (speed_test_fkt)generic->set_32u,
 		                (speed_test_fkt)optimized->set_32u, value, dest + x, x))
@@ -249,12 +231,12 @@ static BOOL test_set32u_speed(void)
 static BOOL test_set32s_speed(void)
 {
 	INT32 dest[1024];
-	BYTE value;
-	UINT32 x;
+	BYTE value = 0;
 
-	for (x = 0; x < 16; x++)
+	for (UINT32 x = 0; x < 16; x++)
 	{
-		winpr_RAND(&value, sizeof(value));
+		if (winpr_RAND(&value, sizeof(value)) < 0)
+			return FALSE;
 
 		if (!speed_test("set_32s", "", g_Iterations, (speed_test_fkt)generic->set_32s,
 		                (speed_test_fkt)optimized->set_32s, value, dest + x, x))

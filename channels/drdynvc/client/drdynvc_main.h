@@ -22,6 +22,8 @@
 #ifndef FREERDP_CHANNEL_DRDYNVC_CLIENT_MAIN_H
 #define FREERDP_CHANNEL_DRDYNVC_CLIENT_MAIN_H
 
+#include <freerdp/config.h>
+
 #include <winpr/wlog.h>
 #include <winpr/synch.h>
 #include <freerdp/settings.h>
@@ -33,11 +35,12 @@
 #include <freerdp/addin.h>
 #include <freerdp/channels/log.h>
 #include <freerdp/client/drdynvc.h>
+#include <freerdp/codec/zgfx.h>
 #include <freerdp/freerdp.h>
 
 typedef struct drdynvc_plugin drdynvcPlugin;
 
-struct _DVCMAN
+typedef struct
 {
 	IWTSVirtualChannelManager iface;
 
@@ -46,13 +49,12 @@ struct _DVCMAN
 	wArrayList* plugin_names;
 	wArrayList* plugins;
 
-	wArrayList* listeners;
-	wArrayList* channels;
+	wHashTable* listeners;
+	wHashTable* channelsById;
 	wStreamPool* pool;
-};
-typedef struct _DVCMAN DVCMAN;
+} DVCMAN;
 
-struct _DVCMAN_LISTENER
+typedef struct
 {
 	IWTSListener iface;
 
@@ -60,24 +62,40 @@ struct _DVCMAN_LISTENER
 	char* channel_name;
 	UINT32 flags;
 	IWTSListenerCallback* listener_callback;
-};
-typedef struct _DVCMAN_LISTENER DVCMAN_LISTENER;
+} DVCMAN_LISTENER;
 
-struct _DVCMAN_ENTRY_POINTS
+typedef struct
 {
 	IDRDYNVC_ENTRY_POINTS iface;
 
 	DVCMAN* dvcman;
 	const ADDIN_ARGV* args;
-	rdpSettings* settings;
-};
-typedef struct _DVCMAN_ENTRY_POINTS DVCMAN_ENTRY_POINTS;
+	rdpContext* context;
+} DVCMAN_ENTRY_POINTS;
 
-struct _DVCMAN_CHANNEL
+typedef enum
+{
+	DVC_CHANNEL_INIT,
+	DVC_CHANNEL_RUNNING,
+	DVC_CHANNEL_CLOSED
+} DVC_CHANNEL_STATE;
+
+typedef struct
+{
+	uint64_t bytesIn;
+	uint64_t bytesOut;
+	uint64_t fragmentsIn;
+	uint64_t fragmentsOut;
+	uint64_t packetsIn;
+	uint64_t packetsOut;
+} DVCMAN_CHANNEL_STATS;
+
+typedef struct
 {
 	IWTSVirtualChannel iface;
 
-	int status;
+	volatile LONG refCounter;
+	DVC_CHANNEL_STATE state;
 	DVCMAN* dvcman;
 	void* pInterface;
 	UINT32 channel_id;
@@ -86,11 +104,25 @@ struct _DVCMAN_CHANNEL
 
 	wStream* dvc_data;
 	UINT32 dvc_data_length;
+	ZGFX_CONTEXT* decompressor;
 	CRITICAL_SECTION lock;
-};
-typedef struct _DVCMAN_CHANNEL DVCMAN_CHANNEL;
+	DVCMAN_CHANNEL_STATS stats;
 
-enum _DRDYNVC_STATE
+	/* TUNNELTYPE_ the channel's data is written on, 0 for the drdynvc static channel. Guarded by
+	 * lock: a writer holds it for a whole message, so Soft-Sync cannot move the channel between
+	 * two fragments, nor while a message is still on its way out over TCP. */
+	UINT32 tunnelType;
+#if defined(WITH_RDPEUDP)
+	/* The channel carries a static virtual channel's traffic, see dvcman_static_bridge_new. Its
+	 * data is passed on in the chunks it came in: bridgeFragmented is set from a DATA_FIRST PDU
+	 * until bridgeReceived reaches its length (dvc_data_length). */
+	BOOL staticBridge;
+	BOOL bridgeFragmented;
+	UINT32 bridgeReceived;
+#endif
+} DVCMAN_CHANNEL;
+
+typedef enum
 {
 	DRDYNVC_STATE_INITIAL,
 	DRDYNVC_STATE_CAPABILITIES,
@@ -98,14 +130,7 @@ enum _DRDYNVC_STATE
 	DRDYNVC_STATE_OPENING_CHANNEL,
 	DRDYNVC_STATE_SEND_RECEIVE,
 	DRDYNVC_STATE_FINAL
-};
-typedef enum _DRDYNVC_STATE DRDYNVC_STATE;
-
-#define CREATE_REQUEST_PDU 0x01
-#define DATA_FIRST_PDU 0x02
-#define DATA_PDU 0x03
-#define CLOSE_REQUEST_PDU 0x04
-#define CAPABILITY_REQUEST_PDU 0x05
+} DRDYNVC_STATE;
 
 struct drdynvc_plugin
 {
@@ -114,6 +139,7 @@ struct drdynvc_plugin
 
 	wLog* log;
 	HANDLE thread;
+	BOOL async;
 	wStream* data_in;
 	void* InitHandle;
 	DWORD OpenHandle;
@@ -130,6 +156,16 @@ struct drdynvc_plugin
 	rdpContext* rdpcontext;
 
 	IWTSVirtualChannelManager* channel_mgr;
+	BOOL firstFlagReceived;
+	UINT32 totalLength;
+
+	/* Soft-Sync ([MS-RDPEDYC] 3.1.5.3) */
+	BOOL softSyncDone;
+	wStream* pendingSoftSync;
+	wStream** tunnelBacklog;
+	UINT32* tunnelBacklogTypes;
+	size_t tunnelBacklogCount;
+	size_t tunnelBacklogCapacity;
 };
 
 #endif /* FREERDP_CHANNEL_DRDYNVC_CLIENT_MAIN_H */

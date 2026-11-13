@@ -10,10 +10,10 @@ static DWORD WINAPI message_echo_pipe_client_thread(LPVOID arg)
 
 	while (index < 100)
 	{
-		wMessage message;
-		int count;
+		wMessage message = WINPR_C_ARRAY_INIT;
+		int count = -1;
 
-		if (!MessageQueue_Post(pipe->In, NULL, 0, (void*)(size_t)index, NULL))
+		if (!MessageQueue_Post(pipe->In, nullptr, 0, (void*)(size_t)index, nullptr))
 			break;
 
 		if (!MessageQueue_Wait(pipe->Out))
@@ -40,10 +40,8 @@ static DWORD WINAPI message_echo_pipe_client_thread(LPVOID arg)
 
 static DWORD WINAPI message_echo_pipe_server_thread(LPVOID arg)
 {
-	wMessage message;
-	wMessagePipe* pipe;
-
-	pipe = (wMessagePipe*)arg;
+	wMessage message = WINPR_C_ARRAY_INIT;
+	wMessagePipe* pipe = (wMessagePipe*)arg;
 
 	while (MessageQueue_Wait(pipe->In))
 	{
@@ -62,10 +60,13 @@ static DWORD WINAPI message_echo_pipe_server_thread(LPVOID arg)
 
 int TestMessagePipe(int argc, char* argv[])
 {
-	HANDLE ClientThread = NULL;
-	HANDLE ServerThread = NULL;
-	wMessagePipe* EchoPipe = NULL;
+	HANDLE ClientThread = nullptr;
+	HANDLE ServerThread = nullptr;
+	wMessagePipe* EchoPipe = nullptr;
 	int ret = 1;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	if (!(EchoPipe = MessagePipe_New()))
 	{
@@ -73,22 +74,22 @@ int TestMessagePipe(int argc, char* argv[])
 		goto out;
 	}
 
-	if (!(ClientThread =
-	          CreateThread(NULL, 0, message_echo_pipe_client_thread, (void*)EchoPipe, 0, NULL)))
+	if (!(ClientThread = CreateThread(nullptr, 0, message_echo_pipe_client_thread, (void*)EchoPipe,
+	                                  0, nullptr)))
 	{
 		printf("failed to create client thread\n");
 		goto out;
 	}
 
-	if (!(ServerThread =
-	          CreateThread(NULL, 0, message_echo_pipe_server_thread, (void*)EchoPipe, 0, NULL)))
+	if (!(ServerThread = CreateThread(nullptr, 0, message_echo_pipe_server_thread, (void*)EchoPipe,
+	                                  0, nullptr)))
 	{
 		printf("failed to create server thread\n");
 		goto out;
 	}
 
-	WaitForSingleObject(ClientThread, INFINITE);
-	WaitForSingleObject(ServerThread, INFINITE);
+	(void)WaitForSingleObject(ClientThread, INFINITE);
+	(void)WaitForSingleObject(ServerThread, INFINITE);
 
 	ret = 0;
 
@@ -96,9 +97,9 @@ out:
 	if (EchoPipe)
 		MessagePipe_Free(EchoPipe);
 	if (ClientThread)
-		CloseHandle(ClientThread);
+		(void)CloseHandle(ClientThread);
 	if (ServerThread)
-		CloseHandle(ServerThread);
+		(void)CloseHandle(ServerThread);
 
 	return ret;
 }

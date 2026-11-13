@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/crt.h>
 
@@ -29,37 +27,36 @@
  * Virtual Key Codes
  */
 
-struct _VIRTUAL_KEY_CODE
+typedef struct
 {
 	DWORD code;       /* Windows Virtual Key Code */
 	const char* name; /* Virtual Key Code Name */
-};
-typedef struct _VIRTUAL_KEY_CODE VIRTUAL_KEY_CODE;
+} VIRTUAL_KEY_CODE;
 
 static const VIRTUAL_KEY_CODE VIRTUAL_KEY_CODE_TABLE[256] = {
-	{ 0, NULL },
+	{ 0, nullptr },
 	{ VK_LBUTTON, "VK_LBUTTON" },
 	{ VK_RBUTTON, "VK_RBUTTON" },
 	{ VK_CANCEL, "VK_CANCEL" },
 	{ VK_MBUTTON, "VK_MBUTTON" },
 	{ VK_XBUTTON1, "VK_XBUTTON1" },
 	{ VK_XBUTTON2, "VK_XBUTTON2" },
-	{ 0, NULL },
+	{ 0, nullptr },
 	{ VK_BACK, "VK_BACK" },
 	{ VK_TAB, "VK_TAB" },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_CLEAR, "VK_CLEAR" },
 	{ VK_RETURN, "VK_RETURN" },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_SHIFT, "VK_SHIFT" },
 	{ VK_CONTROL, "VK_CONTROL" },
 	{ VK_MENU, "VK_MENU" },
 	{ VK_PAUSE, "VK_PAUSE" },
 	{ VK_CAPITAL, "VK_CAPITAL" },
 	{ VK_KANA, "VK_KANA" }, /* also VK_HANGUL */
-	{ 0, NULL },
+	{ 0, nullptr },
 	{ VK_JUNJA, "VK_JUNJA" },
 	{ VK_FINAL, "VK_FINAL" },
 	{ VK_KANJI, "VK_KANJI" }, /* also VK_HANJA */
@@ -95,13 +92,13 @@ static const VIRTUAL_KEY_CODE VIRTUAL_KEY_CODE_TABLE[256] = {
 	{ VK_KEY_7, "VK_KEY_7" },
 	{ VK_KEY_8, "VK_KEY_8" },
 	{ VK_KEY_9, "VK_KEY_9" },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_KEY_A, "VK_KEY_A" },
 	{ VK_KEY_B, "VK_KEY_B" },
 	{ VK_KEY_C, "VK_KEY_C" },
@@ -131,7 +128,7 @@ static const VIRTUAL_KEY_CODE VIRTUAL_KEY_CODE_TABLE[256] = {
 	{ VK_LWIN, "VK_LWIN" },
 	{ VK_RWIN, "VK_RWIN" },
 	{ VK_APPS, "VK_APPS" },
-	{ 0, NULL },
+	{ 0, nullptr },
 	{ VK_SLEEP, "VK_SLEEP" },
 	{ VK_NUMPAD0, "VK_NUMPAD0" },
 	{ VK_NUMPAD1, "VK_NUMPAD1" },
@@ -173,30 +170,30 @@ static const VIRTUAL_KEY_CODE VIRTUAL_KEY_CODE_TABLE[256] = {
 	{ VK_F22, "VK_F22" },
 	{ VK_F23, "VK_F23" },
 	{ VK_F24, "VK_F24" },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_NUMLOCK, "VK_NUMLOCK" },
 	{ VK_SCROLL, "VK_SCROLL" },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_LSHIFT, "VK_LSHIFT" },
 	{ VK_RSHIFT, "VK_RSHIFT" },
 	{ VK_LCONTROL, "VK_LCONTROL" },
@@ -221,8 +218,8 @@ static const VIRTUAL_KEY_CODE VIRTUAL_KEY_CODE_TABLE[256] = {
 	{ VK_MEDIA_SELECT, "VK_MEDIA_SELECT" },
 	{ VK_LAUNCH_APP1, "VK_LAUNCH_APP1" },
 	{ VK_LAUNCH_APP2, "VK_LAUNCH_APP2" },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_OEM_1, "VK_OEM_1" },
 	{ VK_OEM_PLUS, "VK_OEM_PLUS" },
 	{ VK_OEM_COMMA, "VK_OEM_COMMA" },
@@ -232,57 +229,57 @@ static const VIRTUAL_KEY_CODE VIRTUAL_KEY_CODE_TABLE[256] = {
 	{ VK_OEM_3, "VK_OEM_3" },
 	{ VK_ABNT_C1, "VK_ABNT_C1" },
 	{ VK_ABNT_C2, "VK_ABNT_C2" },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_OEM_4, "VK_OEM_4" },
 	{ VK_OEM_5, "VK_OEM_5" },
 	{ VK_OEM_6, "VK_OEM_6" },
 	{ VK_OEM_7, "VK_OEM_7" },
 	{ VK_OEM_8, "VK_OEM_8" },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_OEM_102, "VK_OEM_102" },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_PROCESSKEY, "VK_PROCESSKEY" },
-	{ 0, NULL },
+	{ 0, nullptr },
 	{ VK_PACKET, "VK_PACKET" },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
-	{ 0, NULL },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
+	{ 0, nullptr },
 	{ VK_ATTN, "VK_ATTN" },
 	{ VK_CRSEL, "VK_CRSEL" },
 	{ VK_EXSEL, "VK_EXSEL" },
@@ -292,17 +289,16 @@ static const VIRTUAL_KEY_CODE VIRTUAL_KEY_CODE_TABLE[256] = {
 	{ VK_NONAME, "VK_NONAME" },
 	{ VK_PA1, "VK_PA1" },
 	{ VK_OEM_CLEAR, "VK_OEM_CLEAR" },
-	{ 0, NULL }
+	{ 0, nullptr }
 };
 
-struct _XKB_KEYNAME
+typedef struct
 {
 	const char* name;
 	DWORD vkcode;
-};
-typedef struct _XKB_KEYNAME XKB_KEYNAME;
+} XKB_KEYNAME;
 
-XKB_KEYNAME XKB_KEYNAME_TABLE[] = {
+static XKB_KEYNAME XKB_KEYNAME_TABLE[] = {
 	{ "BKSP", VK_BACK },
 	{ "TAB", VK_TAB },
 	{ "RTRN", VK_RETURN },
@@ -419,14 +415,19 @@ XKB_KEYNAME XKB_KEYNAME_TABLE[] = {
 
 	//	{ "AE13",	VK_BACKSLASH_JP }, // JP
 	//	{ "LVL3",	0x54}
+
+	/* Korean */
+
+	{ "HNGL", VK_HANGUL },
+	{ "HJCV", VK_HANJA },
 };
 
-char* GetVirtualKeyName(DWORD vkcode)
+const char* GetVirtualKeyName(DWORD vkcode)
 {
-	char* vkname = NULL;
+	const char* vkname = nullptr;
 
 	if (vkcode < ARRAYSIZE(VIRTUAL_KEY_CODE_TABLE))
-		vkname = (char*)VIRTUAL_KEY_CODE_TABLE[vkcode].name;
+		vkname = VIRTUAL_KEY_CODE_TABLE[vkcode].name;
 
 	if (!vkname)
 		vkname = "VK_NONE";
@@ -436,9 +437,7 @@ char* GetVirtualKeyName(DWORD vkcode)
 
 DWORD GetVirtualKeyCodeFromName(const char* vkname)
 {
-	unsigned long i;
-
-	for (i = 0; i < ARRAYSIZE(VIRTUAL_KEY_CODE_TABLE); i++)
+	for (size_t i = 0; i < ARRAYSIZE(VIRTUAL_KEY_CODE_TABLE); i++)
 	{
 		if (VIRTUAL_KEY_CODE_TABLE[i].name)
 		{
@@ -452,9 +451,7 @@ DWORD GetVirtualKeyCodeFromName(const char* vkname)
 
 DWORD GetVirtualKeyCodeFromXkbKeyName(const char* xkbname)
 {
-	unsigned long i;
-
-	for (i = 0; i < ARRAYSIZE(XKB_KEYNAME_TABLE); i++)
+	for (size_t i = 0; i < ARRAYSIZE(XKB_KEYNAME_TABLE); i++)
 	{
 		if (XKB_KEYNAME_TABLE[i].name)
 		{

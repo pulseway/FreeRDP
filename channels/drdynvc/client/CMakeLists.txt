@@ -17,11 +17,10 @@
 
 define_channel_client("drdynvc")
 
-set(${MODULE_PREFIX}_SRCS
-	drdynvc_main.c
-	drdynvc_main.h)
+set(${MODULE_PREFIX}_SRCS drdynvc_main.c drdynvc_main.h)
 
 add_channel_client_library(${MODULE_PREFIX} ${MODULE_NAME} ${CHANNEL_NAME} FALSE "VirtualChannelEntryEx")
 
-set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "Channels/${CHANNEL_NAME}/Client")
-
+if(BUILD_FUZZERS OR BUILD_TESTING_INTERNAL)
+  add_subdirectory(test)
+endif()

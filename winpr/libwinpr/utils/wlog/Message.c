@@ -17,13 +17,12 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/path.h>
 #include <winpr/file.h>
+#include <winpr/string.h>
 
 #include "wlog.h"
 
@@ -31,36 +30,29 @@
 
 char* WLog_Message_GetOutputFileName(int id, const char* ext)
 {
-	DWORD ProcessId;
-	char* FilePath;
-	char* FileName;
-	char* FullFileName;
+	char* FilePath = GetKnownSubPath(KNOWN_PATH_TEMP, "wlog");
+	if (!FilePath)
+		return nullptr;
 
-	if (!(FileName = (char*)malloc(256)))
-		return NULL;
-
-	FilePath = GetKnownSubPath(KNOWN_PATH_TEMP, "wlog");
-
-	if (!PathFileExistsA(FilePath))
+	char* FileName = nullptr;
+	size_t FileNameLen = 0;
+	char* FullFileName = nullptr;
+	if (!winpr_PathFileExists(FilePath))
 	{
-		if (!PathMakePathA(FilePath, NULL))
-		{
-			free(FileName);
-			free(FilePath);
-			return NULL;
-		}
+		if (!winpr_PathMakePath(FilePath, nullptr))
+			goto fail;
 	}
 
-	ProcessId = GetCurrentProcessId();
+	const DWORD ProcessId = GetCurrentProcessId();
 	if (id >= 0)
-		sprintf_s(FileName, 256, "%" PRIu32 "-%d.%s", ProcessId, id, ext);
+		winpr_asprintf(&FileName, &FileNameLen, "%" PRIu32 "-%d.%s", ProcessId, id, ext);
 	else
-		sprintf_s(FileName, 256, "%" PRIu32 ".%s", ProcessId, ext);
+		winpr_asprintf(&FileName, &FileNameLen, "%" PRIu32 ".%s", ProcessId, ext);
 
 	FullFileName = GetCombinedPath(FilePath, FileName);
 
-	free(FileName);
+fail:
 	free(FilePath);
-
+	free(FileName);
 	return FullFileName;
 }

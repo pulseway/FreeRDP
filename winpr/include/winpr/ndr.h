@@ -1,8 +1,8 @@
 /**
  * WinPR: Windows Portable Runtime
- * Network Data Representation (NDR)
+ * NDR (Network Data Representation) encoding and decoding
  *
- * Copyright 2012 Marc-Andre Moreau <marcandre.moreau@gmail.com>
+ * Copyright 2024 David Fort <contact@hardening-consulting.com>
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,525 +17,1047 @@
  * limitations under the License.
  */
 
-#ifndef WINPR_RPC_NDR_H
-#define WINPR_RPC_NDR_H
+#ifndef WINPR_NDR_H_
+#define WINPR_NDR_H_
 
-#include <winpr/rpc.h>
-#include <winpr/wtypes.h>
+#include <winpr/stream.h>
 
-#ifndef _WIN32
+/** @file
+ * @brief NDR encoder and decoder ([C706] chapter 14, [MS-RPCE] 2.2.5 and 2.2.6)
+ *
+ * Messages are described with descriptors (WinPrNdrMessageDescr, WinPrNdrStructDescr,
+ * WinPrNdrUnionDescr), and read, written, dumped and destroyed from these descriptors.
+ *
+ * The encoder (WinPrNdrEncoder) and the decoder (WinPrNdrDecoder) keep the alignment offset of
+ * the current object and the pending deferred pointers: the referents of the embedded pointers
+ * are written after the construct that contains them, so writing or reading a message is
+ * followed by a call to winpr_ndr_encoder_treat_deferreds() or
+ * winpr_ndr_decoder_treat_deferreds().
+ *
+ * All the pointers returned by the decoder are reference counted referents allocated with
+ * winpr_ndr_pointer_new(), they must not be passed to free() but released with
+ * winpr_ndr_pointer_release() (winpr_ndr_struct_destroy() releases the pointers of a
+ * structure).
+ *
+ * @since version 3.33.0
+ */
 
-#define __RPC_WIN32__ 1
-#define TARGET_IS_NT50_OR_LATER 1
+/** @brief the referent id of a null pointer
+ *  @since version 3.33.0
+ */
+#define WINPR_NDR_PTR_NULL (0UL)
 
-typedef union _CLIENT_CALL_RETURN {
-	void* Pointer;
-	LONG_PTR Simple;
-} CLIENT_CALL_RETURN;
+/** @brief declares the functions and the message descriptor of a simple type
+ *
+ * For a type named LOWER (stored in a UPPER) this declares:
+ * - PREFIX##_decoder_read_##LOWER() and PREFIX##_encoder_write_##LOWER(), that read and write a
+ *   value aligned on its size;
+ * - PREFIX##_decoder_read_##LOWER##_() and PREFIX##_encoder_write_##LOWER##_(), the same with
+ *   the WINPR_NDR_READER_FN / WINPR_NDR_WRITER_FN prototypes;
+ * - PREFIX##_##LOWER##_descr_s and PREFIX##_##LOWER##_descr(), the message descriptor of the
+ *   type.
+ *
+ * @since version 3.33.0
+ */
+#define WINPR_NDR_SIMPLE_TYPE_DECL(PREFIX, LOWER, UPPER)                                          \
+	WINPR_ATTR_NODISCARD                                                                          \
+	WINPR_API BOOL PREFIX##_decoder_read_##LOWER(WinPrNdrDecoder* context, wStream* s, UPPER* v); \
+	WINPR_ATTR_NODISCARD                                                                          \
+	WINPR_API BOOL PREFIX##_decoder_read_##LOWER##_(WinPrNdrDecoder* context, wStream* s,         \
+	                                                const void* hints, void* v);                  \
+	WINPR_ATTR_NODISCARD                                                                          \
+	WINPR_API BOOL PREFIX##_encoder_write_##LOWER(WinPrNdrEncoder* context, wStream* s, UPPER v); \
+	WINPR_ATTR_NODISCARD                                                                          \
+	WINPR_API BOOL PREFIX##_encoder_write_##LOWER##_(WinPrNdrEncoder* context, wStream* s,        \
+	                                                 const void* hints, const void* v);           \
+	WINPR_API extern const WinPrNdrMessageDescr PREFIX##_##LOWER##_descr_s;                       \
+	WINPR_ATTR_NODISCARD                                                                          \
+	WINPR_API WinPrNdrMessageType PREFIX##_##LOWER##_descr(void)
 
-typedef struct _RPC_VERSION
-{
-	unsigned short MajorVersion;
-	unsigned short MinorVersion;
-} RPC_VERSION;
+/** @brief declares the functions and the message descriptors of the arrays of a simple type
+ *
+ * For the items of type TYPE (stored in a UPPERTYPE) this declares:
+ * - the conformant array: PREFIX##_decoder_read_##TYPE##Array(),
+ *   PREFIX##_encoder_write_##TYPE##Array(), PREFIX##_destroy_##TYPE##Array() and the message
+ *   descriptor PREFIX##_##TYPE##Array_descr_s / PREFIX##_##TYPE##Array_descr(), its hints are a
+ *   WinPrNdrArrayHints;
+ * - the conformant varying array: PREFIX##_decoder_read_##TYPE##VaryingArray(),
+ *   PREFIX##_encoder_write_##TYPE##VaryingArray() and the message descriptor
+ *   PREFIX##_##TYPE##VaryingArray_descr_s / PREFIX##_##TYPE##VaryingArray_descr(), its hints
+ *   are a WinPrNdrVaryingArrayHints.
+ *
+ * @since version 3.33.0
+ */
+#define WINPR_NDR_ARRAY_OF_TYPE_DECL(PREFIX, TYPE, UPPERTYPE)                                 \
+	WINPR_ATTR_NODISCARD                                                                      \
+	WINPR_API BOOL PREFIX##_decoder_read_##TYPE##Array(WinPrNdrDecoder* context, wStream* s,  \
+	                                                   const void* hints, void* v);           \
+	WINPR_ATTR_NODISCARD                                                                      \
+	WINPR_API BOOL PREFIX##_encoder_write_##TYPE##Array(WinPrNdrEncoder* context, wStream* s, \
+	                                                    const void* hints, const void* v);    \
+	WINPR_API void PREFIX##_destroy_##TYPE##Array(const void* hints, void* obj);              \
+	WINPR_API extern const WinPrNdrMessageDescr PREFIX##_##TYPE##Array_descr_s;               \
+	WINPR_ATTR_NODISCARD                                                                      \
+	WINPR_API WinPrNdrMessageType PREFIX##_##TYPE##Array_descr(void);                         \
+                                                                                              \
+	WINPR_ATTR_NODISCARD                                                                      \
+	WINPR_API BOOL PREFIX##_decoder_read_##TYPE##VaryingArray(                                \
+	    WinPrNdrDecoder* context, wStream* s, const void* hints, void* v);                    \
+	WINPR_ATTR_NODISCARD                                                                      \
+	WINPR_API BOOL PREFIX##_encoder_write_##TYPE##VaryingArray(                               \
+	    WinPrNdrEncoder* context, wStream* s, const void* hints, const void* v);              \
+	WINPR_API extern const WinPrNdrMessageDescr PREFIX##_##TYPE##VaryingArray_descr_s;        \
+	WINPR_ATTR_NODISCARD                                                                      \
+	WINPR_API WinPrNdrMessageType PREFIX##_##TYPE##VaryingArray_descr(void)
 
-typedef struct _RPC_SYNTAX_IDENTIFIER
-{
-	GUID SyntaxGUID;
-	RPC_VERSION SyntaxVersion;
-} RPC_SYNTAX_IDENTIFIER, PRPC_SYNTAX_IDENTIFIER;
+/** @brief defines a static message type for a structure
+ *
+ * Defines PREFIX##_descr_s for the CTYPE structure described by the WinPrNdrStructDescr
+ * PREFIX##_struct.
+ *
+ * @since version 3.33.0
+ */
+#define WINPR_NDR_STRUCT_MESSAGE_DEFINE(PREFIX, CTYPE)                                             \
+	static BOOL PREFIX##_read(WinPrNdrDecoder* context, wStream* s, const void* hints, void* obj)  \
+	{                                                                                              \
+		WINPR_UNUSED(hints);                                                                       \
+		return winpr_ndr_decoder_read_fromDescr(context, s, &PREFIX##_struct, obj);                \
+	}                                                                                              \
+	static BOOL PREFIX##_write(WinPrNdrEncoder* context, wStream* s, const void* hints,            \
+	                           const void* obj)                                                    \
+	{                                                                                              \
+		WINPR_UNUSED(hints);                                                                       \
+		return winpr_ndr_encoder_write_fromDescr(context, s, &PREFIX##_struct, obj);               \
+	}                                                                                              \
+	static void PREFIX##_destroy(const void* hints, void* obj)                                     \
+	{                                                                                              \
+		WINPR_UNUSED(hints);                                                                       \
+		winpr_ndr_struct_destroy(&PREFIX##_struct, obj);                                           \
+	}                                                                                              \
+	static void PREFIX##_dump(wLog* logger, UINT32 lvl, size_t indentLevel, const void* obj)       \
+	{                                                                                              \
+		winpr_ndr_struct_dump_fromDescr(logger, lvl, indentLevel, &PREFIX##_struct, obj);          \
+	}                                                                                              \
+	static const WinPrNdrMessageDescr PREFIX##_descr_s = { WINPR_NDR_ARITY_SIMPLE, sizeof(CTYPE),  \
+		                                                   PREFIX##_read,          PREFIX##_write, \
+		                                                   PREFIX##_destroy,       PREFIX##_dump }
 
-#define RPC_MGR_EPV void
+/** @brief defines a static message type for a conformant array of ITEMPREFIX##_descr_s items
+ *
+ * Defines PREFIX##_descr_s, the hints of the array field are a WinPrNdrArrayHints.
+ *
+ * @since version 3.33.0
+ */
+#define WINPR_NDR_ARRAY_MESSAGE_DEFINE(PREFIX, ITEMPREFIX, CTYPE)                                 \
+	static BOOL PREFIX##_read(WinPrNdrDecoder* context, wStream* s, const void* hints, void* obj) \
+	{                                                                                             \
+		return winpr_ndr_decoder_read_uconformant_array(context, s, hints, &ITEMPREFIX##_descr_s, \
+		                                                obj);                                     \
+	}                                                                                             \
+	static BOOL PREFIX##_write(WinPrNdrEncoder* context, wStream* s, const void* hints,           \
+	                           const void* obj)                                                   \
+	{                                                                                             \
+		WINPR_ASSERT(hints);                                                                      \
+		const WinPrNdrArrayHints* ahints = hints;                                                 \
+		return winpr_ndr_encoder_write_uconformant_array(context, s, ahints->count,               \
+		                                                 &ITEMPREFIX##_descr_s, obj);             \
+	}                                                                                             \
+	static void PREFIX##_destroy(const void* hints, void* obj)                                    \
+	{                                                                                             \
+		WINPR_ASSERT(hints);                                                                      \
+		const WinPrNdrArrayHints* ahints = hints;                                                 \
+		CTYPE* items = obj;                                                                       \
+		for (UINT32 i = 0; i < ahints->count; i++)                                                \
+			ITEMPREFIX##_destroy(nullptr, &items[i]);                                             \
+	}                                                                                             \
+	static const WinPrNdrMessageDescr PREFIX##_descr_s = {                                        \
+		WINPR_NDR_ARITY_ARRAYOF, sizeof(CTYPE),    PREFIX##_read,                                 \
+		PREFIX##_write,          PREFIX##_destroy, nullptr                                        \
+	}
 
-typedef struct _RPC_MESSAGE
-{
-	RPC_BINDING_HANDLE Handle;
-	ULONG DataRepresentation;
-	void* Buffer;
-	unsigned int BufferLength;
-	unsigned int ProcNum;
-	PRPC_SYNTAX_IDENTIFIER TransferSyntax;
-	void* RpcInterfaceInformation;
-	void* ReservedForRuntime;
-	RPC_MGR_EPV* ManagerEpv;
-	void* ImportContext;
-	ULONG RpcFlags;
-} RPC_MESSAGE, *PRPC_MESSAGE;
-
-typedef void (*RPC_DISPATCH_FUNCTION)(PRPC_MESSAGE Message);
-
-typedef struct
-{
-	unsigned int DispatchTableCount;
-	RPC_DISPATCH_FUNCTION* DispatchTable;
-	LONG_PTR Reserved;
-} RPC_DISPATCH_TABLE, *PRPC_DISPATCH_TABLE;
-
-typedef struct _RPC_PROTSEQ_ENDPOINT
-{
-	unsigned char* RpcProtocolSequence;
-	unsigned char* Endpoint;
-} RPC_PROTSEQ_ENDPOINT, *PRPC_PROTSEQ_ENDPOINT;
-
-typedef struct _RPC_SERVER_INTERFACE
-{
-	unsigned int Length;
-	RPC_SYNTAX_IDENTIFIER InterfaceId;
-	RPC_SYNTAX_IDENTIFIER TransferSyntax;
-	PRPC_DISPATCH_TABLE DispatchTable;
-	unsigned int RpcProtseqEndpointCount;
-	PRPC_PROTSEQ_ENDPOINT RpcProtseqEndpoint;
-	RPC_MGR_EPV* DefaultManagerEpv;
-	void const* InterpreterInfo;
-	unsigned int Flags;
-} RPC_SERVER_INTERFACE, *PRPC_SERVER_INTERFACE;
-
-typedef struct _RPC_CLIENT_INTERFACE
-{
-	unsigned int Length;
-	RPC_SYNTAX_IDENTIFIER InterfaceId;
-	RPC_SYNTAX_IDENTIFIER TransferSyntax;
-	PRPC_DISPATCH_TABLE DispatchTable;
-	unsigned int RpcProtseqEndpointCount;
-	PRPC_PROTSEQ_ENDPOINT RpcProtseqEndpoint;
-	ULONG_PTR Reserved;
-	void const* InterpreterInfo;
-	unsigned int Flags;
-} RPC_CLIENT_INTERFACE, *PRPC_CLIENT_INTERFACE;
-
-typedef void* (*GENERIC_BINDING_ROUTINE)(void*);
-typedef void (*GENERIC_UNBIND_ROUTINE)(void*, unsigned char*);
-
-typedef struct _GENERIC_BINDING_ROUTINE_PAIR
-{
-	GENERIC_BINDING_ROUTINE pfnBind;
-	GENERIC_UNBIND_ROUTINE pfnUnbind;
-} GENERIC_BINDING_ROUTINE_PAIR, *PGENERIC_BINDING_ROUTINE_PAIR;
-
-typedef struct __GENERIC_BINDING_INFO
-{
-	void* pObj;
-	unsigned int Size;
-	GENERIC_BINDING_ROUTINE pfnBind;
-	GENERIC_UNBIND_ROUTINE pfnUnbind;
-} GENERIC_BINDING_INFO, *PGENERIC_BINDING_INFO;
-
-typedef void (*NDR_RUNDOWN)(void* context);
-typedef void (*NDR_NOTIFY_ROUTINE)(void);
-
-typedef const unsigned char* PFORMAT_STRING;
-
-typedef struct _MIDL_STUB_DESC MIDL_STUB_DESC;
-typedef MIDL_STUB_DESC* PMIDL_STUB_DESC;
-
-typedef struct _MIDL_STUB_MESSAGE
-{
-	PRPC_MESSAGE RpcMsg;
-	unsigned char* Buffer;
-	unsigned char* BufferStart;
-	unsigned char* BufferEnd;
-	unsigned char* BufferMark;
-	ULONG BufferLength;
-	ULONG MemorySize;
-	unsigned char* Memory;
-	int IsClient;
-	int ReuseBuffer;
-	struct NDR_ALLOC_ALL_NODES_CONTEXT* pAllocAllNodesContext;
-	struct NDR_POINTER_QUEUE_STATE* pPointerQueueState;
-	int IgnoreEmbeddedPointers;
-	unsigned char* PointerBufferMark;
-	unsigned char fBufferValid;
-	unsigned char uFlags;
-	unsigned short Unused2;
-	ULONG_PTR MaxCount;
-	ULONG Offset;
-	ULONG ActualCount;
-	void* (*pfnAllocate)(size_t);
-	void (*pfnFree)(void*);
-	unsigned char* StackTop;
-	unsigned char* pPresentedType;
-	unsigned char* pTransmitType;
-	handle_t SavedHandle;
-	const struct _MIDL_STUB_DESC* StubDesc;
-	struct _FULL_PTR_XLAT_TABLES* FullPtrXlatTables;
-	ULONG FullPtrRefId;
-	ULONG PointerLength;
-	int fInDontFree : 1;
-	int fDontCallFreeInst : 1;
-	int fInOnlyParam : 1;
-	int fHasReturn : 1;
-	int fHasExtensions : 1;
-	int fHasNewCorrDesc : 1;
-	int fUnused : 10;
-	int fUnused2 : 16;
-	ULONG dwDestContext;
-	void* pvDestContext;
-	// NDR_SCONTEXT* SavedContextHandles;
-	long ParamNumber;
-	struct IRpcChannelBuffer* pRpcChannelBuffer;
-	// PARRAY_INFO pArrayInfo;
-	ULONG* SizePtrCountArray;
-	ULONG* SizePtrOffsetArray;
-	ULONG* SizePtrLengthArray;
-	void* pArgQueue;
-	ULONG dwStubPhase;
-	void* LowStackMark;
-	// PNDR_ASYNC_MESSAGE pAsyncMsg;
-	// PNDR_CORRELATION_INFO pCorrInfo;
-	unsigned char* pCorrMemory;
-	void* pMemoryList;
-	// CS_STUB_INFO* pCSInfo;
-	unsigned char* ConformanceMark;
-	unsigned char* VarianceMark;
-	void* BackingStoreLowMark;
-	INT_PTR Unused;
-	struct _NDR_PROC_CONTEXT* pContext;
-	INT_PTR Reserved51_1;
-	INT_PTR Reserved51_2;
-	INT_PTR Reserved51_3;
-	INT_PTR Reserved51_4;
-	INT_PTR Reserved51_5;
-} MIDL_STUB_MESSAGE, *PMIDL_STUB_MESSAGE;
-
-typedef void (*EXPR_EVAL)(struct _MIDL_STUB_MESSAGE*);
-
-typedef void (*XMIT_HELPER_ROUTINE)(PMIDL_STUB_MESSAGE);
-
-typedef struct _XMIT_ROUTINE_QUINTUPLE
-{
-	XMIT_HELPER_ROUTINE pfnTranslateToXmit;
-	XMIT_HELPER_ROUTINE pfnTranslateFromXmit;
-	XMIT_HELPER_ROUTINE pfnFreeXmit;
-	XMIT_HELPER_ROUTINE pfnFreeInst;
-} XMIT_ROUTINE_QUINTUPLE, *PXMIT_ROUTINE_QUINTUPLE;
-
-typedef ULONG (*USER_MARSHAL_SIZING_ROUTINE)(ULONG*, ULONG, void*);
-typedef unsigned char* (*USER_MARSHAL_MARSHALLING_ROUTINE)(ULONG*, unsigned char*, void*);
-typedef unsigned char* (*USER_MARSHAL_UNMARSHALLING_ROUTINE)(ULONG*, unsigned char*, void*);
-typedef void (*USER_MARSHAL_FREEING_ROUTINE)(ULONG*, void*);
-
-typedef struct _USER_MARSHAL_ROUTINE_QUADRUPLE
-{
-	USER_MARSHAL_SIZING_ROUTINE pfnBufferSize;
-	USER_MARSHAL_MARSHALLING_ROUTINE pfnMarshall;
-	USER_MARSHAL_UNMARSHALLING_ROUTINE pfnUnmarshall;
-	USER_MARSHAL_FREEING_ROUTINE pfnFree;
-} USER_MARSHAL_ROUTINE_QUADRUPLE;
-
-typedef struct _MALLOC_FREE_STRUCT
-{
-	void* (*pfnAllocate)(size_t);
-	void (*pfnFree)(void*);
-} MALLOC_FREE_STRUCT;
-
-typedef struct _COMM_FAULT_OFFSETS
-{
-	short CommOffset;
-	short FaultOffset;
-} COMM_FAULT_OFFSETS;
-
-typedef void* NDR_CS_ROUTINES;
-typedef void* NDR_EXPR_DESC;
-
-struct _MIDL_STUB_DESC
-{
-	void* RpcInterfaceInformation;
-	void* (*pfnAllocate)(size_t);
-	void (*pfnFree)(void*);
-
-	union {
-		handle_t* pAutoHandle;
-		handle_t* pPrimitiveHandle;
-		PGENERIC_BINDING_INFO pGenericBindingInfo;
-	} IMPLICIT_HANDLE_INFO;
-
-	const NDR_RUNDOWN* apfnNdrRundownRoutines;
-	const GENERIC_BINDING_ROUTINE_PAIR* aGenericBindingRoutinePairs;
-	const EXPR_EVAL* apfnExprEval;
-	const XMIT_ROUTINE_QUINTUPLE* aXmitQuintuple;
-	const unsigned char* pFormatTypes;
-
-	int fCheckBounds;
-	ULONG Version;
-	MALLOC_FREE_STRUCT* pMallocFreeStruct;
-
-	long MIDLVersion;
-	const COMM_FAULT_OFFSETS* CommFaultOffsets;
-	const USER_MARSHAL_ROUTINE_QUADRUPLE* aUserMarshalQuadruple;
-
-	const NDR_NOTIFY_ROUTINE* NotifyRoutineTable;
-	ULONG_PTR mFlags;
-	const NDR_CS_ROUTINES* CsRoutineTables;
-	void* ProxyServerInfo;
-	const NDR_EXPR_DESC* pExprInfo;
-};
-
-typedef struct
-{
-	unsigned char FullPtrUsed : 1;
-	unsigned char RpcSsAllocUsed : 1;
-	unsigned char ObjectProc : 1;
-	unsigned char HasRpcFlags : 1;
-	unsigned char IgnoreObjectException : 1;
-	unsigned char HasCommOrFault : 1;
-	unsigned char UseNewInitRoutines : 1;
-	unsigned char Unused : 1;
-} INTERPRETER_FLAGS, *PINTERPRETER_FLAGS;
-
-typedef struct
-{
-	unsigned short MustSize : 1;
-	unsigned short MustFree : 1;
-	unsigned short IsPipe : 1;
-	unsigned short IsIn : 1;
-	unsigned short IsOut : 1;
-	unsigned short IsReturn : 1;
-	unsigned short IsBasetype : 1;
-	unsigned short IsByValue : 1;
-	unsigned short IsSimpleRef : 1;
-	unsigned short IsDontCallFreeInst : 1;
-	unsigned short SaveForAsyncFinish : 1;
-	unsigned short Unused : 2;
-	unsigned short ServerAllocSize : 3;
-} PARAM_ATTRIBUTES, *PPARAM_ATTRIBUTES;
-
-typedef struct
-{
-	unsigned char ServerMustSize : 1;
-	unsigned char ClientMustSize : 1;
-	unsigned char HasReturn : 1;
-	unsigned char HasPipes : 1;
-	unsigned char Unused : 1;
-	unsigned char HasAsyncUuid : 1;
-	unsigned char HasExtensions : 1;
-	unsigned char HasAsyncHandle : 1;
-} INTERPRETER_OPT_FLAGS, *PINTERPRETER_OPT_FLAGS;
-
-typedef struct
-{
-	unsigned char HasNewCorrDesc : 1;
-	unsigned char ClientCorrCheck : 1;
-	unsigned char ServerCorrCheck : 1;
-	unsigned char HasNotify : 1;
-	unsigned char HasNotify2 : 1;
-	unsigned char Unused : 3;
-} INTERPRETER_OPT_FLAGS2, *PINTERPRETER_OPT_FLAGS2;
-
-typedef struct _NDR_CORRELATION_FLAGS
-{
-	unsigned char Early : 1;
-	unsigned char Split : 1;
-	unsigned char IsIidIs : 1;
-	unsigned char DontCheck : 1;
-	unsigned char Unused : 4;
-} NDR_CORRELATION_FLAGS;
-
-#define FC_ALLOCATE_ALL_NODES 0x01
-#define FC_DONT_FREE 0x02
-#define FC_ALLOCED_ON_STACK 0x03
-#define FC_SIMPLE_POINTER 0x04
-#define FC_POINTER_DEREF 0x05
-
-#define HANDLE_PARAM_IS_VIA_PTR 0x80
-#define HANDLE_PARAM_IS_IN 0x40
-#define HANDLE_PARAM_IS_OUT 0x20
-#define HANDLE_PARAM_IS_RETURN 0x21
-#define NDR_STRICT_CONTEXT_HANDLE 0x08
-#define NDR_CONTEXT_HANDLE_NO_SERIALIZE 0x04
-#define NDR_CONTEXT_HANDLE_SERIALIZE 0x02
-#define NDR_CONTEXT_HANDLE_CANNOT_BE_NULL 0x01
-
-typedef struct
-{
-	PARAM_ATTRIBUTES Attributes;
-	unsigned short StackOffset;
-
-	union {
-		unsigned char FormatChar;
-		unsigned short Offset;
-	} Type;
-
-} NDR_PARAM;
-
-typedef struct
-{
-	unsigned char Size;
-	INTERPRETER_OPT_FLAGS2 Flags2;
-	unsigned short ClientCorrHint;
-	unsigned short ServerCorrHint;
-	unsigned short NotifyIndex;
-} NDR_PROC_HEADER_EXTS;
-
-typedef struct _NDR_PROC_HEADER
-{
-	unsigned char HandleType;
-	INTERPRETER_FLAGS OldOiFlags;
-	unsigned short RpcFlagsLow;
-	unsigned short RpcFlagsHi;
-	unsigned short ProcNum;
-	unsigned short StackSize;
-} NDR_PROC_HEADER, *PNDR_PROC_HEADER;
-
-typedef struct _NDR_OI2_PROC_HEADER
-{
-	unsigned short ClientBufferSize;
-	unsigned short ServerBufferSize;
-	INTERPRETER_OPT_FLAGS Oi2Flags;
-	unsigned char NumberParams;
-} NDR_OI2_PROC_HEADER, *PNDR_OI2_PROC_HEADER;
-
-typedef enum _NDR_PHASE
-{
-	NDR_PHASE_SIZE,
-	NDR_PHASE_MARSHALL,
-	NDR_PHASE_UNMARSHALL,
-	NDR_PHASE_FREE
-} NDR_PHASE;
-
-#define FC_NORMAL_CONFORMANCE 0x00
-#define FC_POINTER_CONFORMANCE 0x10
-#define FC_TOP_LEVEL_CONFORMANCE 0x20
-#define FC_CONSTANT_CONFORMANCE 0x40
-#define FC_TOP_LEVEL_MULTID_CONFORMANCE 0x80
-
-/* Type Format Strings: http://msdn.microsoft.com/en-us/library/windows/desktop/aa379093/ */
-
-#define FC_ZERO 0x00
-#define FC_BYTE 0x01
-#define FC_CHAR 0x02
-#define FC_SMALL 0x03
-#define FC_USMALL 0x04
-#define FC_WCHAR 0x05
-#define FC_SHORT 0x06
-#define FC_USHORT 0x07
-#define FC_LONG 0x08
-#define FC_ULONG 0x09
-#define FC_FLOAT 0x0A
-#define FC_HYPER 0x0B
-#define FC_DOUBLE 0x0C
-#define FC_ENUM16 0x0D
-#define FC_ENUM32 0x0E
-#define FC_IGNORE 0x0F
-#define FC_ERROR_STATUS_T 0x10
-#define FC_RP 0x11
-#define FC_UP 0x12
-#define FC_OP 0x13
-#define FC_FP 0x14
-#define FC_STRUCT 0x15
-#define FC_PSTRUCT 0x16
-#define FC_CSTRUCT 0x17
-#define FC_CPSTRUCT 0x18
-#define FC_CVSTRUCT 0x19
-#define FC_BOGUS_STRUCT 0x1A
-#define FC_CARRAY 0x1B
-#define FC_CVARRAY 0x1C
-#define FC_SMFARRAY 0x1D
-#define FC_LGFARRAY 0x1E
-#define FC_SMVARRAY 0x1F
-#define FC_LGVARRAY 0x20
-#define FC_BOGUS_ARRAY 0x21
-#define FC_C_CSTRING 0x22
-#define FC_C_BSTRING 0x23
-#define FC_C_SSTRING 0x24
-#define FC_C_WSTRING 0x25
-#define FC_CSTRING 0x26
-#define FC_BSTRING 0x27
-#define FC_SSTRING 0x28
-#define FC_WSTRING 0x29
-#define FC_ENCAPSULATED_UNION 0x2A
-#define FC_NON_ENCAPSULATED_UNION 0x2B
-#define FC_BYTE_COUNT_POINTER 0x2C
-#define FC_TRANSMIT_AS 0x2D
-#define FC_REPRESENT_AS 0x2E
-#define FC_IP 0x2F
-#define FC_BIND_CONTEXT 0x30
-#define FC_BIND_GENERIC 0x31
-#define FC_BIND_PRIMITIVE 0x32
-#define FC_AUTO_HANDLE 0x33
-#define FC_CALLBACK_HANDLE 0x34
-#define FC_UNUSED1 0x35
-#define FC_POINTER 0x36
-#define FC_ALIGNM2 0x37
-#define FC_ALIGNM4 0x38
-#define FC_ALIGNM8 0x39
-#define FC_UNUSED2 0x3A
-#define FC_UNUSED3 0x3B
-#define FC_UNUSED4 0x3C
-#define FC_STRUCTPAD1 0x3D
-#define FC_STRUCTPAD2 0x3E
-#define FC_STRUCTPAD3 0x3F
-#define FC_STRUCTPAD4 0x40
-#define FC_STRUCTPAD5 0x41
-#define FC_STRUCTPAD6 0x42
-#define FC_STRUCTPAD7 0x43
-#define FC_STRING_SIZED 0x44
-#define FC_UNUSED5 0x45
-#define FC_NO_REPEAT 0x46
-#define FC_FIXED_REPEAT 0x47
-#define FC_VARIABLE_REPEAT 0x48
-#define FC_FIXED_OFFSET 0x49
-#define FC_VARIABLE_OFFSET 0x4A
-#define FC_PP 0x4B
-#define FC_EMBEDDED_COMPLEX 0x4C
-#define FC_IN_PARAM 0x4D
-#define FC_IN_PARAM_BASETYPE 0x4E
-#define FC_IN_PARAM_NO_FREE_INST 0x4F
-#define FC_IN_OUT_PARAM 0x50
-#define FC_OUT_PARAM 0x51
-#define FC_RETURN_PARAM 0x52
-#define FC_RETURN_PARAM_BASETYPE 0x53
-#define FC_DEREFERENCE 0x54
-#define FC_DIV_2 0x55
-#define FC_MULT_2 0x56
-#define FC_ADD_1 0x57
-#define FC_SUB_1 0x58
-#define FC_CALLBACK 0x59
-#define FC_CONSTANT_IID 0x5A
-#define FC_END 0x5B
-#define FC_PAD 0x5C
-#define FC_SPLIT_DEREFERENCE 0x74
-#define FC_SPLIT_DIV_2 0x75
-#define FC_SPLIT_MULT_2 0x76
-#define FC_SPLIT_ADD_1 0x77
-#define FC_SPLIT_SUB_1 0x78
-#define FC_SPLIT_CALLBACK 0x79
-#define FC_HARD_STRUCT 0xB1
-#define FC_TRANSMIT_AS_PTR 0xB2
-#define FC_REPRESENT_AS_PTR 0xB3
-#define FC_USER_MARSHAL 0xB4
-#define FC_PIPE 0xB5
-#define FC_BLKHOLE 0xB6
-#define FC_RANGE 0xB7
-#define FC_INT3264 0xB8
-#define FC_UINT3264 0xB9
-#define FC_END_OF_UNIVERSE 0xBA
-
-#define NdrFcShort(s) (byte)(s & 0xFF), (byte)(s >> 8)
-
-#define NdrFcLong(s) \
-	(byte)(s & 0xFF), (byte)((s & 0x0000FF00) >> 8), (byte)((s & 0x00FF0000) >> 16), (byte)(s >> 24)
-
-typedef void (*NDR_TYPE_SIZE_ROUTINE)(PMIDL_STUB_MESSAGE pStubMsg, unsigned char* pMemory,
-                                      PFORMAT_STRING pFormat);
-typedef void (*NDR_TYPE_MARSHALL_ROUTINE)(PMIDL_STUB_MESSAGE pStubMsg, unsigned char* pMemory,
-                                          unsigned char FormatChar);
-typedef void (*NDR_TYPE_UNMARSHALL_ROUTINE)(PMIDL_STUB_MESSAGE pStubMsg, unsigned char* pMemory,
-                                            unsigned char FormatChar);
-typedef void (*NDR_TYPE_FREE_ROUTINE)(PMIDL_STUB_MESSAGE pStubMsg, unsigned char* pMemory,
-                                      PFORMAT_STRING pFormat);
+/** @brief defines a static message type for a non-encapsulated union
+ *
+ * Defines PREFIX##_descr_s for the CTYPE union described by the WinPrNdrUnionDescr
+ * PREFIX##_union. The hints of the union field are the field of its [switch_is()], a UINT16 or a
+ * UINT32 depending on the switchSize of the union.
+ *
+ * @since version 3.33.0
+ */
+#define WINPR_NDR_UNION_MESSAGE_DEFINE(PREFIX, CTYPE)                                              \
+	static BOOL PREFIX##_read(WinPrNdrDecoder* context, wStream* s, const void* hints, void* obj)  \
+	{                                                                                              \
+		WINPR_ASSERT(hints);                                                                       \
+		return winpr_ndr_decoder_read_union(context, s, &PREFIX##_union,                           \
+		                                    winpr_ndr_union_switch_value(&PREFIX##_union, hints),  \
+		                                    obj);                                                  \
+	}                                                                                              \
+	static BOOL PREFIX##_write(WinPrNdrEncoder* context, wStream* s, const void* hints,            \
+	                           const void* obj)                                                    \
+	{                                                                                              \
+		WINPR_ASSERT(hints);                                                                       \
+		return winpr_ndr_encoder_write_union(context, s, &PREFIX##_union,                          \
+		                                     winpr_ndr_union_switch_value(&PREFIX##_union, hints), \
+		                                     obj);                                                 \
+	}                                                                                              \
+	static void PREFIX##_destroy(const void* hints, void* obj)                                     \
+	{                                                                                              \
+		if (hints)                                                                                 \
+			winpr_ndr_union_destroy(&PREFIX##_union,                                               \
+			                        winpr_ndr_union_switch_value(&PREFIX##_union, hints), obj);    \
+	}                                                                                              \
+	static const WinPrNdrMessageDescr PREFIX##_descr_s = { WINPR_NDR_ARITY_SIMPLE, sizeof(CTYPE),  \
+		                                                   PREFIX##_read,          PREFIX##_write, \
+		                                                   PREFIX##_destroy,       nullptr }
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-	WINPR_API CLIENT_CALL_RETURN NdrClientCall2(PMIDL_STUB_DESC pStubDescriptor,
-	                                            PFORMAT_STRING pFormat, ...);
+	/** @brief a NDR decoder
+	 *  @since version 3.33.0
+	 */
+	typedef struct WinPrNdrDecoder_s WinPrNdrDecoder;
+
+	/** @brief a NDR encoder
+	 *  @since version 3.33.0
+	 */
+	typedef struct WinPrNdrEncoder_s WinPrNdrEncoder;
+
+	/** @brief a referent id, the wire value of a pointer (WINPR_NDR_PTR_NULL for a null pointer)
+	 *  @since version 3.33.0
+	 */
+	typedef UINT32 winpr_ndr_refid;
+
+	/** @brief reads a message
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param hints the hints of the message (the size of an array...), can be nullptr
+	 *  @param target where the message is stored
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	typedef BOOL (*WINPR_NDR_READER_FN)(WinPrNdrDecoder* context, wStream* s, const void* hints,
+	                                    void* target);
+
+	/** @brief writes a message
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @param hints the hints of the message (the size of an array...), can be nullptr
+	 *  @param obj the message to write
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	typedef BOOL (*WINPR_NDR_WRITER_FN)(WinPrNdrEncoder* context, wStream* s, const void* hints,
+	                                    const void* obj);
+
+	/** @brief releases the content of a message, not the message storage itself
+	 *
+	 *  @param hints the hints of the message, can be nullptr
+	 *  @param obj the message
+	 *  @since version 3.33.0
+	 */
+	typedef void (*WINPR_NDR_DESTROY_FN)(const void* hints, void* obj);
+
+	/** @brief dumps a message in the logs
+	 *
+	 *  @param logger the logger to use
+	 *  @param lvl the log level
+	 *  @param indentLevel the number of tabs to prepend to each line
+	 *  @param obj the message
+	 *  @since version 3.33.0
+	 */
+	typedef void (*WINPR_NDR_DUMP_FN)(wLog* logger, UINT32 lvl, size_t indentLevel,
+	                                  const void* obj);
+
+	/** @brief arity of a message
+	 *  @since version 3.33.0
+	 */
+	typedef enum
+	{
+		WINPR_NDR_ARITY_SIMPLE,          /**< a single item */
+		WINPR_NDR_ARITY_ARRAYOF,         /**< a conformant array, the hints are a
+		                                    WinPrNdrArrayHints */
+		WINPR_NDR_ARITY_VARYING_ARRAYOF, /**< a conformant varying array, the hints are a
+		                                    WinPrNdrVaryingArrayHints */
+		WINPR_NDR_ARITY_SELF_ALLOCATED,  /**< the reader allocates the referent (strings...) with
+		                                    winpr_ndr_pointer_new(): the target is the pointer
+		                                    field, itemSize is the size of an element */
+	} WinPrNdrTypeArity;
+
+	/** @brief message descriptor
+	 *  @since version 3.33.0
+	 */
+	typedef struct
+	{
+		WinPrNdrTypeArity arity;
+		size_t itemSize;                /**< size of the C type (of an item for an array) */
+		WINPR_NDR_READER_FN readFn;     /**< reads the message */
+		WINPR_NDR_WRITER_FN writeFn;    /**< writes the message */
+		WINPR_NDR_DESTROY_FN destroyFn; /**< releases its content, can be nullptr */
+		WINPR_NDR_DUMP_FN dumpFn;       /**< dumps it in the logs, can be nullptr */
+	} WinPrNdrMessageDescr;
+
+	/** @brief a message type, a pointer on its descriptor
+	 *  @since version 3.33.0
+	 */
+	typedef const WinPrNdrMessageDescr* WinPrNdrMessageType;
+
+	/** @brief pointer or not and if null is accepted
+	 *  @since version 3.33.0
+	 */
+	typedef enum
+	{
+		WINPR_NDR_NOT_POINTER,      /**< the field is stored inline, an array of fixedArraySize
+		                               bytes if fixedArraySize is not 0 */
+		WINPR_NDR_POINTER_NON_NULL, /**< [ref] or a unique pointer that can't be null */
+		WINPR_NDR_POINTER,          /**< unique pointer ([unique]) */
+		WINPR_NDR_FIXED_ARRAY,      /**< unique pointer on a conformant array stored inline in the
+		                               field (fixedArraySize bytes), the pointer is null when the
+		                               array is empty */
+		WINPR_NDR_POINTER_FULL      /**< full pointer ([ptr]): pointers with the same referent id
+		                               share the same referent */
+	} WinPrNdrPointerType;
+
+	/** @brief descriptor of a field in a structure
+	 *  @since version 3.33.0
+	 */
+	typedef struct
+	{
+		const char* name;                /**< name of the field, for the logs */
+		size_t structOffset;             /**< offset of the field in the structure */
+		WinPrNdrPointerType pointerType; /**< how the field is stored */
+		SSIZE_T hintsField; /**< index of the field holding the hints of this field (the size
+		                       of an array...), -1 if none */
+		WinPrNdrMessageType typeDescr; /**< type of the field (of its referent for a pointer) */
+		size_t fixedArraySize;         /**< size in bytes of the inline storage of an array */
+		UINT32 rangeMax; /**< for an integer field: [range(0, rangeMax)], not checked if 0 */
+	} WinPrNdrFieldStruct;
+
+	/** @brief structure descriptor
+	 *  @since version 3.33.0
+	 */
+	typedef struct
+	{
+		const char* name;                  /**< name of the structure, for the logs */
+		size_t nfields;                    /**< number of fields */
+		const WinPrNdrFieldStruct* fields; /**< the fields, in their wire order */
+		size_t alignment; /**< alignment of the structure (its largest member), 0 if unspecified */
+	} WinPrNdrStructDescr;
+
+	/** @brief an arm of a non-encapsulated union
+	 *  @since version 3.33.0
+	 */
+	typedef struct
+	{
+		UINT32 discriminant;       /**< the [case()] value of the arm */
+		WinPrNdrFieldStruct field; /**< the arm, its structOffset is relative to the union and it
+		                              has no hints. An arm without typeDescr has no body */
+	} WinPrNdrUnionArm;
+
+	/** @brief a non-encapsulated union ([switch_type()])
+	 *
+	 * On the wire the union is its discriminant followed by the selected arm, aligned on its own
+	 * type.
+	 *
+	 * @since version 3.33.0
+	 */
+	typedef struct
+	{
+		const char* name;             /**< name of the union, for the logs */
+		size_t narms;                 /**< number of arms */
+		const WinPrNdrUnionArm* arms; /**< the arms */
+		size_t switchSize; /**< size of the discriminant and of the [switch_is()] field: 2 for a
+		                      short or an enum, 4 for a long (the default when 0) */
+		const WinPrNdrUnionArm* defaultArm; /**< the [default] arm, its discriminant is ignored.
+		                                       Without it an unknown discriminant is an error */
+	} WinPrNdrUnionDescr;
+
+	/** @brief a deferred pointer, a referent to read after the current construct
+	 *  @since version 3.33.0
+	 */
+	typedef struct
+	{
+		winpr_ndr_refid ptrId; /**< the referent id read for the pointer */
+		const char* name;      /**< name of the pointer, for the logs */
+		void* hints;           /**< hints of the referent, valid until the deferred is treated */
+		void* target;  /**< if allocate is set, the pointer field that receives the referent,
+		                  otherwise the storage the referent is read into */
+		BOOL allocate; /**< the referent is allocated with winpr_ndr_pointer_new() (or by the
+		                  reader of a self allocated type) */
+		WinPrNdrMessageType msg; /**< the type of the referent */
+	} WinPrNdrDeferredEntry;
+
+	/** @brief frees an encoder
+	 *
+	 *  @param context the encoder to free, can be \b nullptr
+	 *  @since version 3.33.0
+	 */
+	WINPR_API void winpr_ndr_encoder_free(WinPrNdrEncoder* context);
+
+	/** @brief frees an encoder and resets the pointer
+	 *
+	 *  @param pcontext a pointer on the encoder to free, must not be \b nullptr
+	 *  @since version 3.33.0
+	 */
+	static INLINE void winpr_ndr_encoder_destroy(WinPrNdrEncoder** pcontext)
+	{
+		WINPR_ASSERT(pcontext);
+		winpr_ndr_encoder_free(*pcontext);
+		*pcontext = nullptr;
+	}
+
+	/** @brief creates an encoder
+	 *
+	 *  @param bigEndianDrep \b TRUE to encode in big endian, \b FALSE for little endian
+	 *  @param version the type serialization version written by winpr_ndr_encoder_write_header()
+	 *  @return the new encoder, \b nullptr on failure
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_MALLOC(winpr_ndr_encoder_free, 1)
+	WINPR_API WinPrNdrEncoder* winpr_ndr_encoder_new(BOOL bigEndianDrep, BYTE version);
+
+	/** @brief creates an encoder with the same endianness and version as a decoder, to answer
+	 *  the message it decoded
+	 *
+	 *  @param src the decoder
+	 *  @return the new encoder, \b nullptr on failure
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_MALLOC(winpr_ndr_encoder_free, 1)
+	WINPR_API WinPrNdrEncoder* winpr_ndr_encoder_from_decoder(const WinPrNdrDecoder* src);
+
+	/** @brief writes the common type header ([MS-RPCE] 2.2.6.1): version, endianness, header
+	 *  length and filler
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_header(WinPrNdrEncoder* context, wStream* s);
+
+	WINPR_NDR_SIMPLE_TYPE_DECL(winpr_ndr, uint8, UINT8);
+	WINPR_NDR_SIMPLE_TYPE_DECL(winpr_ndr, int8, INT8);
+	WINPR_NDR_SIMPLE_TYPE_DECL(winpr_ndr, uint16, UINT16);
+	WINPR_NDR_SIMPLE_TYPE_DECL(winpr_ndr, int16, INT16);
+	WINPR_NDR_SIMPLE_TYPE_DECL(winpr_ndr, int32, INT32);
+	WINPR_NDR_SIMPLE_TYPE_DECL(winpr_ndr, uint32, UINT32);
+	WINPR_NDR_SIMPLE_TYPE_DECL(winpr_ndr, int64, INT64);
+	WINPR_NDR_SIMPLE_TYPE_DECL(winpr_ndr, uint64, UINT64);
+
+	WINPR_NDR_ARRAY_OF_TYPE_DECL(winpr_ndr, uint8, BYTE);
+	WINPR_NDR_ARRAY_OF_TYPE_DECL(winpr_ndr, uint16, UINT16);
+
+	/** @brief accounts for bytes written directly in the stream, for the alignments
+	 *
+	 *  @param context the encoder
+	 *  @param len the number of bytes written
+	 *  @since version 3.33.0
+	 */
+	WINPR_API void winpr_ndr_encoder_bytes_written(WinPrNdrEncoder* context, size_t len);
+
+	/** @brief writes zero padding to align the current object offset
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @param sz the alignment, must not be 0
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_align(WinPrNdrEncoder* context, wStream* s, size_t sz);
+
+	/** @brief writes raw bytes, without alignment
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @param data the bytes to write
+	 *  @param sz the number of bytes
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_data(WinPrNdrEncoder* context, wStream* s,
+	                                            const void* data, size_t sz);
+
+	/** @brief starts a serialized object ([MS-RPCE] 2.2.6 type serialization version 1)
+	 *
+	 * Writes a placeholder for the private header, the object data is to be written after. Only
+	 * one object can be serialized at a time.
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_start_object(WinPrNdrEncoder* context, wStream* s);
+
+	/** @brief ends the serialized object started with winpr_ndr_encoder_start_object()
+	 *
+	 * Pads the object data to a multiple of 8 bytes and fills the private header.
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream given to winpr_ndr_encoder_start_object()
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_end_object(WinPrNdrEncoder* context, wStream* s);
+
+	/** @brief writes a new referent id for a non-null top-level pointer
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_toplevel_refid(WinPrNdrEncoder* context, wStream* s);
+
+	/** @brief hints for a conformant varying array
+	 *  @since version 3.33.0
+	 */
+	typedef struct
+	{
+		UINT32 length;    /**< the actual count */
+		UINT32 maxLength; /**< the maximum count */
+	} WinPrNdrVaryingArrayHints;
+
+	/** @brief writes a conformant varying array: its maximum count, offset 0, actual count and
+	 *  the items
+	 *
+	 *  The referents of the pointers in the items are deferred after the array.
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @param hints the counts of the array
+	 *  @param itemType the type of the items
+	 *  @param src the items, hints->length of them are written
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_uconformant_varying_array(
+	    WinPrNdrEncoder* context, wStream* s, const WinPrNdrVaryingArrayHints* hints,
+	    WinPrNdrMessageType itemType, const void* src);
+
+	/** @brief hints for a conformant array
+	 *  @since version 3.33.0
+	 */
+	typedef struct
+	{
+		UINT32 count; /**< the number of items */
+	} WinPrNdrArrayHints;
+
+	/** @brief writes a conformant array: its count and the items
+	 *
+	 *  The referents of the pointers in the items are deferred after the array.
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @param len the number of items
+	 *  @param itemType the type of the items
+	 *  @param ptr the items
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_uconformant_array(WinPrNdrEncoder* context, wStream* s,
+	                                                         UINT32 len,
+	                                                         WinPrNdrMessageType itemType,
+	                                                         const BYTE* ptr);
+
+	/** @brief writes a structure from its descriptor
+	 *
+	 *  The structure is aligned on descr->alignment, the referents of its pointers are deferred.
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @param descr the descriptor of the structure
+	 *  @param src the structure
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_fromDescr(WinPrNdrEncoder* context, wStream* s,
+	                                                 const WinPrNdrStructDescr* descr,
+	                                                 const void* src);
+
+	/** @brief writes the discriminant and the arm of a union
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @param descr the descriptor of the union
+	 *  @param switchValue the discriminant, the value of the [switch_is()] field
+	 *  @param src the union
+	 *  @return \b TRUE on success, \b FALSE if there's no arm for switchValue or on failure
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_union(WinPrNdrEncoder* context, wStream* s,
+	                                             const WinPrNdrUnionDescr* descr,
+	                                             UINT32 switchValue, const void* src);
+
+	/** @brief a referent id built from the value of a pointer
+	 *
+	 *  @param ptr the pointer
+	 *  @return the low 32 bits of ptr, WINPR_NDR_PTR_NULL for \b nullptr
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API winpr_ndr_refid winpr_ndr_pointer_refid(const void* ptr);
+
+	/** @brief allocates the referent id of an embedded pointer
+	 *
+	 *  The pointers are written as unique pointers: each non-null pointer gets its own referent
+	 *  id, and *pnewPtr is always set to \b TRUE.
+	 *
+	 *  @param context the encoder
+	 *  @param ptr the pointer
+	 *  @param prefId receives the referent id
+	 *  @param pnewPtr receives \b TRUE if the referent is to be written
+	 *  @return \b TRUE on success, \b FALSE when the referent ids are exhausted
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_allocatePtr(WinPrNdrEncoder* context, const void* ptr,
+	                                             winpr_ndr_refid* prefId, BOOL* pnewPtr);
+
+	/** @brief writes the pending deferred referents
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_treat_deferreds(WinPrNdrEncoder* context, wStream* s);
+
+	/* ====================================== decoder ========================================= */
+
+	/** @brief frees a decoder
+	 *
+	 *  The referents it decoded belong to their pointers and are not released.
+	 *
+	 *  @param context the decoder to free, can be \b nullptr
+	 *  @since version 3.33.0
+	 */
+	WINPR_API void winpr_ndr_decoder_free(WinPrNdrDecoder* context);
+
+	/** @brief frees a decoder and resets the pointer
+	 *
+	 *  @param pcontext a pointer on the decoder to free, must not be \b nullptr
+	 *  @since version 3.33.0
+	 */
+	static INLINE void winpr_ndr_decoder_destroy(WinPrNdrDecoder** pcontext)
+	{
+		WINPR_ASSERT(pcontext);
+		winpr_ndr_decoder_free(*pcontext);
+		*pcontext = nullptr;
+	}
+
+	/** @brief creates a decoder
+	 *
+	 *  @param bigEndianDrep \b TRUE to decode big endian data, \b FALSE for little endian
+	 *  @param version the type serialization version
+	 *  @return the new decoder, \b nullptr on failure
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_MALLOC(winpr_ndr_decoder_free, 1)
+	WINPR_API WinPrNdrDecoder* winpr_ndr_decoder_new(BOOL bigEndianDrep, BYTE version);
+
+	/** @brief reads the common type header ([MS-RPCE] 2.2.6.1) and creates a decoder for its
+	 *  version and endianness
+	 *
+	 *  Only the version 1 is supported.
+	 *
+	 *  @param s the stream to read from, positioned after the header on success
+	 *  @return the new decoder, \b nullptr on failure
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_MALLOC(winpr_ndr_decoder_free, 1)
+	WINPR_API WinPrNdrDecoder* winpr_ndr_decoder_new_fromStream(wStream* s);
+
+	/** @brief accounts for bytes read directly from the stream, for the alignments
+	 *
+	 *  @param context the decoder
+	 *  @param len the number of bytes read
+	 *  @since version 3.33.0
+	 */
+	WINPR_API void winpr_ndr_decoder_bytes_read(WinPrNdrDecoder* context, size_t len);
+
+	/** @brief reads the private header of a serialized object ([MS-RPCE] 2.2.6 type
+	 *  serialization version 1)
+	 *
+	 *  The alignments are then relative to the start of the object data.
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from, positioned after the object on success
+	 *  @param object receives a static stream on the object data, to decode with this context.
+	 *  It points in the buffer of s.
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_object(WinPrNdrDecoder* context, wStream* s,
+	                                             wStream* object);
+
+	/** @brief adds deferred pointers, read by the next winpr_ndr_decoder_treat_deferreds()
+	 *
+	 *  This is used by custom readers that read the referent ids of their pointers themselves.
+	 *  The entries are copied, the hints they reference must stay valid until they are treated.
+	 *
+	 *  @param context the decoder
+	 *  @param deferreds the deferred pointers, in their wire order
+	 *  @param ndeferred the number of entries
+	 *  @return \b TRUE on success, \b FALSE if there are too many pending deferred pointers
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_push_deferreds(WinPrNdrDecoder* context,
+	                                                WinPrNdrDeferredEntry* deferreds,
+	                                                size_t ndeferred);
+
+	/** @brief reads the pending deferred referents
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_treat_deferreds(WinPrNdrDecoder* context, wStream* s);
+
+	/** @brief reads a referent id
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param refId receives the referent id, WINPR_NDR_PTR_NULL for a null pointer
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_refpointer(WinPrNdrDecoder* context, wStream* s,
+	                                                 UINT32* refId);
+
+	/** @brief reads a full pointer ([ptr])
+	 *
+	 * The first pointer with a referent id allocates a reference counted block for a referent of
+	 * type descr, the referent is read with the deferred pointers. The next pointers with the
+	 * same referent id get a new reference on that block, they must have the same type and the
+	 * same size. Types allocating their referent (WINPR_NDR_ARITY_SELF_ALLOCATED) can't be used.
+	 *
+	 * @param context the decoder
+	 * @param s the stream to read from
+	 * @param name the name of the pointer, for the logs
+	 * @param descr the type of the referent
+	 * @param hints the hints of the referent, they must be valid until the deferred pointers are
+	 * treated
+	 * @param target receives the referent with a reference, nullptr for a null pointer
+	 * @return \b TRUE on success, \b FALSE otherwise
+	 * @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_pointer_ex(WinPrNdrDecoder* context, wStream* s,
+	                                                 const char* name, WinPrNdrMessageType descr,
+	                                                 void* hints, void** target);
+
+	/** @brief releases a referent
+	 *
+	 * When the last reference is released the referent is destroyed with the destroy function of
+	 * its type, and freed.
+	 *
+	 * @param ptr the referent, can be \b nullptr
+	 * @since version 3.33.0
+	 */
+	WINPR_API void winpr_ndr_pointer_release(void* ptr);
+
+	/** @brief allocates a referent
+	 *
+	 * All the pointers returned by the decoder are reference counted referents, released with
+	 * winpr_ndr_pointer_release() (winpr_ndr_struct_destroy() releases the pointers of a
+	 * structure). Self allocated types allocate their referent with this function, and so must
+	 * the pointers of a structure built to be encoded and destroyed with
+	 * winpr_ndr_struct_destroy().
+	 *
+	 * @param descr the type of the referent, its destroy function is called when the referent is
+	 * released, can be nullptr
+	 * @param hints the hints of the referent for the destroy function, copied, can be nullptr
+	 * @param size the size of the referent, it is zeroed
+	 * @return the referent with a reference, nullptr on failure
+	 * @since version 3.33.0
+	 */
+	WINPR_ATTR_MALLOC(winpr_ndr_pointer_release, 1)
+	WINPR_API void* winpr_ndr_pointer_new(WinPrNdrMessageType descr, const void* hints,
+	                                      size_t size);
+
+	/** @brief takes a reference on a referent
+	 *
+	 * @param ptr the referent, can be \b nullptr
+	 * @return ptr
+	 * @since version 3.33.0
+	 */
+	WINPR_API void* winpr_ndr_pointer_ref(void* ptr);
+
+	/** @brief the size of a referent, as allocated by winpr_ndr_pointer_new()
+	 *
+	 * @param ptr the referent, can be \b nullptr
+	 * @return the size of the referent, 0 for \b nullptr
+	 * @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API size_t winpr_ndr_pointer_size(const void* ptr);
+
+	/** @brief skips bytes
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param nbytes the number of bytes to skip
+	 *  @return \b TRUE on success, \b FALSE if the stream is too short
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_skip_bytes(WinPrNdrDecoder* context, wStream* s,
+	                                            size_t nbytes);
+
+	/** @brief skips the padding to align the current object offset
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param sz the alignment, must not be 0
+	 *  @return \b TRUE on success, \b FALSE if the stream is too short
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_align(WinPrNdrDecoder* context, wStream* s, size_t sz);
+
+	/** @brief reads a WCHAR, aligned on 2 bytes
+	 *
+	 *  The character is stored in UTF-16LE like all the WinPR WCHAR strings, whatever the byte
+	 *  order of the host.
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param ptr receives the character
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_wchar(WinPrNdrDecoder* context, wStream* s, WCHAR* ptr);
+
+	/** @brief writes a WCHAR stored in UTF-16LE, aligned on 2 bytes
+	 *
+	 *  @param context the encoder
+	 *  @param s the stream to write to
+	 *  @param ptr the character
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.34.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_encoder_write_wchar(WinPrNdrEncoder* context, wStream* s,
+	                                             const WCHAR* ptr);
+
+	/** @brief a WCHAR, stored in UTF-16LE in memory
+	 *  @since version 3.34.0
+	 */
+	WINPR_API extern const WinPrNdrMessageDescr winpr_ndr_wchar_descr_s;
+
+	/** @brief the message type of winpr_ndr_wchar_descr_s
+	 *  @return the message type
+	 *  @since version 3.34.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API WinPrNdrMessageType winpr_ndr_wchar_descr(void);
+
+	/** @brief the arrays of WCHAR, stored in UTF-16LE in memory: use them for strings
+	 *  instead of the uint16 arrays, which store the items in host byte order
+	 *  @since version 3.34.0
+	 */
+	WINPR_NDR_ARRAY_OF_TYPE_DECL(winpr_ndr, wchar, WCHAR);
+
+	/** @brief reads the referent of a unique pointer
+	 *
+	 *  The referent is allocated with winpr_ndr_pointer_new() (or by the reader of a self
+	 *  allocated type) and read. A referent id already used by another pointer is rejected.
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param ptrId the referent id of the pointer, nothing is read for WINPR_NDR_PTR_NULL
+	 *  @param descr the type of the referent
+	 *  @param hints the hints of the referent, can be nullptr for a simple type
+	 *  @param target receives the referent, nullptr for a null pointer
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_pointedMessageEx(WinPrNdrDecoder* context, wStream* s,
+	                                                       winpr_ndr_refid ptrId,
+	                                                       WinPrNdrMessageType descr, void* hints,
+	                                                       void** target);
+
+	/** @brief reads a structure from its descriptor
+	 *
+	 *  The structure is aligned on descr->alignment, the referents of its pointers are deferred.
+	 *  On failure the structure may be partially filled, it is released with
+	 *  winpr_ndr_struct_destroy().
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param descr the descriptor of the structure
+	 *  @param target the structure, zeroed by the caller
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_fromDescr(WinPrNdrDecoder* context, wStream* s,
+	                                                const WinPrNdrStructDescr* descr, void* target);
+
+	/** @brief reads a union, its discriminant must be switchValue
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param descr the descriptor of the union
+	 *  @param switchValue the value of the [switch_is()] field of the union
+	 *  @param target the union
+	 *  @return \b TRUE on success, \b FALSE if the discriminant doesn't match, has no arm, or on
+	 *  failure
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_union(WinPrNdrDecoder* context, wStream* s,
+	                                            const WinPrNdrUnionDescr* descr, UINT32 switchValue,
+	                                            void* target);
+
+	/** @brief reads a conformant array: its count and the items
+	 *
+	 *  For simple items the count must be hints->count, otherwise the items must fit in
+	 *  hints->count bytes. The referents of the pointers in the items are deferred after the
+	 *  array.
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param hints the expected size of the array, must not be nullptr
+	 *  @param itemType the type of the items
+	 *  @param vtarget receives the items
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_uconformant_array(WinPrNdrDecoder* context, wStream* s,
+	                                                        const WinPrNdrArrayHints* hints,
+	                                                        WinPrNdrMessageType itemType,
+	                                                        void* vtarget);
+
+	/** @brief reads a conformant varying array: its maximum count, offset, actual count and the
+	 *  items
+	 *
+	 *  The actual and maximum counts of items must fit in hints->length and hints->maxLength
+	 *  bytes. The referents of the pointers in the items are deferred after the array.
+	 *
+	 *  @param context the decoder
+	 *  @param s the stream to read from
+	 *  @param hints the bounds of the array, must not be nullptr
+	 *  @param itemType the type of the items
+	 *  @param ptarget receives the items
+	 *  @return \b TRUE on success, \b FALSE otherwise
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API BOOL winpr_ndr_decoder_read_uconformant_varying_array(
+	    WinPrNdrDecoder* context, wStream* s, const WinPrNdrVaryingArrayHints* hints,
+	    WinPrNdrMessageType itemType, void* ptarget);
+
+	/** @brief conformant string of char, read in a char* allocated with winpr_ndr_pointer_new()
+	 *  @since version 3.33.0
+	 */
+	WINPR_API extern const WinPrNdrMessageDescr winpr_ndr_string_conformant_descr_s;
+
+	/** @brief the message type of winpr_ndr_string_conformant_descr_s
+	 *  @return the message type
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API WinPrNdrMessageType winpr_ndr_string_conformant_descr(void);
+
+	/** @brief [string] char*: a conformant varying string of char, read in a char* allocated with
+	 *  winpr_ndr_pointer_new()
+	 *  @since version 3.33.0
+	 */
+	WINPR_API extern const WinPrNdrMessageDescr winpr_ndr_string_varying_descr_s;
+
+	/** @brief the message type of winpr_ndr_string_varying_descr_s
+	 *  @return the message type
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API WinPrNdrMessageType winpr_ndr_string_varying_descr(void);
+
+	/** @brief [string] wchar_t*: a conformant varying string of WCHAR, read in a WCHAR* allocated
+	 *  with winpr_ndr_pointer_new()
+	 *  @since version 3.33.0
+	 */
+	WINPR_API extern const WinPrNdrMessageDescr winpr_ndr_wstring_varying_descr_s;
+
+	/** @brief the message type of winpr_ndr_wstring_varying_descr_s
+	 *  @return the message type
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API WinPrNdrMessageType winpr_ndr_wstring_varying_descr(void);
+
+	/** @brief dumps a structure in the logs from its descriptor
+	 *
+	 *  @param logger the logger to use
+	 *  @param lvl the log level
+	 *  @param identLevel the number of tabs to prepend to each line
+	 *  @param descr the descriptor of the structure
+	 *  @param obj the structure
+	 *  @since version 3.33.0
+	 */
+	WINPR_API void winpr_ndr_struct_dump_fromDescr(wLog* logger, UINT32 lvl, size_t identLevel,
+	                                               const WinPrNdrStructDescr* descr,
+	                                               const void* obj);
+
+	/** @brief releases the content of a structure from its descriptor
+	 *
+	 *  The pointer fields are released with winpr_ndr_pointer_release() and reset, the inline
+	 *  fields are destroyed with the destroy function of their type. The storage of the
+	 *  structure itself is not freed.
+	 *
+	 *  @param descr the descriptor of the structure
+	 *  @param pptr the structure
+	 *  @since version 3.33.0
+	 */
+	WINPR_API void winpr_ndr_struct_destroy(const WinPrNdrStructDescr* descr, void* pptr);
+
+	/** @brief the value of the [switch_is()] field of a union
+	 *
+	 *  @param descr the descriptor of the union, its switchSize gives the size of the field
+	 *  @param switchField the [switch_is()] field, a UINT16 or a UINT32
+	 *  @return the value of the field
+	 *  @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	WINPR_API UINT32 winpr_ndr_union_switch_value(const WinPrNdrUnionDescr* descr,
+	                                              const void* switchField);
+
+	/** @brief releases the content of the arm switchValue of a union
+	 *
+	 *  @param descr the descriptor of the union
+	 *  @param switchValue the discriminant of the arm
+	 *  @param obj the union
+	 *  @since version 3.33.0
+	 */
+	WINPR_API void winpr_ndr_union_destroy(const WinPrNdrUnionDescr* descr, UINT32 switchValue,
+	                                       void* obj);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif
-
-#endif /* WINPR_RPC_NDR_H */
+#endif /* WINPR_NDR_H_ */

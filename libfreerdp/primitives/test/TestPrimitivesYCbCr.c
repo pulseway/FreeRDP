@@ -6,9 +6,7 @@
 #include <winpr/wlog.h>
 #include <freerdp/utils/profiler.h>
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #define TAG __FILE__
 
@@ -1488,16 +1486,16 @@ static const UINT32 TEST_XRGB_IMAGE[4096] = {
 	0xFF169ff8, 0xFF159ef7, 0xFF149df7, 0xFF139cf6, 0xFF129bf5, 0xFF129bf5, 0xFF129bf5, 0xFF129bf5
 };
 
-static int test_bmp_cmp_count(const BYTE* mem1, const BYTE* mem2, int size, int channel, int margin)
+static int test_bmp_cmp_count(const BYTE* mem1, const BYTE* mem2, size_t size, int channel,
+                              int margin)
 {
-	int error;
+	int error = 0;
 	int count = 0;
-	int index = 0;
 	size /= 4;
 	mem1 += channel;
 	mem2 += channel;
 
-	for (index = 0; index < size; index++)
+	for (size_t index = 0; index < size; index++)
 	{
 		if (*mem1 != *mem2)
 		{
@@ -1514,41 +1512,44 @@ static int test_bmp_cmp_count(const BYTE* mem1, const BYTE* mem2, int size, int 
 	return count;
 }
 
-static int test_bmp_cmp_dump(const BYTE* actual, const BYTE* expected, int size, int channel,
+static int test_bmp_cmp_dump(const BYTE* actual, const BYTE* expected, size_t size, int channel,
                              int margin)
 {
-	int error[3];
+	int error[3] = WINPR_C_ARRAY_INIT;
 	int count = 0;
-	int index = 0;
 	size /= 4;
 	actual += channel;
 	expected += channel;
 
-	for (index = 0; index < size; index++)
+	for (size_t index = 0; index < size; index++)
 	{
 		if (*actual != *expected)
 		{
-			const UINT32 pixel = *((UINT32*)&actual[-channel]);
-			const UINT32 ePixel = *((UINT32*)&expected[-channel]);
+			const UINT32 pixel = *((const UINT32*)&actual[-channel]);
+			const UINT32 ePixel = *((const UINT32*)&expected[-channel]);
 			const INT16 Y = TEST_Y_COMPONENT[index];
 			const INT16 Cb = TEST_CB_COMPONENT[index];
 			const INT16 Cr = TEST_CR_COMPONENT[index];
-			const int x = index % 64;
-			const int y = (index - x) / 64;
-			BYTE R, G, B;
-			BYTE eR, eG, eB;
+			const size_t x = index % 64;
+			const size_t y = (index - x) / 64;
+			BYTE R = 0;
+			BYTE G = 0;
+			BYTE B = 0;
+			BYTE eR = 0;
+			BYTE eG = 0;
+			BYTE eB = 0;
 
-			SplitColor(pixel, PIXEL_FORMAT_XRGB32, &R, &G, &B, NULL, NULL);
-			SplitColor(ePixel, PIXEL_FORMAT_XRGB32, &eR, &eG, &eB, NULL, NULL);
+			FreeRDPSplitColor(pixel, PIXEL_FORMAT_XRGB32, &R, &G, &B, nullptr, nullptr);
+			FreeRDPSplitColor(ePixel, PIXEL_FORMAT_XRGB32, &eR, &eG, &eB, nullptr, nullptr);
 			error[0] = (R > eR) ? R - eR : eR - R;
 			error[1] = (G > eG) ? G - eG : eG - G;
 			error[2] = (B > eB) ? B - eB : eB - B;
 
 			if ((error[0] > margin) || (error[1] > margin) || (error[2] > margin))
 			{
-				printf("(%2d,%2d)    Y: %+5" PRId16 " Cb: %+5" PRId16 " Cr: %+5" PRId16
-				       "    R: %03" PRIu8 "/%03" PRIu8 " G: %03" PRIu8 "/%03" PRIu8 " B: %03" PRIu8
-				       "/%03" PRIu8 "    %d %d %d\n",
+				printf("(%2" PRIuz ",%2" PRIuz ")    Y: %+5" PRId16 " Cb: %+5" PRId16
+				       " Cr: %+5" PRId16 "    R: %03" PRIu8 "/%03" PRIu8 " G: %03" PRIu8
+				       "/%03" PRIu8 " B: %03" PRIu8 "/%03" PRIu8 "    %d %d %d\n",
 				       x, y, Y, Cb, Cr, R, eR, G, eG, B, eB, R - eR, G - eG, B - eB);
 				count++;
 			}
@@ -1564,25 +1565,32 @@ static int test_bmp_cmp_dump(const BYTE* actual, const BYTE* expected, int size,
 static int test_PrimitivesYCbCr(const primitives_t* prims, UINT32 format, prim_size_t roi,
                                 BOOL compare)
 {
+	union
+	{
+		const INT16** cpi;
+		INT16** pi;
+		const UINT16** cpv;
+		UINT16** pv;
+	} cnv;
 	pstatus_t status = -1;
 	int cnt[3];
 	float err[3];
-	BYTE* actual;
-	BYTE* actual1;
-	BYTE* expected;
+	BYTE* actual = nullptr;
+	BYTE* actual1 = nullptr;
+	const BYTE* expected = (const BYTE*)TEST_XRGB_IMAGE;
 	int margin = 1;
-	INT16* pYCbCr[3] = { NULL, NULL, NULL };
+	INT16* pYCbCr[3] = { nullptr, nullptr, nullptr };
 	const UINT32 srcStride = roi.width * 2;
-	const UINT32 dstStride = roi.width * GetBytesPerPixel(format);
+	const UINT32 dstStride = roi.width * FreeRDPGetBytesPerPixel(format);
 	const UINT32 srcSize = srcStride * roi.height;
 	const UINT32 dstSize = dstStride * roi.height;
 	PROFILER_DEFINE(prof)
 	PROFILER_DEFINE(prof1)
 	PROFILER_DEFINE(prof2)
 	// return test_YCbCr_pixels();
-	expected = (BYTE*)TEST_XRGB_IMAGE;
-	actual = _aligned_malloc(dstSize, 16);
-	actual1 = _aligned_malloc(dstSize, 16);
+
+	actual = winpr_aligned_calloc(1, dstSize, 16);
+	actual1 = winpr_aligned_calloc(1, dstSize, 16);
 	PROFILER_CREATE(prof, "yCbCrToRGB_16s8u")
 	PROFILER_CREATE(prof1, "yCbCrToRGB16s16s")
 	PROFILER_CREATE(prof2, "RGBToRGB_16s8u")
@@ -1590,18 +1598,19 @@ static int test_PrimitivesYCbCr(const primitives_t* prims, UINT32 format, prim_s
 	if (!actual || !actual1)
 		goto fail;
 
-	ZeroMemory(actual, dstSize);
-	ZeroMemory(actual1, dstSize);
-	pYCbCr[0] = _aligned_malloc(srcSize, 16);
-	pYCbCr[1] = _aligned_malloc(srcSize, 16);
-	pYCbCr[2] = _aligned_malloc(srcSize, 16);
+	pYCbCr[0] = winpr_aligned_calloc(1, srcSize, 16);
+	pYCbCr[1] = winpr_aligned_calloc(1, srcSize, 16);
+	pYCbCr[2] = winpr_aligned_calloc(1, srcSize, 16);
 
 	if (!pYCbCr[0] || !pYCbCr[1] || !pYCbCr[2])
 		goto fail;
 
-	winpr_RAND((BYTE*)pYCbCr[0], srcSize);
-	winpr_RAND((BYTE*)pYCbCr[1], srcSize);
-	winpr_RAND((BYTE*)pYCbCr[2], srcSize);
+	if (winpr_RAND(pYCbCr[0], srcSize) < 0)
+		goto fail;
+	if (winpr_RAND(pYCbCr[1], srcSize) < 0)
+		goto fail;
+	if (winpr_RAND(pYCbCr[2], srcSize) < 0)
+		goto fail;
 
 	if (compare)
 	{
@@ -1612,8 +1621,9 @@ static int test_PrimitivesYCbCr(const primitives_t* prims, UINT32 format, prim_s
 
 	{
 		PROFILER_ENTER(prof)
-		status = prims->yCbCrToRGB_16s8u_P3AC4R((const INT16**)pYCbCr, srcStride, actual, dstStride,
-		                                        format, &roi);
+		cnv.pi = pYCbCr;
+		status =
+		    prims->yCbCrToRGB_16s8u_P3AC4R(cnv.cpi, srcStride, actual, dstStride, format, &roi);
 		if (status != PRIMITIVES_SUCCESS)
 			goto fail;
 
@@ -1622,28 +1632,29 @@ static int test_PrimitivesYCbCr(const primitives_t* prims, UINT32 format, prim_s
 
 	{
 		INT16* pSrcDst[3];
-		pSrcDst[0] = _aligned_malloc(srcSize, 16);
-		pSrcDst[1] = _aligned_malloc(srcSize, 16);
-		pSrcDst[2] = _aligned_malloc(srcSize, 16);
+		pSrcDst[0] = winpr_aligned_calloc(1, srcSize, 16);
+		pSrcDst[1] = winpr_aligned_calloc(1, srcSize, 16);
+		pSrcDst[2] = winpr_aligned_calloc(1, srcSize, 16);
 		CopyMemory(pSrcDst[0], pYCbCr[0], srcSize);
 		CopyMemory(pSrcDst[1], pYCbCr[1], srcSize);
 		CopyMemory(pSrcDst[2], pYCbCr[2], srcSize);
 		PROFILER_ENTER(prof1)
-		status = prims->yCbCrToRGB_16s16s_P3P3((const INT16**)pSrcDst, srcStride, pSrcDst,
-		                                       srcStride, &roi);
+		cnv.pi = pSrcDst;
+		status =
+		    prims->yCbCrToRGB_16s16s_P3P3(cnv.cpi, WINPR_ASSERTING_INT_CAST(int, srcStride),
+		                                  pSrcDst, WINPR_ASSERTING_INT_CAST(int, srcStride), &roi);
 		PROFILER_EXIT(prof1)
 
 		if (status != PRIMITIVES_SUCCESS)
 			goto fail2;
 
 		PROFILER_ENTER(prof2)
-		status = prims->RGBToRGB_16s8u_P3AC4R((const INT16**)pSrcDst, srcStride, actual1, dstStride,
-		                                      format, &roi);
+		status = prims->RGBToRGB_16s8u_P3AC4R(cnv.cpi, srcStride, actual1, dstStride, format, &roi);
 		PROFILER_EXIT(prof2)
 	fail2:
-		_aligned_free(pSrcDst[0]);
-		_aligned_free(pSrcDst[1]);
-		_aligned_free(pSrcDst[2]);
+		winpr_aligned_free(pSrcDst[0]);
+		winpr_aligned_free(pSrcDst[1]);
+		winpr_aligned_free(pSrcDst[2]);
 
 		if (status != PRIMITIVES_SUCCESS)
 			goto fail;
@@ -1652,11 +1663,11 @@ static int test_PrimitivesYCbCr(const primitives_t* prims, UINT32 format, prim_s
 	if (compare)
 	{
 		cnt[2] = test_bmp_cmp_count(actual, expected, dstSize, 2, margin); /* red */
-		err[2] = ((float)cnt[2]) / ((float)dstSize / 4) * 100.0f;
+		err[2] = ((float)cnt[2]) / ((float)dstSize / 4.0f) * 100.0f;
 		cnt[1] = test_bmp_cmp_count(actual, expected, dstSize, 1, margin); /* green */
-		err[1] = ((float)cnt[1]) / ((float)dstSize / 4) * 100.0f;
+		err[1] = ((float)cnt[1]) / ((float)dstSize / 4.0f) * 100.0f;
 		cnt[0] = test_bmp_cmp_count(actual, expected, dstSize, 0, margin); /* blue */
-		err[0] = ((float)cnt[0]) / ((float)dstSize / 4) * 100.0f;
+		err[0] = ((float)cnt[0]) / ((float)dstSize / 4.0f) * 100.0f;
 
 		if (cnt[0] || cnt[1] || cnt[2])
 		{
@@ -1673,11 +1684,11 @@ static int test_PrimitivesYCbCr(const primitives_t* prims, UINT32 format, prim_s
 		}
 
 		cnt[2] = test_bmp_cmp_count(actual1, expected, dstSize, 2, margin); /* red */
-		err[2] = ((float)cnt[2]) / ((float)dstSize / 4) * 100.0f;
+		err[2] = ((float)cnt[2]) / ((float)dstSize / 4.0f) * 100.0f;
 		cnt[1] = test_bmp_cmp_count(actual1, expected, dstSize, 1, margin); /* green */
-		err[1] = ((float)cnt[1]) / ((float)dstSize / 4) * 100.0f;
+		err[1] = ((float)cnt[1]) / ((float)dstSize / 4.0f) * 100.0f;
 		cnt[0] = test_bmp_cmp_count(actual1, expected, dstSize, 0, margin); /* blue */
-		err[0] = ((float)cnt[0]) / ((float)dstSize / 4) * 100.0f;
+		err[0] = ((float)cnt[0]) / ((float)dstSize / 4.0f) * 100.0f;
 
 		if (cnt[0] || cnt[1] || cnt[2])
 		{
@@ -1700,11 +1711,11 @@ static int test_PrimitivesYCbCr(const primitives_t* prims, UINT32 format, prim_s
 	PROFILER_PRINT(prof2)
 	PROFILER_PRINT_FOOTER
 fail:
-	_aligned_free((BYTE*)pYCbCr[0]);
-	_aligned_free((BYTE*)pYCbCr[1]);
-	_aligned_free((BYTE*)pYCbCr[2]);
-	_aligned_free(actual);
-	_aligned_free(actual1);
+	winpr_aligned_free((BYTE*)pYCbCr[0]);
+	winpr_aligned_free((BYTE*)pYCbCr[1]);
+	winpr_aligned_free((BYTE*)pYCbCr[2]);
+	winpr_aligned_free(actual);
+	winpr_aligned_free(actual1);
 	PROFILER_FREE(prof)
 	PROFILER_FREE(prof1)
 	PROFILER_FREE(prof2)
@@ -1718,16 +1729,17 @@ int TestPrimitivesYCbCr(int argc, char* argv[])
 		                       PIXEL_FORMAT_BGRA32, PIXEL_FORMAT_BGRX32 };
 	const primitives_t* prims = primitives_get();
 	const primitives_t* generics = primitives_get_generic();
-	UINT32 x;
+
+	WINPR_UNUSED(argv);
 
 	if (argc < 2)
 	{
 		{
 			/* Do content comparison. */
-			for (x = 0; x < sizeof(formats) / sizeof(formats[0]); x++)
+			for (UINT32 x = 0; x < sizeof(formats) / sizeof(formats[0]); x++)
 			{
 				prim_size_t roi = { 64, 64 };
-				int rc;
+				int rc = 0;
 				printf("----------------------- GENERIC %s [%" PRIu32 "x%" PRIu32
 				       "] COMPARE CONTENT ----\n",
 				       FreeRDPGetColorFormatName(formats[x]), roi.width, roi.height);
@@ -1756,19 +1768,21 @@ int TestPrimitivesYCbCr(int argc, char* argv[])
 
 			do
 			{
-				winpr_RAND((BYTE*)&roi.width, sizeof(roi.width));
-				roi.width %= 2048;
+				if (winpr_RAND(&roi.width, sizeof(roi.width)) < 0)
+					return -1;
+				roi.width %= 2048 / 4;
 			} while (roi.width < 16);
 
 			do
 			{
-				winpr_RAND((BYTE*)&roi.height, sizeof(roi.height));
-				roi.height %= 2048;
+				if (winpr_RAND(&roi.height, sizeof(roi.height)) < 0)
+					return -1;
+				roi.height %= 2048 / 4;
 			} while (roi.height < 16);
 
-			for (x = 0; x < sizeof(formats) / sizeof(formats[0]); x++)
+			for (size_t x = 0; x < sizeof(formats) / sizeof(formats[0]); x++)
 			{
-				int rc;
+				int rc = 0;
 				printf("----------------------- GENERIC %s [%" PRIu32 "x%" PRIu32
 				       "] COMPARE CONTENT ----\n",
 				       FreeRDPGetColorFormatName(formats[x]), roi.width, roi.height);
@@ -1795,11 +1809,11 @@ int TestPrimitivesYCbCr(int argc, char* argv[])
 	/* Do a performance run with full HD */
 	else
 	{
-		prim_size_t roi = { 1928, 1080 };
+		prim_size_t roi = { 1928 / 8, 1080 / 8 };
 
-		for (x = 0; x < sizeof(formats) / sizeof(formats[0]); x++)
+		for (size_t x = 0; x < sizeof(formats) / sizeof(formats[0]); x++)
 		{
-			int rc;
+			int rc = 0;
 			printf("----------------------- GENERIC %s [%" PRIu32 "x%" PRIu32
 			       "] COMPARE CONTENT ----\n",
 			       FreeRDPGetColorFormatName(formats[x]), roi.width, roi.height);

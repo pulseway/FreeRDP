@@ -27,8 +27,9 @@
 
 static BOOL test_generic(HANDLE hComm)
 {
-	DCB dcb, *pDcb;
-	BOOL result;
+	DCB dcb = WINPR_C_ARRAY_INIT;
+	DCB* pDcb = nullptr;
+	BOOL result = 0;
 
 	ZeroMemory(&dcb, sizeof(DCB));
 	result = GetCommState(hComm, &dcb);
@@ -76,13 +77,13 @@ static BOOL test_generic(HANDLE hComm)
 
 int TestGetCommState(int argc, char* argv[])
 {
-	struct stat statbuf;
-	BOOL result;
-	HANDLE hComm;
+	struct stat statbuf = WINPR_C_ARRAY_INIT;
+	BOOL result = 0;
+	HANDLE hComm = nullptr;
 
 	if (stat("/dev/ttyS0", &statbuf) < 0)
 	{
-		fprintf(stderr, "/dev/ttyS0 not available, making the test to succeed though\n");
+		(void)fprintf(stderr, "/dev/ttyS0 not available, making the test to succeed though\n");
 		return EXIT_SUCCESS;
 	}
 
@@ -93,7 +94,8 @@ int TestGetCommState(int argc, char* argv[])
 		return EXIT_FAILURE;
 	}
 
-	hComm = CreateFileA("COM1", GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, 0, NULL);
+	hComm =
+	    CreateFileA("COM1", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
 
 	if (hComm == INVALID_HANDLE_VALUE)
 	{
@@ -130,7 +132,7 @@ int TestGetCommState(int argc, char* argv[])
 
 	if (!CloseHandle(hComm))
 	{
-		fprintf(stderr, "CloseHandle failure, GetLastError()=%08x\n", GetLastError());
+		(void)fprintf(stderr, "CloseHandle failure, GetLastError()=%08x\n", GetLastError());
 		return EXIT_FAILURE;
 	}
 

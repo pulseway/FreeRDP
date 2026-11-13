@@ -22,13 +22,11 @@
 #include <winpr/wtypes.h>
 #include <winpr/synch.h>
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #ifndef _WIN32
 
-#ifdef HAVE_POLL_H
+#ifdef WINPR_HAVE_POLL_H
 #include <poll.h>
 #else
 #include <sys/select.h>
@@ -42,7 +40,7 @@ typedef struct
 
 struct winpr_poll_set
 {
-#ifdef HAVE_POLL_H
+#ifdef WINPR_HAVE_POLL_H
 	struct pollfd* pollset;
 	struct pollfd staticSet[MAXIMUM_WAIT_OBJECTS];
 	BOOL isStatic;
@@ -57,6 +55,9 @@ struct winpr_poll_set
 #endif
 	size_t fillIndex;
 	size_t size;
+#if defined(__EMSCRIPTEN__)
+	size_t yieldCounter;
+#endif
 };
 
 typedef struct winpr_poll_set WINPR_POLL_SET;
@@ -66,7 +67,10 @@ void pollset_uninit(WINPR_POLL_SET* set);
 void pollset_reset(WINPR_POLL_SET* set);
 BOOL pollset_add(WINPR_POLL_SET* set, int fd, ULONG mode);
 int pollset_poll(WINPR_POLL_SET* set, DWORD dwMilliseconds);
+
 BOOL pollset_isSignaled(WINPR_POLL_SET* set, size_t idx);
+BOOL pollset_isReadSignaled(WINPR_POLL_SET* set, size_t idx);
+BOOL pollset_isWriteSignaled(WINPR_POLL_SET* set, size_t idx);
 
 #endif
 

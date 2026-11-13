@@ -1,4 +1,5 @@
 
+#include <winpr/wtypes.h>
 #include <winpr/crt.h>
 #include <winpr/pool.h>
 #include <winpr/interlocked.h>
@@ -7,31 +8,28 @@ static LONG count = 0;
 
 static void CALLBACK test_WorkCallback(PTP_CALLBACK_INSTANCE instance, void* context, PTP_WORK work)
 {
-	int index;
-	BYTE a[1024];
-	BYTE b[1024];
-	BYTE c[1024];
 	printf("Hello %s: %03" PRId32 " (thread: 0x%08" PRIX32 ")\n", (char*)context,
 	       InterlockedIncrement(&count), GetCurrentThreadId());
 
-	for (index = 0; index < 100; index++)
+	for (int index = 0; index < 100; index++)
 	{
-		ZeroMemory(a, 1024);
-		ZeroMemory(b, 1024);
-		ZeroMemory(c, 1024);
-		FillMemory(a, 1024, 0xAA);
-		FillMemory(b, 1024, 0xBB);
-		CopyMemory(c, a, 1024);
-		CopyMemory(c, b, 1024);
+		BYTE a[1024];
+		BYTE b[1024];
+		BYTE c[1024] = WINPR_C_ARRAY_INIT;
+
+		FillMemory(a, ARRAYSIZE(a), 0xAA);
+		FillMemory(b, ARRAYSIZE(b), 0xBB);
+
+		CopyMemory(c, a, ARRAYSIZE(a));
+		CopyMemory(c, b, ARRAYSIZE(b));
 	}
 }
 
 static BOOL test1(void)
 {
-	int index;
-	PTP_WORK work;
+	PTP_WORK work = nullptr;
 	printf("Global Thread Pool\n");
-	work = CreateThreadpoolWork(test_WorkCallback, "world", NULL);
+	work = CreateThreadpoolWork(test_WorkCallback, "world", nullptr);
 
 	if (!work)
 	{
@@ -45,7 +43,7 @@ static BOOL test1(void)
 	 * thread pool may throttle the threads.
 	 */
 
-	for (index = 0; index < 10; index++)
+	for (int index = 0; index < 10; index++)
 		SubmitThreadpoolWork(work);
 
 	WaitForThreadpoolWorkCallbacks(work, FALSE);
@@ -56,14 +54,13 @@ static BOOL test1(void)
 static BOOL test2(void)
 {
 	BOOL rc = FALSE;
-	int index;
-	PTP_POOL pool;
-	PTP_WORK work;
-	PTP_CLEANUP_GROUP cleanupGroup = NULL;
+	PTP_POOL pool = nullptr;
+	PTP_WORK work = nullptr;
+	PTP_CLEANUP_GROUP cleanupGroup = nullptr;
 	TP_CALLBACK_ENVIRON environment;
 	printf("Private Thread Pool\n");
 
-	if (!(pool = CreateThreadpool(NULL)))
+	if (!(pool = CreateThreadpool(nullptr)))
 	{
 		printf("CreateThreadpool failure\n");
 		return FALSE;
@@ -86,7 +83,7 @@ static BOOL test2(void)
 		goto fail;
 	}
 
-	SetThreadpoolCallbackCleanupGroup(&environment, cleanupGroup, NULL);
+	SetThreadpoolCallbackCleanupGroup(&environment, cleanupGroup, nullptr);
 	work = CreateThreadpoolWork(test_WorkCallback, "world", &environment);
 
 	if (!work)
@@ -95,7 +92,7 @@ static BOOL test2(void)
 		goto fail;
 	}
 
-	for (index = 0; index < 10; index++)
+	for (int index = 0; index < 10; index++)
 		SubmitThreadpoolWork(work);
 
 	WaitForThreadpoolWorkCallbacks(work, FALSE);
@@ -104,7 +101,7 @@ fail:
 
 	if (cleanupGroup)
 	{
-		CloseThreadpoolCleanupGroupMembers(cleanupGroup, TRUE, NULL);
+		CloseThreadpoolCleanupGroupMembers(cleanupGroup, TRUE, nullptr);
 		CloseThreadpoolCleanupGroup(cleanupGroup);
 		DestroyThreadpoolEnvironment(&environment);
 		/**
@@ -114,9 +111,7 @@ fail:
 		 * CloseThreadpoolWork ! calling the CloseThreadpoolCleanupGroupMembers function releases
 		 * the work, wait, and timer objects associated with the cleanup group.
 		 */
-#if 0
-		CloseThreadpoolWork(work); // this would segfault, see comment above. */
-#endif
+		//	CloseThreadpoolWork(work); // this would segfault, see comment above. */
 	}
 
 	CloseThreadpool(pool);
@@ -125,6 +120,10 @@ fail:
 
 int TestPoolWork(int argc, char* argv[])
 {
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
 	if (!test1())
 		return -1;
 

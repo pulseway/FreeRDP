@@ -15,33 +15,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-winpr_module_add(
-	rpc.c
-	ndr.c
-	ndr_array.c
-	ndr_array.h
-	ndr_context.c
-	ndr_context.h
-	ndr_correlation.c
-	ndr_correlation.h
-	ndr_pointer.c
-	ndr_pointer.h
-	ndr_private.c
-	ndr_private.h
-	ndr_simple.c
-	ndr_simple.h
-	ndr_string.c
-	ndr_string.h
-	ndr_structure.c
-	ndr_structure.h
-	ndr_union.c
-	ndr_union.h
-	midl.c)
+winpr_module_add(rpc.c)
 
-winpr_include_directory_add(${OPENSSL_INCLUDE_DIR})
+winpr_system_include_directory_add(${OPENSSL_INCLUDE_DIR})
 
 winpr_library_add_private(${OPENSSL_LIBRARIES})
 
 if(WIN32)
-	winpr_library_add_public(ws2_32 rpcrt4)
+  winpr_library_add_public(ws2_32 rpcrt4)
 endif()

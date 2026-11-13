@@ -23,41 +23,51 @@
 #include <winpr/wtypes.h>
 #include <freerdp/types.h>
 
+/** The command line name of the channel
+ *
+ *  \since version 3.0.0
+ */
+#define GEOMETRY_CHANNEL_NAME "geometry"
 #define GEOMETRY_DVC_CHANNEL_NAME "Microsoft::Windows::RDS::Geometry::v08.01"
 
-enum
+#ifdef __cplusplus
+extern "C"
 {
-	GEOMETRY_UPDATE = 1,
-	GEOMETRY_CLEAR = 2
-};
+#endif
 
-enum
-{
-	RDH_RECTANGLE = 1
-};
+	enum
+	{
+		GEOMETRY_UPDATE = 1,
+		GEOMETRY_CLEAR = 2
+	};
 
-struct _FREERDP_RGNDATA
-{
-	RDP_RECT boundingRect;
-	UINT32 nRectCount;
-	RDP_RECT* rects;
-};
+	enum
+	{
+		RDH_RECTANGLE = 1
+	};
 
-typedef struct _FREERDP_RGNDATA FREERDP_RGNDATA;
+	typedef struct
+	{
+		RDP_RECT boundingRect;
+		UINT32 nRectCount;
+		RDP_RECT* rects;
+	} FREERDP_RGNDATA;
 
-struct _MAPPED_GEOMETRY_PACKET
-{
-	UINT32 version;
-	UINT64 mappingId;
-	UINT32 updateType;
-	UINT64 topLevelId;
-	INT32 left, top, right, bottom;
-	INT32 topLevelLeft, topLevelTop, topLevelRight, topLevelBottom;
-	UINT32 geometryType;
+	typedef struct
+	{
+		UINT32 version;
+		UINT64 mappingId;
+		UINT32 updateType;
+		UINT64 topLevelId;
+		INT32 left, top, right, bottom;
+		INT32 topLevelLeft, topLevelTop, topLevelRight, topLevelBottom;
+		UINT32 geometryType;
 
-	FREERDP_RGNDATA geometry;
-};
+		FREERDP_RGNDATA geometry;
+	} MAPPED_GEOMETRY_PACKET;
 
-typedef struct _MAPPED_GEOMETRY_PACKET MAPPED_GEOMETRY_PACKET;
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_CHANNEL_GEOMETRY_H */

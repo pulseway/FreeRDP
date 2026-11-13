@@ -6,31 +6,30 @@
 #include <winpr/tchar.h>
 #include <winpr/windows.h>
 
+#define TEST_MAX_PATH 4096
+
 static TCHAR testDirectory2File1[] = _T("TestDirectory2File1");
 static TCHAR testDirectory2File2[] = _T("TestDirectory2File2");
 
 int TestFileFindNextFile(int argc, char* argv[])
 {
-	char* str;
-	int length;
-	BOOL status;
-	HANDLE hFind;
-	LPTSTR BasePath;
+	char* str = nullptr;
+	size_t length = 0;
+	BOOL status = 0;
+	HANDLE hFind = nullptr;
+	LPTSTR BasePath = nullptr;
 	WIN32_FIND_DATA FindData;
-	TCHAR FilePath[PATHCCH_MAX_CCH];
+	TCHAR FilePath[TEST_MAX_PATH] = WINPR_C_ARRAY_INIT;
+	WINPR_UNUSED(argc);
 	str = argv[1];
 #ifdef UNICODE
-	length = MultiByteToWideChar(CP_UTF8, 0, str, strlen(str), NULL, 0);
-	BasePath = (WCHAR*)calloc((length + 1), sizeof(WCHAR));
+	BasePath = ConvertUtf8ToWChar(str, &length);
 
 	if (!BasePath)
 	{
 		_tprintf(_T("Unable to allocate memory"));
 		return -1;
 	}
-
-	MultiByteToWideChar(CP_UTF8, 0, str, length, (LPWSTR)BasePath, length * sizeof(WCHAR));
-	BasePath[length] = 0;
 #else
 	BasePath = _strdup(str);
 
@@ -45,9 +44,12 @@ int TestFileFindNextFile(int argc, char* argv[])
 	/* Simple filter matching all files inside current directory */
 	CopyMemory(FilePath, BasePath, length * sizeof(TCHAR));
 	FilePath[length] = 0;
-	PathCchConvertStyle(BasePath, length, PATH_STYLE_WINDOWS);
-	NativePathCchAppend(FilePath, PATHCCH_MAX_CCH, _T("TestDirectory2"));
-	NativePathCchAppend(FilePath, PATHCCH_MAX_CCH, _T("TestDirectory2File*"));
+	if (FAILED(PathCchConvertStyle(BasePath, length, PATH_STYLE_WINDOWS)))
+		return -1;
+	if (FAILED(NativePathCchAppend(FilePath, ARRAYSIZE(FilePath), _T("TestDirectory2"))))
+		return -1;
+	if (FAILED(NativePathCchAppend(FilePath, ARRAYSIZE(FilePath), _T("TestDirectory2File*"))))
+		return -1;
 	free(BasePath);
 	_tprintf(_T("Finding file: %s\n"), FilePath);
 	hFind = FindFirstFile(FilePath, &FindData);
@@ -64,8 +66,8 @@ int TestFileFindNextFile(int argc, char* argv[])
 	 * The current implementation does not enforce a particular order
 	 */
 
-	if ((_tcscmp(FindData.cFileName, testDirectory2File1) != 0) &&
-	    (_tcscmp(FindData.cFileName, testDirectory2File2) != 0))
+	if ((_tcsncmp(FindData.cFileName, testDirectory2File1, ARRAYSIZE(testDirectory2File1)) != 0) &&
+	    (_tcsncmp(FindData.cFileName, testDirectory2File2, ARRAYSIZE(testDirectory2File2)) != 0))
 	{
 		_tprintf(_T("FindFirstFile failure: Expected: %s, Actual: %s\n"), testDirectory2File1,
 		         FindData.cFileName);
@@ -80,8 +82,8 @@ int TestFileFindNextFile(int argc, char* argv[])
 		return -1;
 	}
 
-	if ((_tcscmp(FindData.cFileName, testDirectory2File1) != 0) &&
-	    (_tcscmp(FindData.cFileName, testDirectory2File2) != 0))
+	if ((_tcsncmp(FindData.cFileName, testDirectory2File1, ARRAYSIZE(testDirectory2File1)) != 0) &&
+	    (_tcsncmp(FindData.cFileName, testDirectory2File2, ARRAYSIZE(testDirectory2File2)) != 0))
 	{
 		_tprintf(_T("FindNextFile failure: Expected: %s, Actual: %s\n"), testDirectory2File2,
 		         FindData.cFileName);

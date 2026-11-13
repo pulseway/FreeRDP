@@ -4,16 +4,16 @@
 
 int TestSmartCardListReaders(int argc, char* argv[])
 {
-	LONG lStatus;
-	LPSTR pReader;
+	LONG lStatus = 0;
+	LPSTR pReader = nullptr;
 	SCARDCONTEXT hSC = 0;
-	LPSTR mszReaders = NULL;
+	LPSTR mszReaders = nullptr;
 	DWORD cchReaders = SCARD_AUTOALLOCATE;
 
 	WINPR_UNUSED(argc);
 	WINPR_UNUSED(argv);
 
-	lStatus = SCardEstablishContext(SCARD_SCOPE_USER, NULL, NULL, &hSC);
+	lStatus = SCardEstablishContext(SCARD_SCOPE_USER, nullptr, nullptr, &hSC);
 
 	if (lStatus != SCARD_S_SUCCESS)
 	{
@@ -22,7 +22,7 @@ int TestSmartCardListReaders(int argc, char* argv[])
 		return 0;
 	}
 
-	lStatus = SCardListReadersA(hSC, NULL, (LPSTR)&mszReaders, &cchReaders);
+	lStatus = SCardListReadersA(hSC, nullptr, (LPSTR)&mszReaders, &cchReaders);
 
 	if (lStatus != SCARD_S_SUCCESS)
 	{

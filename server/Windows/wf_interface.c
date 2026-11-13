@@ -18,13 +18,12 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/tchar.h>
 #include <winpr/windows.h>
 #include <winpr/winsock.h>
+#include <winpr/assert.h>
 
 #include <freerdp/freerdp.h>
 #include <freerdp/listener.h>
@@ -39,31 +38,31 @@
 
 #include "wf_interface.h"
 
+#include <freerdp/log.h>
 #define TAG SERVER_TAG("windows")
 
 #define SERVER_KEY "Software\\" FREERDP_VENDOR_STRING "\\" FREERDP_PRODUCT_STRING "\\Server"
 
-cbCallback cbEvent;
+static cbCallback cbEvent = nullptr;
 
-int get_screen_info(int id, _TCHAR* name, int* width, int* height, int* bpp)
+int get_screen_info(int id, _TCHAR* name, size_t length, int* width, int* height, int* bpp)
 {
-	DISPLAY_DEVICE dd;
+	DISPLAY_DEVICE dd = WINPR_C_ARRAY_INIT;
 
-	memset(&dd, 0, sizeof(DISPLAY_DEVICE));
 	dd.cb = sizeof(DISPLAY_DEVICE);
 
-	if (EnumDisplayDevices(NULL, id, &dd, 0) != 0)
+	if (EnumDisplayDevices(nullptr, id, &dd, 0) != 0)
 	{
 		HDC dc;
 
-		if (name != NULL)
-			_stprintf(name, _T("%s (%s)"), dd.DeviceName, dd.DeviceString);
+		if (name != nullptr)
+			_stprintf_s(name, length, _T("%s (%s)"), dd.DeviceName, dd.DeviceString);
 
-		dc = CreateDC(dd.DeviceName, NULL, NULL, NULL);
+		dc = CreateDC(dd.DeviceName, nullptr, nullptr, nullptr);
 		*width = GetDeviceCaps(dc, HORZRES);
 		*height = GetDeviceCaps(dc, VERTRES);
 		*bpp = GetDeviceCaps(dc, BITSPIXEL);
-		// ReleaseDC(NULL, dc);
+		// ReleaseDC(nullptr, dc);
 		DeleteDC(dc);
 	}
 	else
@@ -88,11 +87,6 @@ void set_screen_id(int id)
 
 static DWORD WINAPI wf_server_main_loop(LPVOID lpParam)
 {
-	int i, fds;
-	int rcount;
-	int max_fds;
-	void* rfds[32];
-	fd_set rfds_set;
 	freerdp_listener* instance;
 	wfInfo* wfi;
 
@@ -105,36 +99,29 @@ static DWORD WINAPI wf_server_main_loop(LPVOID lpParam)
 
 	wfi->force_all_disconnect = FALSE;
 
-	ZeroMemory(rfds, sizeof(rfds));
 	instance = (freerdp_listener*)lpParam;
+	WINPR_ASSERT(instance);
+	WINPR_ASSERT(instance->GetEventHandles);
+	WINPR_ASSERT(instance->CheckFileDescriptor);
 
 	while (wfi->force_all_disconnect == FALSE)
 	{
-		rcount = 0;
+		DWORD status;
+		HANDLE handles[MAXIMUM_WAIT_OBJECTS] = WINPR_C_ARRAY_INIT;
+		DWORD count = instance->GetEventHandles(instance, handles, ARRAYSIZE(handles));
 
-		if (instance->GetFileDescriptor(instance, rfds, &rcount) != TRUE)
+		if (count == 0)
 		{
 			WLog_ERR(TAG, "Failed to get FreeRDP file descriptor");
 			break;
 		}
 
-		max_fds = 0;
-		FD_ZERO(&rfds_set);
-
-		for (i = 0; i < rcount; i++)
+		status = WaitForMultipleObjects(count, handles, FALSE, INFINITE);
+		if (status == WAIT_FAILED)
 		{
-			fds = (int)(long)(rfds[i]);
-
-			if (fds > max_fds)
-				max_fds = fds;
-
-			FD_SET(fds, &rfds_set);
-		}
-
-		if (max_fds == 0)
+			WLog_ERR(TAG, "WaitForMultipleObjects failed");
 			break;
-
-		select(max_fds + 1, &rfds_set, NULL, NULL, NULL);
+		}
 
 		if (instance->CheckFileDescriptor(instance) != TRUE)
 		{
@@ -159,10 +146,11 @@ BOOL wfreerdp_server_start(wfServer* server)
 
 	wf_settings_read_dword(HKEY_LOCAL_MACHINE, SERVER_KEY, _T("DefaultPort"), &server->port);
 
-	if (!instance->Open(instance, NULL, (UINT16)server->port))
+	if (!instance->Open(instance, nullptr, (UINT16)server->port))
 		return FALSE;
 
-	if (!(server->thread = CreateThread(NULL, 0, wf_server_main_loop, (void*)instance, 0, NULL)))
+	if (!(server->thread =
+	          CreateThread(nullptr, 0, wf_server_main_loop, (void*)instance, 0, nullptr)))
 		return FALSE;
 
 	return TRUE;
@@ -170,9 +158,7 @@ BOOL wfreerdp_server_start(wfServer* server)
 
 BOOL wfreerdp_server_stop(wfServer* server)
 {
-	wfInfo* wfi;
-
-	wfi = wf_info_get_instance();
+	wfInfo* wfi = wf_info_get_instance();
 	if (!wfi)
 		return FALSE;
 	WLog_INFO(TAG, "Stopping server");
@@ -183,22 +169,22 @@ BOOL wfreerdp_server_stop(wfServer* server)
 
 wfServer* wfreerdp_server_new()
 {
-	WSADATA wsaData;
-	wfServer* server;
+	WSADATA wsaData = WINPR_C_ARRAY_INIT;
 
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-		return NULL;
+		return nullptr;
 
-	server = (wfServer*)calloc(1, sizeof(wfServer));
+	if (!WTSRegisterWtsApiFunctionTable(FreeRDP_InitWtsApi()))
+		return nullptr;
+
+	wfServer* server = (wfServer*)calloc(1, sizeof(wfServer));
 
 	if (server)
 	{
 		server->port = 3389;
 	}
 
-	WTSRegisterWtsApiFunctionTable(FreeRDP_InitWtsApi());
-
-	cbEvent = NULL;
+	cbEvent = nullptr;
 
 	return server;
 }

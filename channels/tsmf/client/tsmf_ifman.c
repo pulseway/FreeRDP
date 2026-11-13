@@ -20,10 +20,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,9 +45,9 @@
  */
 UINT tsmf_ifman_rim_exchange_capability_request(TSMF_IFMAN* ifman)
 {
-	UINT32 CapabilityValue;
+	UINT32 CapabilityValue = 0;
 
-	if (Stream_GetRemainingLength(ifman->input) < 4)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 4))
 		return ERROR_INVALID_DATA;
 
 	Stream_Read_UINT32(ifman->input, CapabilityValue);
@@ -69,65 +68,74 @@ UINT tsmf_ifman_rim_exchange_capability_request(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_exchange_capability_request(TSMF_IFMAN* ifman)
 {
-	UINT32 i;
-	UINT32 v;
-	UINT32 pos;
-	UINT32 CapabilityType;
-	UINT32 cbCapabilityLength;
-	UINT32 numHostCapabilities;
+	UINT32 CapabilityType = 0;
+	UINT32 cbCapabilityLength = 0;
+	UINT32 numHostCapabilities = 0;
 
+	WINPR_ASSERT(ifman);
 	if (!Stream_EnsureRemainingCapacity(ifman->output, ifman->input_size + 4))
 		return ERROR_OUTOFMEMORY;
 
-	pos = Stream_GetPosition(ifman->output);
-	Stream_Copy(ifman->input, ifman->output, ifman->input_size);
-	Stream_SetPosition(ifman->output, pos);
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, ifman->input_size))
+		return ERROR_INVALID_DATA;
 
-	if (Stream_GetRemainingLength(ifman->output) < 4)
+	const size_t xpos = Stream_GetPosition(ifman->output);
+	Stream_Copy(ifman->input, ifman->output, ifman->input_size);
+	if (!Stream_SetPosition(ifman->output, xpos))
+		return ERROR_INVALID_DATA;
+
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->output, 4))
 		return ERROR_INVALID_DATA;
 
 	Stream_Read_UINT32(ifman->output, numHostCapabilities);
 
-	for (i = 0; i < numHostCapabilities; i++)
+	for (UINT32 i = 0; i < numHostCapabilities; i++)
 	{
-		if (Stream_GetRemainingLength(ifman->output) < 8)
+		if (!Stream_CheckAndLogRequiredLength(TAG, ifman->output, 8))
 			return ERROR_INVALID_DATA;
 
 		Stream_Read_UINT32(ifman->output, CapabilityType);
 		Stream_Read_UINT32(ifman->output, cbCapabilityLength);
 
-		if (Stream_GetRemainingLength(ifman->output) < cbCapabilityLength)
+		if (!Stream_CheckAndLogRequiredLength(TAG, ifman->output, cbCapabilityLength))
 			return ERROR_INVALID_DATA;
 
-		pos = Stream_GetPosition(ifman->output);
+		const size_t pos = Stream_GetPosition(ifman->output);
 
 		switch (CapabilityType)
 		{
 			case 1: /* Protocol version request */
-				if (Stream_GetRemainingLength(ifman->output) < 4)
+			{
+				if (!Stream_CheckAndLogRequiredLength(TAG, ifman->output, 4))
 					return ERROR_INVALID_DATA;
 
-				Stream_Read_UINT32(ifman->output, v);
+				const UINT32 v = Stream_Get_UINT32(ifman->output);
+				WINPR_UNUSED(v);
 				DEBUG_TSMF("server protocol version %" PRIu32 "", v);
-				break;
+			}
+			break;
 
 			case 2: /* Supported platform */
-				if (Stream_GetRemainingLength(ifman->output) < 4)
+			{
+				if (!Stream_CheckAndLogRequiredLength(TAG, ifman->output, 4))
 					return ERROR_INVALID_DATA;
 
-				Stream_Peek_UINT32(ifman->output, v);
+				const UINT32 v = Stream_Get_UINT32(ifman->output);
+				WINPR_UNUSED(v);
 				DEBUG_TSMF("server supported platform %" PRIu32 "", v);
 				/* Claim that we support both MF and DShow platforms. */
 				Stream_Write_UINT32(ifman->output, MMREDIR_CAPABILITY_PLATFORM_MF |
 				                                       MMREDIR_CAPABILITY_PLATFORM_DSHOW);
-				break;
+			}
+			break;
 
 			default:
 				WLog_ERR(TAG, "skipping unknown capability type %" PRIu32 "", CapabilityType);
 				break;
 		}
 
-		Stream_SetPosition(ifman->output, pos + cbCapabilityLength);
+		if (!Stream_SetPosition(ifman->output, pos + cbCapabilityLength))
+			return ERROR_INVALID_DATA;
 	}
 
 	Stream_Write_UINT32(ifman->output, 0); /* Result */
@@ -142,11 +150,11 @@ UINT tsmf_ifman_exchange_capability_request(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_check_format_support_request(TSMF_IFMAN* ifman)
 {
-	UINT32 numMediaType;
-	UINT32 PlatformCookie;
+	UINT32 numMediaType = 0;
+	UINT32 PlatformCookie = 0;
 	UINT32 FormatSupported = 1;
 
-	if (Stream_GetRemainingLength(ifman->input) < 12)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 12))
 		return ERROR_INVALID_DATA;
 
 	Stream_Read_UINT32(ifman->input, PlatformCookie);
@@ -178,10 +186,10 @@ UINT tsmf_ifman_check_format_support_request(TSMF_IFMAN* ifman)
 UINT tsmf_ifman_on_new_presentation(TSMF_IFMAN* ifman)
 {
 	UINT status = CHANNEL_RC_OK;
-	TSMF_PRESENTATION* presentation;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 
-	if (Stream_GetRemainingLength(ifman->input) < GUID_SIZE)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, GUID_SIZE))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -211,13 +219,13 @@ UINT tsmf_ifman_on_new_presentation(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_add_stream(TSMF_IFMAN* ifman, rdpContext* rdpcontext)
 {
-	UINT32 StreamId;
+	UINT32 StreamId = 0;
 	UINT status = CHANNEL_RC_OK;
-	TSMF_STREAM* stream;
-	TSMF_PRESENTATION* presentation;
+	TSMF_STREAM* stream = nullptr;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 
-	if (Stream_GetRemainingLength(ifman->input) < GUID_SIZE + 8)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, GUID_SIZE + 8))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -279,12 +287,12 @@ UINT tsmf_ifman_set_topology_request(TSMF_IFMAN* ifman)
 UINT tsmf_ifman_remove_stream(TSMF_IFMAN* ifman)
 {
 	int status = CHANNEL_RC_OK;
-	UINT32 StreamId;
-	TSMF_STREAM* stream;
-	TSMF_PRESENTATION* presentation;
+	UINT32 StreamId = 0;
+	TSMF_STREAM* stream = nullptr;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 
-	if (Stream_GetRemainingLength(ifman->input) < 20)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 20))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -311,8 +319,8 @@ UINT tsmf_ifman_remove_stream(TSMF_IFMAN* ifman)
 
 static float tsmf_stream_read_float(wStream* s)
 {
-	float fValue;
-	UINT32 iValue;
+	float fValue = NAN;
+	UINT32 iValue = 0;
 	Stream_Read_UINT32(s, iValue);
 	CopyMemory(&fValue, &iValue, 4);
 	return fValue;
@@ -326,12 +334,10 @@ static float tsmf_stream_read_float(wStream* s)
 UINT tsmf_ifman_set_source_video_rect(TSMF_IFMAN* ifman)
 {
 	UINT status = CHANNEL_RC_OK;
-	float Left, Top;
-	float Right, Bottom;
-	TSMF_PRESENTATION* presentation;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 
-	if (Stream_GetRemainingLength(ifman->input) < 32)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 32))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -343,12 +349,14 @@ UINT tsmf_ifman_set_source_video_rect(TSMF_IFMAN* ifman)
 	}
 	else
 	{
-		Left = tsmf_stream_read_float(ifman->input);   /* Left (4 bytes) */
-		Top = tsmf_stream_read_float(ifman->input);    /* Top (4 bytes) */
-		Right = tsmf_stream_read_float(ifman->input);  /* Right (4 bytes) */
-		Bottom = tsmf_stream_read_float(ifman->input); /* Bottom (4 bytes) */
+#ifdef WITH_DEBUG_TSMF
+		const float Left = tsmf_stream_read_float(ifman->input);   /* Left (4 bytes) */
+		const float Top = tsmf_stream_read_float(ifman->input);    /* Top (4 bytes) */
+		const float Right = tsmf_stream_read_float(ifman->input);  /* Right (4 bytes) */
+		const float Bottom = tsmf_stream_read_float(ifman->input); /* Bottom (4 bytes) */
 		DEBUG_TSMF("SetSourceVideoRect: Left: %f Top: %f Right: %f Bottom: %f", Left, Top, Right,
 		           Bottom);
+#endif
 	}
 
 	ifman->output_pending = TRUE;
@@ -362,10 +370,10 @@ UINT tsmf_ifman_set_source_video_rect(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_shutdown_presentation(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 
-	if (Stream_GetRemainingLength(ifman->input) < GUID_SIZE)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, GUID_SIZE))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -393,12 +401,12 @@ UINT tsmf_ifman_shutdown_presentation(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_stream_volume(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
-	UINT32 newVolume;
-	UINT32 muted;
+	TSMF_PRESENTATION* presentation = nullptr;
+	UINT32 newVolume = 0;
+	UINT32 muted = 0;
 	DEBUG_TSMF("on stream volume");
 
-	if (Stream_GetRemainingLength(ifman->input) < GUID_SIZE + 8)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, GUID_SIZE + 8))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -429,18 +437,18 @@ UINT tsmf_ifman_on_stream_volume(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_channel_volume(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("on channel volume");
 
-	if (Stream_GetRemainingLength(ifman->input) < GUID_SIZE + 8)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, GUID_SIZE + 8))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
 
 	if (presentation)
 	{
-		UINT32 channelVolume;
-		UINT32 changedChannel;
+		UINT32 channelVolume = 0;
+		UINT32 changedChannel = 0;
 		Stream_Seek(ifman->input, 16);
 		Stream_Read_UINT32(ifman->input, channelVolume);
 		DEBUG_TSMF("on channel volume: channel volume=[%" PRIu32 "]", channelVolume);
@@ -471,20 +479,18 @@ UINT tsmf_ifman_set_video_window(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_update_geometry_info(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
-	UINT32 numGeometryInfo;
-	UINT32 Left;
-	UINT32 Top;
-	UINT32 Width;
-	UINT32 Height;
-	UINT32 cbVisibleRect;
-	RDP_RECT* rects = NULL;
-	int num_rects = 0;
+	TSMF_PRESENTATION* presentation = nullptr;
+	UINT32 numGeometryInfo = 0;
+	UINT32 Left = 0;
+	UINT32 Top = 0;
+	UINT32 Width = 0;
+	UINT32 Height = 0;
+	UINT32 cbVisibleRect = 0;
+	RECTANGLE_32* rects = nullptr;
 	UINT error = CHANNEL_RC_OK;
-	int i;
-	size_t pos;
+	size_t pos = 0;
 
-	if (Stream_GetRemainingLength(ifman->input) < GUID_SIZE + 32)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, GUID_SIZE + 32))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -500,36 +506,42 @@ UINT tsmf_ifman_update_geometry_info(TSMF_IFMAN* ifman)
 	Stream_Read_UINT32(ifman->input, Height);
 	Stream_Read_UINT32(ifman->input, Left);
 	Stream_Read_UINT32(ifman->input, Top);
-	Stream_SetPosition(ifman->input, pos + numGeometryInfo);
+	if (!Stream_SetPosition(ifman->input, pos + numGeometryInfo))
+		return ERROR_INVALID_DATA;
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 4))
+		return ERROR_INVALID_DATA;
 	Stream_Read_UINT32(ifman->input, cbVisibleRect);
-	num_rects = cbVisibleRect / 16;
+	const UINT32 num_rects = cbVisibleRect / 16;
 	DEBUG_TSMF("numGeometryInfo %" PRIu32 " Width %" PRIu32 " Height %" PRIu32 " Left %" PRIu32
 	           " Top %" PRIu32 " cbVisibleRect %" PRIu32 " num_rects %d",
 	           numGeometryInfo, Width, Height, Left, Top, cbVisibleRect, num_rects);
 
 	if (num_rects > 0)
 	{
-		rects = (RDP_RECT*)calloc(num_rects, sizeof(RDP_RECT));
+		if (!Stream_CheckAndLogRequiredLengthOfSize(TAG, ifman->input, num_rects, 16ull))
+			return ERROR_INVALID_DATA;
 
-		for (i = 0; i < num_rects; i++)
+		rects = (RECTANGLE_32*)calloc(num_rects, sizeof(RECTANGLE_32));
+		if (!rects)
+			return ERROR_OUTOFMEMORY;
+
+		for (size_t i = 0; i < num_rects; i++)
 		{
-			Stream_Read_UINT16(ifman->input, rects[i].y); /* Top */
-			Stream_Seek_UINT16(ifman->input);
-			Stream_Read_UINT16(ifman->input, rects[i].x); /* Left */
-			Stream_Seek_UINT16(ifman->input);
-			Stream_Read_UINT16(ifman->input, rects[i].height); /* Bottom */
-			Stream_Seek_UINT16(ifman->input);
-			Stream_Read_UINT16(ifman->input, rects[i].width); /* Right */
-			Stream_Seek_UINT16(ifman->input);
-			rects[i].width -= rects[i].x;
-			rects[i].height -= rects[i].y;
+			Stream_Read_UINT32(ifman->input, rects[i].top);    /* Top */
+			Stream_Read_UINT32(ifman->input, rects[i].left);   /* Left */
+			Stream_Read_UINT32(ifman->input, rects[i].height); /* Bottom */
+			Stream_Read_UINT32(ifman->input, rects[i].width);  /* Right */
+			rects[i].width -= rects[i].left;
+			rects[i].height -= rects[i].top;
 			DEBUG_TSMF("rect %d: %" PRId16 " %" PRId16 " %" PRId16 " %" PRId16 "", i, rects[i].x,
 			           rects[i].y, rects[i].width, rects[i].height);
 		}
 	}
 
-	if (!tsmf_presentation_set_geometry_info(presentation, Left, Top, Width, Height, num_rects,
-	                                         rects))
+	const BOOL rc = tsmf_presentation_set_geometry_info(presentation, Left, Top, Width, Height,
+	                                                    num_rects, rects);
+	free(rects);
+	if (!rc)
 		return ERROR_INVALID_OPERATION;
 
 	ifman->output_pending = TRUE;
@@ -568,17 +580,17 @@ UINT tsmf_ifman_notify_preroll(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_sample(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
-	TSMF_STREAM* stream;
-	UINT32 StreamId;
-	UINT64 SampleStartTime;
-	UINT64 SampleEndTime;
-	UINT64 ThrottleDuration;
-	UINT32 SampleExtensions;
-	UINT32 cbData;
-	UINT error;
+	TSMF_PRESENTATION* presentation = nullptr;
+	TSMF_STREAM* stream = nullptr;
+	UINT32 StreamId = 0;
+	UINT64 SampleStartTime = 0;
+	UINT64 SampleEndTime = 0;
+	UINT64 ThrottleDuration = 0;
+	UINT32 SampleExtensions = 0;
+	UINT32 cbData = 0;
+	UINT error = 0;
 
-	if (Stream_GetRemainingLength(ifman->input) < 60)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 60))
 		return ERROR_INVALID_DATA;
 
 	Stream_Seek(ifman->input, 16);
@@ -591,7 +603,7 @@ UINT tsmf_ifman_on_sample(TSMF_IFMAN* ifman)
 	Stream_Read_UINT32(ifman->input, SampleExtensions);
 	Stream_Read_UINT32(ifman->input, cbData);
 
-	if (Stream_GetRemainingLength(ifman->input) < cbData)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, cbData))
 		return ERROR_INVALID_DATA;
 
 	DEBUG_TSMF("MessageId %" PRIu32 " StreamId %" PRIu32 " SampleStartTime %" PRIu64
@@ -640,11 +652,11 @@ UINT tsmf_ifman_on_sample(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_flush(TSMF_IFMAN* ifman)
 {
-	UINT32 StreamId;
-	TSMF_PRESENTATION* presentation;
-	TSMF_STREAM* stream;
+	UINT32 StreamId = 0;
+	TSMF_PRESENTATION* presentation = nullptr;
+	TSMF_STREAM* stream = nullptr;
 
-	if (Stream_GetRemainingLength(ifman->input) < 20)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 20))
 		return ERROR_INVALID_DATA;
 
 	Stream_Seek(ifman->input, 16);
@@ -682,11 +694,11 @@ UINT tsmf_ifman_on_flush(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_end_of_stream(TSMF_IFMAN* ifman)
 {
-	UINT32 StreamId;
-	TSMF_STREAM* stream = NULL;
-	TSMF_PRESENTATION* presentation;
+	UINT32 StreamId = 0;
+	TSMF_STREAM* stream = nullptr;
+	TSMF_PRESENTATION* presentation = nullptr;
 
-	if (Stream_GetRemainingLength(ifman->input) < 20)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 20))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -714,10 +726,10 @@ UINT tsmf_ifman_on_end_of_stream(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_playback_started(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 
-	if (Stream_GetRemainingLength(ifman->input) < 16)
+	if (!Stream_CheckAndLogRequiredLength(TAG, ifman->input, 16))
 		return ERROR_INVALID_DATA;
 
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
@@ -745,7 +757,7 @@ UINT tsmf_ifman_on_playback_started(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_playback_paused(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 	ifman->output_pending = TRUE;
 	/* Added pause control so gstreamer pipeline can be paused accordingly */
@@ -769,7 +781,7 @@ UINT tsmf_ifman_on_playback_paused(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_playback_restarted(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 	ifman->output_pending = TRUE;
 	/* Added restart control so gstreamer pipeline can be resumed accordingly */
@@ -793,7 +805,7 @@ UINT tsmf_ifman_on_playback_restarted(TSMF_IFMAN* ifman)
  */
 UINT tsmf_ifman_on_playback_stopped(TSMF_IFMAN* ifman)
 {
-	TSMF_PRESENTATION* presentation;
+	TSMF_PRESENTATION* presentation = nullptr;
 	DEBUG_TSMF("");
 	presentation = tsmf_presentation_find_by_id(Stream_Pointer(ifman->input));
 

@@ -13,6 +13,7 @@
 #import "ios_freerdp_events.h"
 
 #import "RDPSession.h"
+#import "RDPCursor.h"
 #import "TSXTypes.h"
 #import "Bookmark.h"
 #import "ConnectionParams.h"
@@ -30,6 +31,8 @@ NSString *TSXSessionDidFailToConnectNotification = @"TSXSessionDidFailToConnect"
 - (void)sessionDidConnect;
 - (void)sessionDidDisconnect;
 - (void)sessionDidFailToConnect:(int)reason;
+- (void)sessionWillReconnect;
+- (void)sessionDidReconnect;
 - (void)sessionBitmapContextWillChange;
 - (void)sessionBitmapContextDidChange;
 @end
@@ -46,8 +49,8 @@ NSString *TSXSessionDidFailToConnectNotification = @"TSXSessionDidFailToConnect"
 
 static BOOL addArgument(int *argc, char ***argv, const char *fmt, ...)
 {
-	va_list ap;
-	char *arg = NULL;
+	va_list ap = WINPR_C_ARRAY_INIT;
+	char *arg = nullptr;
 	char **tmp = realloc(*argv, (*argc + 1) * sizeof(char *));
 
 	if (!tmp)
@@ -56,10 +59,10 @@ static BOOL addArgument(int *argc, char ***argv, const char *fmt, ...)
 	*argv = tmp;
 	*argc = *argc + 1;
 	va_start(ap, fmt);
-	vasprintf(&arg, fmt, ap);
+	const BOOL rc = vasprintf(&arg, fmt, ap) >= 0;
 	va_end(ap);
 	(*argv)[*argc - 1] = arg;
-	return TRUE;
+	return rc;
 }
 
 static BOOL addFlag(int *argc, char ***argv, const char *str, BOOL flag)
@@ -69,9 +72,7 @@ static BOOL addFlag(int *argc, char ***argv, const char *str, BOOL flag)
 
 static void freeArguments(int argc, char **argv)
 {
-	int i;
-
-	for (i = 0; i < argc; i++)
+	for (int i = 0; i < argc; i++)
 		free(argv[i]);
 
 	free(argv);
@@ -81,7 +82,7 @@ static void freeArguments(int argc, char **argv)
 - (id)initWithBookmark:(ComputerBookmark *)bookmark
 {
 	int status;
-	char **argv = NULL;
+	char **argv = nullptr;
 	int argc = 0;
 
 	if (!(self = [super init]))
@@ -106,6 +107,8 @@ static void freeArguments(int argc, char **argv)
 	if (!addArgument(&argc, &argv, "/gdi:sw"))
 		goto out_free;
 
+	if (!addArgument(&argc, &argv, "/relax-order-checks"))
+		goto out_free;
 	// Screen Size is set on connect (we need a valid delegate in case the user choose an automatic
 	// screen size)
 
@@ -168,7 +171,7 @@ static void freeArguments(int argc, char **argv)
 			goto out_free;
 
 	if ([_params boolForKey:@"perf_h264" with3GEnabled:connected_via_3g])
-		if (!addArgument(&argc, &argv, "/gfx-h264"))
+		if (!addArgument(&argc, &argv, "/gfx:AVC444"))
 			goto out_free;
 
 	if (![_params boolForKey:@"perf_remotefx" with3GEnabled:connected_via_3g] &&
@@ -177,7 +180,7 @@ static void freeArguments(int argc, char **argv)
 		if (!addArgument(&argc, &argv, "/nsc"))
 			goto out_free;
 
-	if (!addFlag(&argc, &argv, "bitmap-cache", TRUE))
+	if (!addArgument(&argc, &argv, "/cache:bitmap:on,glyph:on"))
 		goto out_free;
 
 	if (!addFlag(&argc, &argv, "wallpaper",
@@ -240,27 +243,28 @@ static void freeArguments(int argc, char **argv)
 	// ts gateway settings
 	if ([_params boolForKey:@"enable_tsg_settings"])
 	{
-		if (!addArgument(&argc, &argv, "/g:%s", [_params UTF8StringForKey:@"tsg_hostname"]))
-			goto out_free;
-
-		if (!addArgument(&argc, &argv, "/gp:%d", [_params intForKey:@"tsg_port"]))
-			goto out_free;
-
-		if (!addArgument(&argc, &argv, "/gu:%s", [_params intForKey:@"tsg_username"]))
-			goto out_free;
-
-		if (!addArgument(&argc, &argv, "/gp:%s", [_params intForKey:@"tsg_password"]))
-			goto out_free;
-
-		if (!addArgument(&argc, &argv, "/gd:%s", [_params intForKey:@"tsg_domain"]))
+		if (!addArgument(&argc, &argv, "/gateway:g:%s:%d,u:%s,d:%s,p:%s",
+		                 [_params UTF8StringForKey:@"tsg_hostname"],
+		                 [_params intForKey:@"tsg_port"],
+		                 [_params UTF8StringForKey:@"tsg_username"],
+		                 [_params UTF8StringForKey:@"tsg_domain"],
+		                 [_params UTF8StringForKey:@"tsg_password"]))
 			goto out_free;
 	}
 
 	// Remote keyboard layout
-	if (!addArgument(&argc, &argv, "/kbd:%d", 0x409))
+	if (!addArgument(&argc, &argv, "/kbd:layout:%d", 0x409))
 		goto out_free;
 
-	status = freerdp_client_settings_parse_command_line(_freerdp->settings, argc, argv, FALSE);
+	// send characters without a US scancode (e.g. Korean) as unicode input
+	if (!addArgument(&argc, &argv, "/kbd:unicode:on"))
+		goto out_free;
+
+	if (!addArgument(&argc, &argv, "/auto-reconnect"))
+		goto out_free;
+
+	status =
+	    freerdp_client_settings_parse_command_line(_freerdp->context->settings, argc, argv, FALSE);
 
 	if (0 != status)
 		goto out_free;
@@ -295,10 +299,11 @@ out_free:
 
 - (void)connect
 {
-	// Set Screen Size to automatic if widht or height are still 0
-	rdpSettings *settings = _freerdp->settings;
+	// Set Screen Size to automatic if width or height are still 0
+	rdpSettings *settings = _freerdp->context->settings;
 
-	if (settings->DesktopWidth == 0 || settings->DesktopHeight == 0)
+	if (freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth) == 0 ||
+	    freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight) == 0)
 	{
 		CGSize size = CGSizeZero;
 
@@ -309,16 +314,19 @@ out_free:
 		{
 			[_params setInt:size.width forKey:@"width"];
 			[_params setInt:size.height forKey:@"height"];
-			settings->DesktopWidth = size.width;
-			settings->DesktopHeight = size.height;
+			(void)freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, size.width);
+			(void)freerdp_settings_set_uint32(settings, FreeRDP_DesktopHeight, size.height);
 		}
 	}
 
 	// TODO: This is a hack to ensure connections to RDVH with 16bpp don't have an odd screen
 	// resolution width
 	//       Otherwise this could result in screen corruption ..
-	if (settings->ColorDepth <= 16)
-		settings->DesktopWidth &= (~1);
+	if (freerdp_settings_get_uint32(settings, FreeRDP_ColorDepth) <= 16)
+	{
+		const UINT32 w = freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth) & (~1);
+		(void)freerdp_settings_set_uint32(settings, FreeRDP_DesktopWidth, w);
+	}
 
 	[self performSelectorInBackground:@selector(runSession) withObject:nil];
 }
@@ -331,6 +339,9 @@ out_free:
 	if (mfi->connection_state == TSXConnectionConnecting)
 	{
 		mfi->unwanted = YES;
+
+		// disconnect
+		freerdp_abort_connect_context(_freerdp->context);
 		[self sessionDidDisconnect];
 		return;
 	}
@@ -347,7 +358,7 @@ out_free:
 	if (!_suspended)
 	{
 		_suspended = YES;
-		//        instance->update->SuppressOutput(instance->context, 0, NULL);
+		//        instance->update->SuppressOutput(instance->context, 0, nullptr);
 	}
 }
 
@@ -359,8 +370,8 @@ out_free:
 		/*        RECTANGLE_16 rec;
 		        rec.left = 0;
 		        rec.top = 0;
-		        rec.right = instance->settings->width;
-		        rec.bottom = instance->settings->height;
+		        rec.right =  freerdp_settings_get_uint32(instance->settings, FreeRDP_DesktopWidth);
+		        rec.bottom = freerdp_settings_get_uint32(instance->settings, FreeRDP_DesktopHeight);
 		*/
 		_suspended = NO;
 		//        instance->update->SuppressOutput(instance->context, 1, &rec);
@@ -383,6 +394,16 @@ out_free:
 		ios_events_send([self mfi], eventDescriptor);
 }
 
+- (void)sendClipboardHasText:(BOOL)hasText
+{
+	// not sendInputEvent: the first check runs in sessionDidConnect, before the state is
+	// connected; the event waits in the pipe until the run loop starts
+	ios_events_send([self mfi],
+	                [NSDictionary dictionaryWithObjectsAndKeys:@"clipboard", @"type",
+	                                                           [NSNumber numberWithBool:hasText],
+	                                                           @"has_text", nil]);
+}
+
 #pragma mark -
 #pragma mark Server events (main thread)
 
@@ -390,6 +411,36 @@ out_free:
 {
 	if ([[self delegate] respondsToSelector:@selector(session:needsRedrawInRect:)])
 		[[self delegate] session:self needsRedrawInRect:[rect_value CGRectValue]];
+}
+
+- (void)setRemoteCursor:(RDPCursor *)cursor
+{
+	if ([[self delegate] respondsToSelector:@selector(session:didSetRemoteCursor:)])
+		[[self delegate] session:self didSetRemoteCursor:cursor];
+}
+
+- (void)setRemoteCursorPositionValue:(NSValue *)positionValue
+{
+	if ([[self delegate] respondsToSelector:@selector(session:didMoveRemoteCursor:)])
+		[[self delegate] session:self didMoveRemoteCursor:[positionValue CGPointValue]];
+}
+
+- (void)hideRemoteCursor
+{
+	if ([[self delegate] respondsToSelector:@selector(sessionDidHideRemoteCursor:)])
+		[[self delegate] sessionDidHideRemoteCursor:self];
+}
+
+- (void)setDefaultRemoteCursor
+{
+	if ([[self delegate] respondsToSelector:@selector(sessionDidSetDefaultRemoteCursor:)])
+		[[self delegate] sessionDidSetDefaultRemoteCursor:self];
+}
+
+- (void)setRemoteClipboardText:(NSString *)text
+{
+	if ([[self delegate] respondsToSelector:@selector(session:didChangeRemoteClipboardText:)])
+		[[self delegate] session:self didChangeRemoteClipboardText:text];
 }
 
 #pragma mark -
@@ -413,7 +464,7 @@ out_free:
 
 - (rdpSettings *)getSessionParams
 {
-	return _freerdp->settings;
+	return _freerdp->context->settings;
 }
 
 - (NSString *)sessionName
@@ -479,6 +530,18 @@ out_free:
 		[[self delegate] sessionWillConnect:self];
 }
 
+- (void)sessionWillReconnect
+{
+	if ([[self delegate] respondsToSelector:@selector(sessionWillReconnect:)])
+		[[self delegate] sessionWillReconnect:self];
+}
+
+- (void)sessionDidReconnect
+{
+	if ([[self delegate] respondsToSelector:@selector(sessionDidReconnect:)])
+		[[self delegate] sessionDidReconnect:self];
+}
+
 - (void)sessionDidConnect
 {
 	if ([[self delegate] respondsToSelector:@selector(sessionDidConnect:)])
@@ -526,6 +589,12 @@ out_free:
 {
 	if ([[self delegate] respondsToSelector:@selector(session:verifyCertificateWithParams:)])
 		[[self delegate] session:self verifyCertificateWithParams:params];
+}
+
+- (void)sessionRequestsClipboardTextWithParams:(NSMutableDictionary *)params
+{
+	if ([[self delegate] respondsToSelector:@selector(session:requestsClipboardTextWithParams:)])
+		[[self delegate] session:self requestsClipboardTextWithParams:params];
 }
 
 @end

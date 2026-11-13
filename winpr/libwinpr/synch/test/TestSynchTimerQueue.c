@@ -19,43 +19,42 @@ struct apc_data
 };
 typedef struct apc_data APC_DATA;
 
-VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired)
+static VOID CALLBACK TimerRoutine(PVOID lpParam, BOOLEAN TimerOrWaitFired)
 {
-	UINT32 TimerTime;
-	APC_DATA* apcData;
-	UINT32 expectedTime;
-	UINT32 CurrentTime = GetTickCount();
+	WINPR_UNUSED(TimerOrWaitFired);
 
 	if (!lpParam)
 		return;
 
-	apcData = (APC_DATA*)lpParam;
-
-	TimerTime = CurrentTime - apcData->StartTime;
-	expectedTime = apcData->DueTime + (apcData->Period * apcData->FireCount);
+	APC_DATA* apcData = (APC_DATA*)lpParam;
+	const UINT32 CurrentTime = GetTickCount();
+	const INT64 TimerTime = 1ll * CurrentTime - apcData->StartTime;
+	const INT64 expectedTime =
+	    1ll * apcData->DueTime + (1ll * apcData->Period * apcData->FireCount);
 
 	apcData->FireCount++;
 
-	printf("TimerRoutine: TimerId: %" PRIu32 " FireCount: %" PRIu32 " ActualTime: %" PRIu32
-	       " ExpectedTime: %" PRIu32 " Discrepancy: %" PRIu32 "\n",
+	printf("TimerRoutine: TimerId: %" PRIu32 " FireCount: %" PRIu32 " ActualTime: %" PRId64
+	       " ExpectedTime: %" PRId64 " Discrepancy: %" PRId64 "\n",
 	       apcData->TimerId, apcData->FireCount, TimerTime, expectedTime, TimerTime - expectedTime);
 
-	Sleep(50);
+	Sleep(11);
 
 	if (apcData->FireCount == apcData->MaxFireCount)
 	{
-		SetEvent(apcData->CompletionEvent);
+		(void)SetEvent(apcData->CompletionEvent);
 	}
 }
 
 int TestSynchTimerQueue(int argc, char* argv[])
 {
-	DWORD index;
-	HANDLE hTimerQueue;
-	HANDLE hTimers[TIMER_COUNT];
-	APC_DATA apcData[TIMER_COUNT];
+	HANDLE hTimers[TIMER_COUNT] = WINPR_C_ARRAY_INIT;
+	APC_DATA apcData[TIMER_COUNT] = WINPR_C_ARRAY_INIT;
 
-	hTimerQueue = CreateTimerQueue();
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
+	HANDLE hTimerQueue = CreateTimerQueue();
 
 	if (!hTimerQueue)
 	{
@@ -63,34 +62,33 @@ int TestSynchTimerQueue(int argc, char* argv[])
 		return -1;
 	}
 
-	for (index = 0; index < TIMER_COUNT; index++)
+	for (DWORD index = 0; index < TIMER_COUNT; index++)
 	{
 		apcData[index].TimerId = index;
 		apcData[index].StartTime = GetTickCount();
-		apcData[index].DueTime = (index * 100) + 500;
-		apcData[index].Period = 1000;
+		apcData[index].DueTime = (index * 10) + 50;
+		apcData[index].Period = 100;
 		apcData[index].FireCount = 0;
 		apcData[index].MaxFireCount = FIRE_COUNT;
 
-		if (!(apcData[index].CompletionEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
+		if (!(apcData[index].CompletionEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr)))
 		{
 			printf("Failed to create apcData[%" PRIu32 "] event (%" PRIu32 ")\n", index,
 			       GetLastError());
 			return -1;
 		}
 
-		if (!CreateTimerQueueTimer(&hTimers[index], hTimerQueue, (WAITORTIMERCALLBACK)TimerRoutine,
-		                           &apcData[index], apcData[index].DueTime, apcData[index].Period,
-		                           0))
+		if (!CreateTimerQueueTimer(&hTimers[index], hTimerQueue, TimerRoutine, &apcData[index],
+		                           apcData[index].DueTime, apcData[index].Period, 0))
 		{
 			printf("CreateTimerQueueTimer failed (%" PRIu32 ")\n", GetLastError());
 			return -1;
 		}
 	}
 
-	for (index = 0; index < TIMER_COUNT; index++)
+	for (DWORD index = 0; index < TIMER_COUNT; index++)
 	{
-		if (WaitForSingleObject(apcData[index].CompletionEvent, 20000) != WAIT_OBJECT_0)
+		if (WaitForSingleObject(apcData[index].CompletionEvent, 2000) != WAIT_OBJECT_0)
 		{
 			printf("Failed to wait for timer queue timer #%" PRIu32 " (%" PRIu32 ")\n", index,
 			       GetLastError());
@@ -98,7 +96,7 @@ int TestSynchTimerQueue(int argc, char* argv[])
 		}
 	}
 
-	for (index = 0; index < TIMER_COUNT; index++)
+	for (DWORD index = 0; index < TIMER_COUNT; index++)
 	{
 		/**
 		 * Note: If the CompletionEvent parameter is INVALID_HANDLE_VALUE, the function waits
@@ -109,7 +107,7 @@ int TestSynchTimerQueue(int argc, char* argv[])
 			printf("DeleteTimerQueueTimer failed (%" PRIu32 ")\n", GetLastError());
 			return -1;
 		}
-		CloseHandle(apcData[index].CompletionEvent);
+		(void)CloseHandle(apcData[index].CompletionEvent);
 	}
 
 	if (!DeleteTimerQueue(hTimerQueue))

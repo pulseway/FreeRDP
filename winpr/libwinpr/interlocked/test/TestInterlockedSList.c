@@ -4,7 +4,9 @@
 #include <winpr/windows.h>
 #include <winpr/interlocked.h>
 
-typedef struct _PROGRAM_ITEM
+#define ITEM_COUNT 23
+
+typedef struct
 {
 	WINPR_SLIST_ENTRY ItemEntry;
 	ULONG Signature;
@@ -12,13 +14,14 @@ typedef struct _PROGRAM_ITEM
 
 int TestInterlockedSList(int argc, char* argv[])
 {
-	ULONG Count;
-	WINPR_PSLIST_ENTRY pFirstEntry;
-	WINPR_PSLIST_HEADER pListHead;
+	int rc = -1;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	/* Initialize the list header to a MEMORY_ALLOCATION_ALIGNMENT boundary. */
-	pListHead = (WINPR_PSLIST_HEADER)_aligned_malloc(sizeof(WINPR_SLIST_HEADER),
-	                                                 MEMORY_ALLOCATION_ALIGNMENT);
+	WINPR_PSLIST_HEADER pListHead = (WINPR_PSLIST_HEADER)winpr_aligned_malloc(
+	    sizeof(WINPR_SLIST_HEADER), MEMORY_ALLOCATION_ALIGNMENT);
 
 	if (!pListHead)
 	{
@@ -29,34 +32,40 @@ int TestInterlockedSList(int argc, char* argv[])
 	InitializeSListHead(pListHead);
 
 	/* Insert 10 items into the list. */
-	for (Count = 1; Count <= 10; Count += 1)
+	for (ULONG Count = 0; Count < ITEM_COUNT; Count++)
 	{
 		PPROGRAM_ITEM pProgramItem =
-		    (PPROGRAM_ITEM)_aligned_malloc(sizeof(PROGRAM_ITEM), MEMORY_ALLOCATION_ALIGNMENT);
+		    (PPROGRAM_ITEM)winpr_aligned_malloc(sizeof(PROGRAM_ITEM), MEMORY_ALLOCATION_ALIGNMENT);
 
 		if (!pProgramItem)
 		{
 			printf("Memory allocation failed.\n");
-			return -1;
+			goto fail;
 		}
 
-		pProgramItem->Signature = Count;
-		pFirstEntry = InterlockedPushEntrySList(pListHead, &(pProgramItem->ItemEntry));
+		pProgramItem->Signature = Count + 1UL;
+		WINPR_PSLIST_ENTRY pFirstEntry =
+		    InterlockedPushEntrySList(pListHead, &(pProgramItem->ItemEntry));
+		if (((Count == 0) && pFirstEntry) || ((Count != 0) && !pFirstEntry))
+		{
+			printf("Error: List is empty.\n");
+			winpr_aligned_free(pProgramItem);
+			goto fail;
+		}
 	}
 
 	/* Remove 10 items from the list and display the signature. */
-	for (Count = 10; Count >= 1; Count -= 1)
+	for (ULONG Count = 0; Count < ITEM_COUNT; Count++)
 	{
-		PPROGRAM_ITEM pProgramItem;
 		WINPR_PSLIST_ENTRY pListEntry = InterlockedPopEntrySList(pListHead);
 
 		if (!pListEntry)
 		{
 			printf("List is empty.\n");
-			return -1;
+			goto fail;
 		}
 
-		pProgramItem = (PPROGRAM_ITEM)pListEntry;
+		PPROGRAM_ITEM pProgramItem = (PPROGRAM_ITEM)pListEntry;
 		printf("Signature is %" PRIu32 "\n", pProgramItem->Signature);
 
 		/*
@@ -66,19 +75,21 @@ int TestInterlockedSList(int argc, char* argv[])
 		 * of the structure before calling the free function.
 		 */
 
-		_aligned_free(pListEntry);
+		winpr_aligned_free(pListEntry);
 	}
 
 	/* Flush the list and verify that the items are gone. */
-	pFirstEntry = InterlockedPopEntrySList(pListHead);
+	WINPR_PSLIST_ENTRY pFirstEntry = InterlockedPopEntrySList(pListHead);
 
 	if (pFirstEntry)
 	{
 		printf("Error: List is not empty.\n");
-		return -1;
+		goto fail;
 	}
 
-	_aligned_free(pListHead);
+	rc = 0;
+fail:
+	winpr_aligned_free(pListHead);
 
-	return 0;
+	return rc;
 }

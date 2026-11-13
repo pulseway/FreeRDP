@@ -18,9 +18,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include "nonehandle.h"
 
@@ -28,24 +26,14 @@
 
 #include <pthread.h>
 
-static BOOL NoneHandleCloseHandle(HANDLE handle)
+static BOOL NoneHandleCloseHandle(WINPR_ATTR_UNUSED HANDLE handle)
 {
-	WINPR_NONE_HANDLE* none = (WINPR_NONE_HANDLE*)handle;
-	free(none);
 	return TRUE;
 }
 
 static BOOL NoneHandleIsHandle(HANDLE handle)
 {
-	WINPR_NONE_HANDLE* none = (WINPR_NONE_HANDLE*)handle;
-
-	if (!none || none->Type != HANDLE_TYPE_NONE)
-	{
-		SetLastError(ERROR_INVALID_HANDLE);
-		return FALSE;
-	}
-
-	return TRUE;
+	return WINPR_HANDLE_IS_HANDLED(handle, HANDLE_TYPE_NONE, FALSE);
 }
 
 static int NoneHandleGetFd(HANDLE handle)
@@ -59,34 +47,47 @@ static int NoneHandleGetFd(HANDLE handle)
 static HANDLE_OPS ops = { NoneHandleIsHandle,
 	                      NoneHandleCloseHandle,
 	                      NoneHandleGetFd,
-	                      NULL, /* CleanupHandle */
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL,
-	                      NULL };
+	                      nullptr, /* CleanupHandle */
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr,
+	                      nullptr };
 
-HANDLE CreateNoneHandle()
+HANDLE CreateNoneHandle(void)
 {
-	WINPR_NONE_HANDLE* none;
-	none = (WINPR_NONE_HANDLE*)calloc(1, sizeof(WINPR_NONE_HANDLE));
+	WINPR_NONE_HANDLE* none = (WINPR_NONE_HANDLE*)calloc(1, sizeof(WINPR_NONE_HANDLE));
 
 	if (!none)
-		return NULL;
+		return nullptr;
 
-	none->ops = &ops;
+	none->common.ops = &ops;
+	none->common.refCount = 1;
 	return (HANDLE)none;
+}
+
+void winpr_Handle_ConvertToNone(HANDLE handle)
+{
+	WINPR_HANDLE* hdl = (WINPR_HANDLE*)handle;
+
+	if (!hdl)
+		return;
+
+	hdl->Type = HANDLE_TYPE_NONE;
+	hdl->Mode = 0;
+	hdl->ops = &ops;
 }
 
 #endif

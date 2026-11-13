@@ -22,14 +22,20 @@
 #ifndef FREERDP_CLIENT_X11_FREERDP_H
 #define FREERDP_CLIENT_X11_FREERDP_H
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
-typedef struct xf_context xfContext;
+#include "xf_types.h"
+#include "xf_disp.h"
+#include "xf_cliprdr.h"
+#include "xf_video.h"
+#include "xf_rail.h"
 
 #ifdef WITH_XCURSOR
 #include <X11/Xcursor/Xcursor.h>
+#endif
+
+#ifdef WITH_XI
+#include <X11/extensions/XInput2.h>
 #endif
 
 #include <freerdp/api.h>
@@ -51,6 +57,8 @@ typedef struct xf_context xfContext;
 #include <freerdp/codec/h264.h>
 #include <freerdp/codec/progressive.h>
 #include <freerdp/codec/region.h>
+#include <freerdp/locale/keyboard.h>
+#include <freerdp/client.h>
 
 #if !defined(XcursorUInt)
 typedef unsigned int XcursorUInt;
@@ -62,17 +70,17 @@ typedef XcursorUInt XcursorPixel;
 
 struct xf_FullscreenMonitors
 {
-	UINT32 top;
-	UINT32 bottom;
-	UINT32 left;
-	UINT32 right;
+	INT32 top;
+	INT32 bottom;
+	INT32 left;
+	INT32 right;
 };
 typedef struct xf_FullscreenMonitors xfFullscreenMonitors;
 
 struct xf_WorkArea
 {
-	UINT32 x;
-	UINT32 y;
+	INT32 x;
+	INT32 y;
 	UINT32 width;
 	UINT32 height;
 };
@@ -106,24 +114,34 @@ struct xf_glyph
 };
 typedef struct xf_glyph xfGlyph;
 
-typedef struct xf_clipboard xfClipboard;
-typedef struct _xfDispContext xfDispContext;
-typedef struct _xfVideoContext xfVideoContext;
-typedef struct xf_rail_icon_cache xfRailIconCache;
-
 /* Number of buttons that are mapped from X11 to RDP button events. */
 #define NUM_BUTTONS_MAPPED 11
 
 typedef struct
 {
-	int button;
+	UINT32 button;
 	UINT16 flags;
 } button_map;
 
+#if defined(WITH_XI)
+#define MAX_CONTACTS 20
+
+typedef struct touch_contact
+{
+	int id;
+	int count;
+	double pos_x;
+	double pos_y;
+	double last_x;
+	double last_y;
+
+} touchContact;
+
+#endif
+
 struct xf_context
 {
-	rdpContext context;
-	DEFINE_RDP_CLIENT_COMMON();
+	rdpClientContext common;
 
 	GC gc;
 	int xfds;
@@ -150,9 +168,12 @@ struct xf_context
 	BOOL debug;
 	HANDLE x11event;
 	xfWindow* window;
+	Window reconnectWindow;
+	char reconnectMessage[128];
 	xfAppWindow* appWindow;
 	xfPointer* pointer;
 	xfWorkArea workArea;
+	xfWorkArea railWorkArea;
 	xfFullscreenMonitors fullscreenMonitors;
 	int current_desktop;
 	BOOL remote_app;
@@ -160,15 +181,10 @@ struct xf_context
 	BOOL UseXThreads;
 	BOOL cursorHidden;
 
-	HGDI_DC hdc;
 	UINT32 bitmap_size;
 	BYTE* bitmap_buffer;
 
 	BOOL frame_begin;
-	UINT16 frame_x1;
-	UINT16 frame_y1;
-	UINT16 frame_x2;
-	UINT16 frame_y2;
 
 	int XInputOpcode;
 
@@ -185,17 +201,21 @@ struct xf_context
 #endif
 
 	BOOL focused;
-	BOOL use_xinput;
 	BOOL mouse_active;
 	BOOL fullscreen_toggle;
-	BOOL controlToggle;
-	UINT32 KeyboardLayout;
 	BOOL KeyboardState[256];
+	BOOL deferAlt;
+	struct
+	{
+		UINT32 pending;
+		UINT32 sent;
+	} deferredAlt;
 	XModifierKeymap* modifierMap;
 	wArrayList* keyCombinations;
 	wArrayList* xevents;
 	BOOL actionScriptExists;
 
+	int attribs_mask;
 	XSetWindowAttributes attribs;
 	BOOL complex_regions;
 	VIRTUAL_SCREEN vscreen;
@@ -208,42 +228,62 @@ struct xf_context
 
 	Atom UTF8_STRING;
 
-	Atom _XWAYLAND_MAY_GRAB_KEYBOARD;
+	Atom XWAYLAND_MAY_GRAB_KEYBOARD;
 
-	Atom _NET_WM_ICON;
-	Atom _MOTIF_WM_HINTS;
-	Atom _NET_CURRENT_DESKTOP;
-	Atom _NET_WORKAREA;
+	Atom NET_WM_ICON;
+	Atom MOTIF_WM_HINTS;
+	Atom NET_NUMBER_OF_DESKTOPS;
+	Atom NET_CURRENT_DESKTOP;
+	Atom NET_WORKAREA;
 
-	Atom _NET_SUPPORTED;
-	ATOM _NET_SUPPORTING_WM_CHECK;
+	Atom NET_SUPPORTED;
+	Atom NET_SUPPORTING_WM_CHECK;
 
-	Atom _NET_WM_STATE;
-	Atom _NET_WM_STATE_FULLSCREEN;
-	Atom _NET_WM_STATE_MAXIMIZED_HORZ;
-	Atom _NET_WM_STATE_MAXIMIZED_VERT;
-	Atom _NET_WM_STATE_SKIP_TASKBAR;
-	Atom _NET_WM_STATE_SKIP_PAGER;
+	Atom NET_WM_STATE;
+	Atom NET_WM_STATE_MODAL;
+	Atom NET_WM_STATE_STICKY;
+	Atom NET_WM_STATE_MAXIMIZED_VERT;
+	Atom NET_WM_STATE_MAXIMIZED_HORZ;
+	Atom NET_WM_STATE_SHADED;
+	Atom NET_WM_STATE_SKIP_TASKBAR;
+	Atom NET_WM_STATE_SKIP_PAGER;
+	Atom NET_WM_STATE_HIDDEN;
+	Atom NET_WM_STATE_FULLSCREEN;
+	Atom NET_WM_STATE_ABOVE;
+	Atom NET_WM_STATE_BELOW;
+	Atom NET_WM_STATE_DEMANDS_ATTENTION;
 
-	Atom _NET_WM_FULLSCREEN_MONITORS;
+	Atom NET_WM_FULLSCREEN_MONITORS;
 
-	Atom _NET_WM_NAME;
-	Atom _NET_WM_PID;
+	Atom NET_WM_NAME;
+	Atom NET_WM_PID;
 
-	Atom _NET_WM_WINDOW_TYPE;
-	Atom _NET_WM_WINDOW_TYPE_NORMAL;
-	Atom _NET_WM_WINDOW_TYPE_DIALOG;
-	Atom _NET_WM_WINDOW_TYPE_UTILITY;
-	Atom _NET_WM_WINDOW_TYPE_POPUP;
-	Atom _NET_WM_WINDOW_TYPE_POPUP_MENU;
-	Atom _NET_WM_WINDOW_TYPE_DROPDOWN_MENU;
+	Atom NET_WM_WINDOW_TYPE;
+	Atom NET_WM_WINDOW_TYPE_NORMAL;
+	Atom NET_WM_WINDOW_TYPE_DIALOG;
+	Atom NET_WM_WINDOW_TYPE_UTILITY;
+	Atom NET_WM_WINDOW_TYPE_POPUP;
+	Atom NET_WM_WINDOW_TYPE_POPUP_MENU;
+	Atom NET_WM_WINDOW_TYPE_DROPDOWN_MENU;
 
-	Atom _NET_WM_MOVERESIZE;
-	Atom _NET_MOVERESIZE_WINDOW;
+	Atom NET_WM_MOVERESIZE;
+	Atom NET_MOVERESIZE_WINDOW;
 
 	Atom WM_STATE;
 	Atom WM_PROTOCOLS;
 	Atom WM_DELETE_WINDOW;
+
+	/* Allow actions */
+	Atom NET_WM_ALLOWED_ACTIONS;
+
+	Atom NET_WM_ACTION_CLOSE;
+	Atom NET_WM_ACTION_MINIMIZE;
+	Atom NET_WM_ACTION_MOVE;
+	Atom NET_WM_ACTION_RESIZE;
+	Atom NET_WM_ACTION_MAXIMIZE_HORZ;
+	Atom NET_WM_ACTION_MAXIMIZE_VERT;
+	Atom NET_WM_ACTION_FULLSCREEN;
+	Atom NET_WM_ACTION_CHANGE_DESKTOP;
 
 	/* Channels */
 #if defined(CHANNEL_TSMF_CLIENT)
@@ -253,13 +293,20 @@ struct xf_context
 	xfClipboard* clipboard;
 	CliprdrClientContext* cliprdr;
 	xfVideoContext* xfVideo;
-	RdpeiClientContext* rdpei;
-	EncomspClientContext* encomsp;
 	xfDispContext* xfDisp;
 
 	RailClientContext* rail;
 	wHashTable* railWindows;
 	xfRailIconCache* railIconCache;
+	/* gdi's DeleteSurface, wrapped with software GDI to detach RemoteApp windows */
+	pcRdpgfxDeleteSurface gdiDeleteSurface;
+
+#if defined(WITH_VERBOSE_WINPR_ASSERT)
+	BOOL isRailWindowsLocked;
+	const char* whereFkt;
+	const char* whereFile;
+	size_t whereLine;
+#endif
 
 	BOOL xkbAvailable;
 	BOOL xrenderAvailable;
@@ -268,16 +315,38 @@ struct xf_context
 	button_map button_map[NUM_BUTTONS_MAPPED];
 	BYTE savedMaximizedState;
 	UINT32 locked;
-	BOOL firstPressRightCtrl;
+	BOOL wasRightCtrlAlreadyPressed;
 	BOOL ungrabKeyboardWithRightCtrl;
+
+#if defined(WITH_XI)
+	touchContact contacts[MAX_CONTACTS];
+	int active_contacts;
+	int lastEvType;
+	XIDeviceEvent lastEvent;
+	double firstDist;
+	double lastDist;
+	double z_vector;
+	double px_vector;
+	double py_vector;
+#endif
+	BOOL xi_rawevent;
+	BOOL xi_event;
+	wLog* log;
+	FREERDP_REMAP_TABLE* remap_table;
+	DWORD X11_KEYCODE_TO_VIRTUAL_SCANCODE[256];
+	bool isCursorHidden;
+	bool isActionScriptAllowed;
+	bool exposeRequested;
+	GDI_RGN exposedArea;
+	Window exposedWindow;
 };
 
 BOOL xf_create_window(xfContext* xfc);
-void xf_toggle_fullscreen(xfContext* xfc);
-BOOL xf_toggle_control(xfContext* xfc);
+void xf_destroy_window(xfContext* xfc);
 
-void xf_encomsp_init(xfContext* xfc, EncomspClientContext* encomsp);
-void xf_encomsp_uninit(xfContext* xfc, EncomspClientContext* encomsp);
+BOOL xf_create_image(xfContext* xfc);
+void xf_toggle_fullscreen(xfContext* xfc);
+void xf_minimize(xfContext* xfc);
 
 enum XF_EXIT_CODE
 {
@@ -318,12 +387,40 @@ enum XF_EXIT_CODE
 	XF_EXIT_CONN_FAILED = 131,
 	XF_EXIT_AUTH_FAILURE = 132,
 	XF_EXIT_NEGO_FAILURE = 133,
+	XF_EXIT_LOGON_FAILURE = 134,
+	XF_EXIT_ACCOUNT_LOCKED_OUT = 135,
+	XF_EXIT_PRE_CONNECT_FAILED = 136,
+	XF_EXIT_CONNECT_UNDEFINED = 137,
+	XF_EXIT_POST_CONNECT_FAILED = 138,
+	XF_EXIT_DNS_ERROR = 139,
+	XF_EXIT_DNS_NAME_NOT_FOUND = 140,
+	XF_EXIT_CONNECT_FAILED = 141,
+	XF_EXIT_MCS_CONNECT_INITIAL_ERROR = 142,
+	XF_EXIT_TLS_CONNECT_FAILED = 143,
+	XF_EXIT_INSUFFICIENT_PRIVILEGES = 144,
+	XF_EXIT_CONNECT_CANCELLED = 145,
 
+	XF_EXIT_CONNECT_TRANSPORT_FAILED = 147,
+	XF_EXIT_CONNECT_PASSWORD_EXPIRED = 148,
+	XF_EXIT_CONNECT_PASSWORD_MUST_CHANGE = 149,
+	XF_EXIT_CONNECT_KDC_UNREACHABLE = 150,
+	XF_EXIT_CONNECT_ACCOUNT_DISABLED = 151,
+	XF_EXIT_CONNECT_PASSWORD_CERTAINLY_EXPIRED = 152,
+	XF_EXIT_CONNECT_CLIENT_REVOKED = 153,
+	XF_EXIT_CONNECT_WRONG_PASSWORD = 154,
+	XF_EXIT_CONNECT_ACCESS_DENIED = 155,
+	XF_EXIT_CONNECT_ACCOUNT_RESTRICTION = 156,
+	XF_EXIT_CONNECT_ACCOUNT_EXPIRED = 157,
+	XF_EXIT_CONNECT_LOGON_TYPE_NOT_GRANTED = 158,
+	XF_EXIT_CONNECT_NO_OR_MISSING_CREDENTIALS = 159,
+	XF_EXIT_CONNECT_TARGET_BOOTING = 160,
+	XF_EXIT_CONNECT_HYBRID_REQUIRED_BY_SERVER = 161,
+	XF_EXIT_CODE_LAST = XF_EXIT_CONNECT_HYBRID_REQUIRED_BY_SERVER,
 	XF_EXIT_UNKNOWN = 255,
 };
 
-#define xf_lock_x11(xfc) xf_lock_x11_(xfc, __FUNCTION__);
-#define xf_unlock_x11(xfc) xf_unlock_x11_(xfc, __FUNCTION__);
+#define xf_lock_x11(xfc) xf_lock_x11_(xfc, __func__)
+#define xf_unlock_x11(xfc) xf_unlock_x11_(xfc, __func__)
 
 void xf_lock_x11_(xfContext* xfc, const char* fkt);
 void xf_unlock_x11_(xfContext* xfc, const char* fkt);
@@ -331,10 +428,12 @@ void xf_unlock_x11_(xfContext* xfc, const char* fkt);
 BOOL xf_picture_transform_required(xfContext* xfc);
 
 #define xf_draw_screen(_xfc, _x, _y, _w, _h) \
-	xf_draw_screen_((_xfc), (_x), (_y), (_w), (_h), __FUNCTION__, __FILE__, __LINE__)
+	xf_draw_screen_((_xfc), (_x), (_y), (_w), (_h), __func__, __FILE__, __LINE__)
 void xf_draw_screen_(xfContext* xfc, int x, int y, int w, int h, const char* fkt, const char* file,
                      int line);
 
-FREERDP_API DWORD xf_exit_code_from_disconnect_reason(DWORD reason);
+BOOL xf_keyboard_update_modifier_map(xfContext* xfc);
+
+FREERDP_API int xf_exit_code_from_disconnect_reason(DWORD reason);
 
 #endif /* FREERDP_CLIENT_X11_FREERDP_H */

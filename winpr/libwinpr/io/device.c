@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/io.h>
 
@@ -32,7 +30,7 @@
 #include <stdlib.h>
 #include <errno.h>
 
-#ifdef HAVE_UNISTD_H
+#ifdef WINPR_HAVE_UNISTD_H
 #include <unistd.h>
 #endif
 
@@ -66,13 +64,13 @@
 
 static char* GetDeviceFileNameWithoutPrefixA(LPCSTR lpName)
 {
-	char* lpFileName;
+	char* lpFileName = nullptr;
 
 	if (!lpName)
-		return NULL;
+		return nullptr;
 
 	if (strncmp(lpName, DEVICE_FILE_PREFIX_PATH, sizeof(DEVICE_FILE_PREFIX_PATH) - 1) != 0)
-		return NULL;
+		return nullptr;
 
 	lpFileName =
 	    _strdup(&lpName[strnlen(DEVICE_FILE_PREFIX_PATH, sizeof(DEVICE_FILE_PREFIX_PATH))]);
@@ -81,12 +79,12 @@ static char* GetDeviceFileNameWithoutPrefixA(LPCSTR lpName)
 
 static char* GetDeviceFileUnixDomainSocketBaseFilePathA(void)
 {
-	char* lpTempPath;
-	char* lpPipePath;
+	char* lpTempPath = nullptr;
+	char* lpPipePath = nullptr;
 	lpTempPath = GetKnownPath(KNOWN_PATH_TEMP);
 
 	if (!lpTempPath)
-		return NULL;
+		return nullptr;
 
 	lpPipePath = GetCombinedPath(lpTempPath, ".device");
 	free(lpTempPath);
@@ -95,23 +93,23 @@ static char* GetDeviceFileUnixDomainSocketBaseFilePathA(void)
 
 static char* GetDeviceFileUnixDomainSocketFilePathA(LPCSTR lpName)
 {
-	char* lpPipePath = NULL;
-	char* lpFileName = NULL;
-	char* lpFilePath = NULL;
+	char* lpPipePath = nullptr;
+	char* lpFileName = nullptr;
+	char* lpFilePath = nullptr;
 	lpPipePath = GetDeviceFileUnixDomainSocketBaseFilePathA();
 
 	if (!lpPipePath)
-		return NULL;
+		return nullptr;
 
 	lpFileName = GetDeviceFileNameWithoutPrefixA(lpName);
 
 	if (!lpFileName)
 	{
 		free(lpPipePath);
-		return NULL;
+		return nullptr;
 	}
 
-	lpFilePath = GetCombinedPath(lpPipePath, (char*)lpFileName);
+	lpFilePath = GetCombinedPath(lpPipePath, lpFileName);
 	free(lpPipePath);
 	free(lpFileName);
 	return lpFilePath;
@@ -122,20 +120,21 @@ static char* GetDeviceFileUnixDomainSocketFilePathA(LPCSTR lpName)
  * http://msdn.microsoft.com/en-us/library/windows/hardware/ff548397/
  */
 
-NTSTATUS _IoCreateDeviceEx(PDRIVER_OBJECT_EX DriverObject, ULONG DeviceExtensionSize,
-                           PUNICODE_STRING DeviceName, DEVICE_TYPE DeviceType,
-                           ULONG DeviceCharacteristics, BOOLEAN Exclusive,
-                           PDEVICE_OBJECT_EX* DeviceObject)
+NTSTATUS _IoCreateDeviceEx(WINPR_ATTR_UNUSED PDRIVER_OBJECT_EX DriverObject,
+                           WINPR_ATTR_UNUSED ULONG DeviceExtensionSize, PUNICODE_STRING DeviceName,
+                           WINPR_ATTR_UNUSED DEVICE_TYPE DeviceType,
+                           WINPR_ATTR_UNUSED ULONG DeviceCharacteristics,
+                           WINPR_ATTR_UNUSED BOOLEAN Exclusive, PDEVICE_OBJECT_EX* DeviceObject)
 {
-	int status;
-	char* DeviceBasePath;
-	DEVICE_OBJECT_EX* pDeviceObjectEx;
+	int status = 0;
+	char* DeviceBasePath = nullptr;
+	DEVICE_OBJECT_EX* pDeviceObjectEx = nullptr;
 	DeviceBasePath = GetDeviceFileUnixDomainSocketBaseFilePathA();
 
 	if (!DeviceBasePath)
 		return STATUS_NO_MEMORY;
 
-	if (!PathFileExistsA(DeviceBasePath))
+	if (!winpr_PathFileExists(DeviceBasePath))
 	{
 		if (mkdir(DeviceBasePath, S_IRUSR | S_IWUSR | S_IXUSR) != 0)
 		{
@@ -150,9 +149,8 @@ NTSTATUS _IoCreateDeviceEx(PDRIVER_OBJECT_EX DriverObject, ULONG DeviceExtension
 	if (!pDeviceObjectEx)
 		return STATUS_NO_MEMORY;
 
-	ConvertFromUnicode(CP_UTF8, 0, DeviceName->Buffer, DeviceName->Length / 2,
-	                   &(pDeviceObjectEx->DeviceName), 0, NULL, NULL);
-
+	pDeviceObjectEx->DeviceName =
+	    ConvertWCharNToUtf8Alloc(DeviceName->Buffer, DeviceName->Length / sizeof(WCHAR), nullptr);
 	if (!pDeviceObjectEx->DeviceName)
 	{
 		free(pDeviceObjectEx);
@@ -169,7 +167,7 @@ NTSTATUS _IoCreateDeviceEx(PDRIVER_OBJECT_EX DriverObject, ULONG DeviceExtension
 		return STATUS_NO_MEMORY;
 	}
 
-	if (PathFileExistsA(pDeviceObjectEx->DeviceFileName))
+	if (winpr_PathFileExists(pDeviceObjectEx->DeviceFileName))
 	{
 		if (unlink(pDeviceObjectEx->DeviceFileName) == -1)
 		{
@@ -222,7 +220,7 @@ NTSTATUS _IoCreateDeviceEx(PDRIVER_OBJECT_EX DriverObject, ULONG DeviceExtension
 
 VOID _IoDeleteDeviceEx(PDEVICE_OBJECT_EX DeviceObject)
 {
-	DEVICE_OBJECT_EX* pDeviceObjectEx;
+	DEVICE_OBJECT_EX* pDeviceObjectEx = nullptr;
 	pDeviceObjectEx = (DEVICE_OBJECT_EX*)DeviceObject;
 
 	if (!pDeviceObjectEx)

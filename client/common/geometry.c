@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <freerdp/client/geometry.h>
 #include <winpr/interlocked.h>
@@ -31,12 +29,15 @@ void mappedGeometryRef(MAPPED_GEOMETRY* g)
 
 void mappedGeometryUnref(MAPPED_GEOMETRY* g)
 {
+	if (!g)
+		return;
+
 	if (InterlockedDecrement(&g->refCounter))
 		return;
 
-	g->MappedGeometryUpdate = NULL;
-	g->MappedGeometryClear = NULL;
-	g->custom = NULL;
+	g->MappedGeometryUpdate = nullptr;
+	g->MappedGeometryClear = nullptr;
+	g->custom = nullptr;
 	free(g->geometry.rects);
 	free(g);
 }

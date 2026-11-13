@@ -16,9 +16,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
+
+#include <winpr/assert.h>
 
 #include "wf_channels.h"
 
@@ -26,27 +26,23 @@
 #include "wf_cliprdr.h"
 
 #include <freerdp/gdi/gfx.h>
+#include <freerdp/gdi/video.h>
 
 #include <freerdp/log.h>
 #define TAG CLIENT_TAG("windows")
 
-void wf_OnChannelConnectedEventHandler(void* context, ChannelConnectedEventArgs* e)
+void wf_OnChannelConnectedEventHandler(void* context, const ChannelConnectedEventArgs* e)
 {
 	wfContext* wfc = (wfContext*)context;
-	rdpSettings* settings = wfc->context.settings;
+	rdpSettings* settings;
 
-	if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0)
-	{
-	}
-	else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
-	{
-		if (!settings->SoftwareGdi)
-			WLog_WARN(TAG, "Channel " RDPGFX_DVC_CHANNEL_NAME
-			               " does not support hardware acceleration, using fallback.");
+	WINPR_ASSERT(wfc);
+	WINPR_ASSERT(e);
 
-		gdi_graphics_pipeline_init(wfc->context.gdi, (RdpgfxClientContext*)e->pInterface);
-	}
-	else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
+	settings = wfc->common.context.settings;
+	WINPR_ASSERT(settings);
+
+	if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
 	{
 		wf_rail_init(wfc, (RailClientContext*)e->pInterface);
 	}
@@ -54,24 +50,26 @@ void wf_OnChannelConnectedEventHandler(void* context, ChannelConnectedEventArgs*
 	{
 		wf_cliprdr_init(wfc, (CliprdrClientContext*)e->pInterface);
 	}
-	else if (strcmp(e->name, ENCOMSP_SVC_CHANNEL_NAME) == 0)
+	else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0)
 	{
+		wfc->disp = (DispClientContext*)e->pInterface;
 	}
+	else
+		freerdp_client_OnChannelConnectedEventHandler(context, e);
 }
 
-void wf_OnChannelDisconnectedEventHandler(void* context, ChannelDisconnectedEventArgs* e)
+void wf_OnChannelDisconnectedEventHandler(void* context, const ChannelDisconnectedEventArgs* e)
 {
 	wfContext* wfc = (wfContext*)context;
-	rdpSettings* settings = wfc->context.settings;
+	rdpSettings* settings;
 
-	if (strcmp(e->name, RDPEI_DVC_CHANNEL_NAME) == 0)
-	{
-	}
-	else if (strcmp(e->name, RDPGFX_DVC_CHANNEL_NAME) == 0)
-	{
-		gdi_graphics_pipeline_uninit(wfc->context.gdi, (RdpgfxClientContext*)e->pInterface);
-	}
-	else if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
+	WINPR_ASSERT(wfc);
+	WINPR_ASSERT(e);
+
+	settings = wfc->common.context.settings;
+	WINPR_ASSERT(settings);
+
+	if (strcmp(e->name, RAIL_SVC_CHANNEL_NAME) == 0)
 	{
 		wf_rail_uninit(wfc, (RailClientContext*)e->pInterface);
 	}
@@ -79,7 +77,10 @@ void wf_OnChannelDisconnectedEventHandler(void* context, ChannelDisconnectedEven
 	{
 		wf_cliprdr_uninit(wfc, (CliprdrClientContext*)e->pInterface);
 	}
-	else if (strcmp(e->name, ENCOMSP_SVC_CHANNEL_NAME) == 0)
+	else if (strcmp(e->name, DISP_DVC_CHANNEL_NAME) == 0)
 	{
+		wfc->disp = nullptr;
 	}
+	else
+		freerdp_client_OnChannelDisconnectedEventHandler(context, e);
 }

@@ -20,13 +20,16 @@
 #ifndef FREERDP_DISPLAY_H
 #define FREERDP_DISPLAY_H
 
-#include <freerdp/freerdp.h>
+#include <freerdp/api.h>
+#include <freerdp/types.h>
+#include <freerdp/settings.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
+	WINPR_ATTR_NODISCARD
 	FREERDP_API BOOL freerdp_display_send_monitor_layout(rdpContext* context, UINT32 monitorCount,
 	                                                     const MONITOR_DEF* monitorDefArray);
 

@@ -14,12 +14,18 @@
 int TestGdiRegion(int argc, char* argv[])
 {
 	int rc = -1;
-	INT32 x, y, w, h;
-	INT32 l, r, t, b;
-	HGDI_RGN rgn1 = NULL;
-	HGDI_RGN rgn2 = NULL;
-	HGDI_RECT rect1 = NULL;
-	HGDI_RECT rect2 = NULL;
+	INT32 x = 0;
+	INT32 y = 0;
+	INT32 w = 0;
+	INT32 h = 0;
+	INT32 l = 0;
+	INT32 r = 0;
+	INT32 t = 0;
+	INT32 b = 0;
+	HGDI_RGN rgn1 = nullptr;
+	HGDI_RGN rgn2 = nullptr;
+	GDI_RECT* rect1 = nullptr;
+	GDI_RECT* rect2 = nullptr;
 
 	WINPR_UNUSED(argc);
 	WINPR_UNUSED(argv);
@@ -127,6 +133,12 @@ int TestGdiRegion(int argc, char* argv[])
 		goto fail;
 	if (rect2->bottom != (2 + 4 - 1))
 		goto fail;
+	if (!gdi_CRgnToRect(0, 0, 1, 1, rect2))
+		goto fail;
+	if ((rect2->left != 0) || (rect2->right != 0) || (rect2->top != 0) || (rect2->bottom != 0))
+		goto fail;
+	if (gdi_CRgnToRect(-1, -1, 1, 1, rect2))
+		goto fail;
 
 	if (!gdi_RgnToCRect(rgn1, &l, &t, &r, &b))
 		goto fail;
@@ -172,7 +184,7 @@ int TestGdiRegion(int argc, char* argv[])
 	if (!gdi_SetRect(rect2, -4, 500, 66, 754))
 		goto fail;
 
-	if (gdi_SetRgn(NULL, -23, -42, 33, 99))
+	if (gdi_SetRgn(nullptr, -23, -42, 33, 99))
 		goto fail;
 	if (gdi_SetRgn(rgn2, -23, -42, -33, 99))
 		goto fail;
@@ -191,7 +203,7 @@ int TestGdiRegion(int argc, char* argv[])
 	if (rgn2->null)
 		goto fail;
 
-	if (gdi_SetRectRgn(NULL, 33, 22, 44, 33))
+	if (gdi_SetRectRgn(nullptr, 33, 22, 44, 33))
 		goto fail;
 	if (gdi_SetRectRgn(rgn1, 331, 22, 44, 33))
 		goto fail;
@@ -213,11 +225,11 @@ int TestGdiRegion(int argc, char* argv[])
 	if (!gdi_EqualRgn(rgn1, rgn1))
 		goto fail;
 
-	if (gdi_CopyRect(rect1, NULL))
+	if (gdi_CopyRect(rect1, nullptr))
 		goto fail;
-	if (gdi_CopyRect(NULL, rect1))
+	if (gdi_CopyRect(nullptr, rect1))
 		goto fail;
-	if (gdi_CopyRect(NULL, NULL))
+	if (gdi_CopyRect(nullptr, nullptr))
 		goto fail;
 	if (!gdi_CopyRect(rect1, rect2))
 		goto fail;

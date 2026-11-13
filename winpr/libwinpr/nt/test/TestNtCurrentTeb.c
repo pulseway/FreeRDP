@@ -6,15 +6,19 @@
 int TestNtCurrentTeb(int argc, char* argv[])
 {
 #ifndef _WIN32
-	PTEB teb;
+	PTEB teb = nullptr;
 
 	teb = NtCurrentTeb();
 
 	if (!teb)
 	{
-		printf("NtCurrentTeb() returned NULL\n");
+		printf("NtCurrentTeb() returned nullptr\n");
 		return -1;
 	}
 #endif
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
 	return 0;
 }

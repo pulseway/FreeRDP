@@ -16,9 +16,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/print.h>
@@ -29,11 +27,10 @@
 
 #include "shadow_capture.h"
 
-#define TAG SERVER_TAG("shadow")
-
-int shadow_capture_align_clip_rect(RECTANGLE_16* rect, RECTANGLE_16* clip)
+int shadow_capture_align_clip_rect(RECTANGLE_16* rect, const RECTANGLE_16* clip)
 {
-	int dx, dy;
+	int dx = 0;
+	int dy = 0;
 	dx = (rect->left % 16);
 
 	if (dx != 0)
@@ -79,54 +76,167 @@ int shadow_capture_align_clip_rect(RECTANGLE_16* rect, RECTANGLE_16* clip)
 	return 1;
 }
 
-int shadow_capture_compare(BYTE* pData1, UINT32 nStep1, UINT32 nWidth, UINT32 nHeight, BYTE* pData2,
-                           UINT32 nStep2, RECTANGLE_16* rect)
+#if !defined(WITHOUT_FREERDP_3x_DEPRECATED)
+int shadow_capture_compare(const BYTE* WINPR_RESTRICT pData1, UINT32 nStep1, UINT32 nWidth,
+                           UINT32 nHeight, const BYTE* WINPR_RESTRICT pData2, UINT32 nStep2,
+                           RECTANGLE_16* WINPR_RESTRICT rect)
 {
-	BOOL equal;
-	BOOL allEqual;
-	UINT32 tw, th;
-	UINT32 tx, ty, k;
-	UINT32 nrow, ncol;
-	UINT32 l, t, r, b;
-	BYTE *p1, *p2;
-	BOOL rows[1024];
-#ifdef WITH_DEBUG_SHADOW_CAPTURE
-	BOOL cols[1024];
+	return shadow_capture_compare_with_format(pData1, PIXEL_FORMAT_BGRX32, nStep1, nWidth, nHeight,
+	                                          pData2, PIXEL_FORMAT_BGRX32, nStep2, rect);
+}
 #endif
-	allEqual = TRUE;
-	ZeroMemory(rect, sizeof(RECTANGLE_16));
-	FillMemory(rows, sizeof(rows), 0xFF);
-#ifdef WITH_DEBUG_SHADOW_CAPTURE
-	FillMemory(cols, sizeof(cols), 0xFF);
-#endif
-	nrow = (nHeight + 15) / 16;
-	ncol = (nWidth + 15) / 16;
-	l = ncol + 1;
-	r = 0;
-	t = nrow + 1;
-	b = 0;
 
-	for (ty = 0; ty < nrow; ty++)
+WINPR_ATTR_NODISCARD
+static BOOL color_equal_no_alpha(UINT32 colorA, UINT32 formatA, UINT32 colorB, UINT32 formatB)
+{
+	BYTE ar = 0;
+	BYTE ag = 0;
+	BYTE ab = 0;
+	BYTE br = 0;
+	BYTE bg = 0;
+	BYTE bb = 0;
+	FreeRDPSplitColor(colorA, formatA, &ar, &ag, &ab, nullptr, nullptr);
+	FreeRDPSplitColor(colorB, formatB, &br, &bg, &bb, nullptr, nullptr);
+
+	if (ar != br)
+		return FALSE;
+	if (ag != bg)
+		return FALSE;
+	if (ab != bb)
+		return FALSE;
+	return TRUE;
+}
+
+WINPR_ATTR_NODISCARD
+static BOOL pixel_equal_no_alpha(const BYTE* WINPR_RESTRICT a, UINT32 formatA,
+                                 const BYTE* WINPR_RESTRICT b, UINT32 formatB, size_t count)
+{
+	const size_t bppA = FreeRDPGetBytesPerPixel(formatA);
+	const size_t bppB = FreeRDPGetBytesPerPixel(formatB);
+
+	for (size_t x = 0; x < count; x++)
 	{
-		th = ((ty + 1) == nrow) ? (nHeight % 16) : 16;
+		const UINT32 colorA = FreeRDPReadColor(&a[bppA * x], formatA);
+		const UINT32 colorB = FreeRDPReadColor(&b[bppB * x], formatB);
+		if (!color_equal_no_alpha(colorA, formatA, colorB, formatB))
+			return FALSE;
+	}
+
+	return TRUE;
+}
+
+WINPR_ATTR_NODISCARD
+static BOOL pixel_equal_same_format(const BYTE* WINPR_RESTRICT a, UINT32 formatA,
+                                    const BYTE* WINPR_RESTRICT b, UINT32 formatB, size_t count)
+{
+	if (formatA != formatB)
+		return FALSE;
+	const size_t bppA = FreeRDPGetBytesPerPixel(formatA);
+	return memcmp(a, b, count * bppA) == 0;
+}
+
+/* 32 bpp formats that differ only in having alpha (e.g. BGRX32 and BGRA32) keep the colour
+ * channels at the same bits, so compare the colours under a mask of those bits, never the alpha
+ * or padding byte: an X server leaves it 0 in a depth 24 image, while the X format of the
+ * surface reads as opaque. */
+WINPR_ATTR_NODISCARD
+static BOOL pixel_equal_32_ignore_alpha(const BYTE* WINPR_RESTRICT a, UINT32 formatA,
+                                        const BYTE* WINPR_RESTRICT b, UINT32 formatB, size_t count)
+{
+	const UINT32 mask = FreeRDPGetColor(formatA, 0xFF, 0xFF, 0xFF, 0x00);
+
+	for (size_t x = 0; x < count; x++)
+	{
+		const UINT32 colorA = FreeRDPReadColor(&a[4 * x], formatA);
+		const UINT32 colorB = FreeRDPReadColor(&b[4 * x], formatB);
+		if (((colorA ^ colorB) & mask) != 0)
+			return FALSE;
+	}
+	return TRUE;
+}
+
+typedef BOOL (*pixel_equal_fn_t)(const BYTE* WINPR_RESTRICT a, UINT32 formatA,
+                                 const BYTE* WINPR_RESTRICT b, UINT32 formatB, size_t count);
+
+WINPR_ATTR_NODISCARD
+static pixel_equal_fn_t get_comparison_fn(DWORD format1, DWORD format2)
+{
+
+	if (format1 == format2)
+		return pixel_equal_same_format;
+
+	const UINT32 bpp1 = FreeRDPGetBitsPerPixel(format1);
+
+	if (!FreeRDPColorHasAlpha(format1) || !FreeRDPColorHasAlpha(format2))
+	{
+		/* RGBA32 and RGBX32 or similar: the alpha or padding byte differs (0 vs opaque), so
+		 * comparing it would report every pixel as changed. Compare the colour bytes only. */
+		if ((bpp1 == 32) && FreeRDPAreColorFormatsEqualNoAlpha(format1, format2))
+		{
+			switch (format1)
+			{
+				case PIXEL_FORMAT_ARGB32:
+				case PIXEL_FORMAT_XRGB32:
+				case PIXEL_FORMAT_ABGR32:
+				case PIXEL_FORMAT_XBGR32:
+				case PIXEL_FORMAT_RGBA32:
+				case PIXEL_FORMAT_RGBX32:
+				case PIXEL_FORMAT_BGRA32:
+				case PIXEL_FORMAT_BGRX32:
+					return pixel_equal_32_ignore_alpha;
+				default:
+					break;
+			}
+		}
+		return pixel_equal_no_alpha;
+	}
+	else
+		return pixel_equal_no_alpha;
+}
+
+int shadow_capture_compare_with_format(const BYTE* WINPR_RESTRICT pData1, UINT32 format1,
+                                       UINT32 nStep1, UINT32 nWidth, UINT32 nHeight,
+                                       const BYTE* WINPR_RESTRICT pData2, UINT32 format2,
+                                       UINT32 nStep2, RECTANGLE_16* WINPR_RESTRICT rect)
+{
+	pixel_equal_fn_t pixel_equal_fn = get_comparison_fn(format1, format2);
+	BOOL allEqual = TRUE;
+	UINT32 tw = 0;
+	const UINT32 nrow = (nHeight + 15) / 16;
+	const UINT32 ncol = (nWidth + 15) / 16;
+	UINT32 l = ncol + 1;
+	UINT32 t = nrow + 1;
+	UINT32 r = 0;
+	UINT32 b = 0;
+	const size_t bppA = FreeRDPGetBytesPerPixel(format1);
+	const size_t bppB = FreeRDPGetBytesPerPixel(format2);
+	const RECTANGLE_16 empty = WINPR_C_ARRAY_INIT;
+	WINPR_ASSERT(rect);
+
+	*rect = empty;
+
+	for (size_t ty = 0; ty < nrow; ty++)
+	{
+		BOOL rowEqual = TRUE;
+		size_t th = ((ty + 1) == nrow) ? (nHeight % 16) : 16;
 
 		if (!th)
 			th = 16;
 
-		for (tx = 0; tx < ncol; tx++)
+		for (size_t tx = 0; tx < ncol; tx++)
 		{
-			equal = TRUE;
+			BOOL equal = TRUE;
 			tw = ((tx + 1) == ncol) ? (nWidth % 16) : 16;
 
 			if (!tw)
 				tw = 16;
 
-			p1 = &pData1[(ty * 16 * nStep1) + (tx * 16 * 4)];
-			p2 = &pData2[(ty * 16 * nStep2) + (tx * 16 * 4)];
+			const BYTE* p1 = &pData1[(ty * 16ULL * nStep1) + (tx * 16ull * bppA)];
+			const BYTE* p2 = &pData2[(ty * 16ULL * nStep2) + (tx * 16ull * bppB)];
 
-			for (k = 0; k < th; k++)
+			for (size_t k = 0; k < th; k++)
 			{
-				if (memcmp(p1, p2, tw * 4) != 0)
+				if (!pixel_equal_fn(p1, format1, p2, format2, tw))
 				{
 					equal = FALSE;
 					break;
@@ -138,100 +248,68 @@ int shadow_capture_compare(BYTE* pData1, UINT32 nStep1, UINT32 nWidth, UINT32 nH
 
 			if (!equal)
 			{
-				rows[ty] = FALSE;
-#ifdef WITH_DEBUG_SHADOW_CAPTURE
-				cols[tx] = FALSE;
-#endif
-
+				rowEqual = FALSE;
 				if (l > tx)
-					l = tx;
+					l = (UINT32)tx;
 
 				if (r < tx)
-					r = tx;
+					r = (UINT32)tx;
 			}
 		}
 
-		if (!rows[ty])
+		if (!rowEqual)
 		{
 			allEqual = FALSE;
 
 			if (t > ty)
-				t = ty;
+				t = (UINT32)ty;
 
 			if (b < ty)
-				b = ty;
+				b = (UINT32)ty;
 		}
 	}
 
 	if (allEqual)
 		return 0;
 
-	rect->left = l * 16;
-	rect->top = t * 16;
-	rect->right = (r + 1) * 16;
-	rect->bottom = (b + 1) * 16;
+	WINPR_ASSERT(l * 16 <= UINT16_MAX);
+	WINPR_ASSERT(t * 16 <= UINT16_MAX);
+	WINPR_ASSERT((r + 1) * 16 <= UINT16_MAX);
+	WINPR_ASSERT((b + 1) * 16 <= UINT16_MAX);
+	rect->left = (UINT16)l * 16;
+	rect->top = (UINT16)t * 16;
+	rect->right = (UINT16)(r + 1) * 16;
+	rect->bottom = (UINT16)(b + 1) * 16;
 
+	WINPR_ASSERT(nWidth <= UINT16_MAX);
 	if (rect->right > nWidth)
-		rect->right = nWidth;
+		rect->right = (UINT16)nWidth;
 
+	WINPR_ASSERT(nHeight <= UINT16_MAX);
 	if (rect->bottom > nHeight)
-		rect->bottom = nHeight;
+		rect->bottom = (UINT16)nHeight;
 
-#ifdef WITH_DEBUG_SHADOW_CAPTURE
-	size_t size = ncol + 1;
-	char* col_str = calloc(size, sizeof(char));
-
-	if (!col_str)
-	{
-		WLog_ERR(TAG, "calloc failed!");
-		return 1;
-	}
-
-	for (tx = 0; tx < ncol; tx++)
-		sprintf_s(&col_str[tx], size - tx, "-");
-
-	WLog_INFO(TAG, "%s", col_str);
-
-	for (tx = 0; tx < ncol; tx++)
-		sprintf_s(&col_str[tx], size - tx, "%c", cols[tx] ? 'O' : 'X');
-
-	WLog_INFO(TAG, "%s", col_str);
-
-	for (tx = 0; tx < ncol; tx++)
-		sprintf_s(&col_str[tx], size - tx, "-");
-
-	WLog_INFO(TAG, "%s", col_str);
-
-	for (ty = 0; ty < nrow; ty++)
-	{
-		for (tx = 0; tx < ncol; tx++)
-			sprintf_s(&col_str[tx], size - tx, "%c", cols[tx] ? 'O' : 'X');
-
-		WLog_INFO(TAG, "%s", col_str);
-		WLog_INFO(TAG, "|%s|", rows[ty] ? "O" : "X");
-	}
-
-	WLog_INFO(TAG, "left: %d top: %d right: %d bottom: %d ncol: %d nrow: %d", l, t, r, b, ncol,
-	          nrow);
-	free(col_str);
-#endif
 	return 1;
 }
 
 rdpShadowCapture* shadow_capture_new(rdpShadowServer* server)
 {
-	rdpShadowCapture* capture;
-	capture = (rdpShadowCapture*)calloc(1, sizeof(rdpShadowCapture));
+	WINPR_ASSERT(server);
+
+	rdpShadowCapture* capture = (rdpShadowCapture*)calloc(1, sizeof(rdpShadowCapture));
 
 	if (!capture)
-		return NULL;
+		return nullptr;
 
 	capture->server = server;
 
 	if (!InitializeCriticalSectionAndSpinCount(&(capture->lock), 4000))
 	{
-		free(capture);
-		return NULL;
+		WINPR_PRAGMA_DIAG_PUSH
+		WINPR_PRAGMA_DIAG_IGNORED_MISMATCHED_DEALLOC
+		shadow_capture_free(capture);
+		WINPR_PRAGMA_DIAG_POP
+		return nullptr;
 	}
 
 	return capture;

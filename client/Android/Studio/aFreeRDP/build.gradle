@@ -1,5 +1,4 @@
 apply plugin: 'com.android.application'
-
 android {
     compileSdkVersion = rootProject.ext.compileApi
     buildToolsVersion = rootProject.ext.toolsVersion
@@ -8,11 +7,27 @@ android {
         applicationId "com.freerdp.afreerdp"
         minSdkVersion rootProject.ext.minApi
         targetSdkVersion rootProject.ext.targetApi
-        vectorDrawables.useSupportLibrary = true
-        versionCode = rootProject.ext.versionCode
         versionName = rootProject.ext.versionName
+        if (versionName.isEmpty())
+          versionName = androidGitVersion.name()
+
+        versionCode = rootProject.ext.versionCode
+        if (versionCode <= 0)
+          versionCode = androidGitVersion.code()
+
+        println 'VERSION_NAME:        ' + versionName
+        println 'VERSION_CODE:        ' + versionCode
     }
 
+    splits {
+        abi {
+            enable rootProject.ext.splitEnabled
+            reset()
+            include rootProject.ext.splitArchs
+            universalApk rootProject.ext.universal
+        }
+    }
+    
     signingConfigs {
         release {
             storeFile file(RELEASE_STORE_FILE)
@@ -27,12 +42,18 @@ android {
         release {
             minifyEnabled false
             signingConfig signingConfigs.release
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.txt'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.txt'
         }
         debug {
             jniDebuggable true
-            renderscriptDebuggable true
         }
+        qa {
+            jniDebuggable true
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
     }
 }
 

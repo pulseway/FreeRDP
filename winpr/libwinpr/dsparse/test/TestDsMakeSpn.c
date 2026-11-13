@@ -5,67 +5,151 @@
 #include <winpr/tchar.h>
 #include <winpr/dsparse.h>
 
-static LPCTSTR testServiceClass = _T("HTTP");
-static LPCTSTR testServiceName = _T("LAB1-W2K8R2-GW.lab1.awake.local");
-static LPCTSTR testSpn = _T("HTTP/LAB1-W2K8R2-GW.lab1.awake.local");
-
-int TestDsMakeSpn(int argc, char* argv[])
+static BOOL test_DsMakeSpnA(void)
 {
-	int rc = -1;
-	LPTSTR Spn = NULL;
-	DWORD status;
-	DWORD SpnLength;
-	SpnLength = -1;
-	status = DsMakeSpn(testServiceClass, testServiceName, NULL, 0, NULL, &SpnLength, NULL);
+	LPCSTR testServiceClass = "HTTP";
+	LPCSTR testServiceName = "LAB1-W2K8R2-GW.lab1.awake.local";
+	LPCSTR testSpn = "HTTP/LAB1-W2K8R2-GW.lab1.awake.local";
+	BOOL rc = FALSE;
+	CHAR Spn[100] = WINPR_C_ARRAY_INIT;
+	DWORD status = 0;
+	DWORD SpnLength = -1;
+
+	status =
+	    DsMakeSpnA(testServiceClass, testServiceName, nullptr, 0, nullptr, &SpnLength, nullptr);
 
 	if (status != ERROR_INVALID_PARAMETER)
 	{
-		_tprintf(_T("DsMakeSpn: expected ERROR_INVALID_PARAMETER\n"));
+		printf("DsMakeSpnA: expected ERROR_INVALID_PARAMETER\n");
 		goto fail;
 	}
 
 	SpnLength = 0;
-	status = DsMakeSpn(testServiceClass, testServiceName, NULL, 0, NULL, &SpnLength, NULL);
+	status =
+	    DsMakeSpnA(testServiceClass, testServiceName, nullptr, 0, nullptr, &SpnLength, nullptr);
 
 	if (status != ERROR_BUFFER_OVERFLOW)
 	{
-		_tprintf(_T("DsMakeSpn: expected ERROR_BUFFER_OVERFLOW\n"));
+		printf("DsMakeSpnA: expected ERROR_BUFFER_OVERFLOW\n");
 		goto fail;
 	}
 
 	if (SpnLength != 37)
 	{
-		_tprintf(_T("DsMakeSpn: SpnLength mismatch: Actual: %") _T(PRIu32) _T(", Expected: 37\n"),
-		         SpnLength);
+		printf("DsMakeSpnA: SpnLength mismatch: Actual: %" PRIu32 ", Expected: 37\n", SpnLength);
 		goto fail;
 	}
 
-	/* SpnLength includes null terminator */
-	Spn = (LPTSTR)calloc(SpnLength, sizeof(TCHAR));
-
-	if (!Spn)
-	{
-		_tprintf(_T("DsMakeSpn: Unable to allocate memroy\n"));
-		goto fail;
-	}
-
-	status = DsMakeSpn(testServiceClass, testServiceName, NULL, 0, NULL, &SpnLength, Spn);
+	status = DsMakeSpnA(testServiceClass, testServiceName, nullptr, 0, nullptr, &SpnLength, Spn);
 
 	if (status != ERROR_SUCCESS)
 	{
-		_tprintf(_T("DsMakeSpn: expected ERROR_SUCCESS\n"));
+		printf("DsMakeSpnA: expected ERROR_SUCCESS\n");
 		goto fail;
 	}
 
-	if (_tcscmp(Spn, testSpn) != 0)
+	if (strcmp(Spn, testSpn) != 0)
 	{
-		_tprintf(_T("DsMakeSpn: SPN mismatch: Actual: %s, Expected: %s\n"), Spn, testSpn);
+		printf("DsMakeSpnA: SPN mismatch: Actual: %s, Expected: %s\n", Spn, testSpn);
 		goto fail;
 	}
 
-	_tprintf(_T("DsMakeSpn: %s\n"), Spn);
-	rc = 0;
+	printf("DsMakeSpnA: %s\n", Spn);
+	rc = TRUE;
 fail:
-	free(Spn);
 	return rc;
+}
+
+static BOOL test_DsMakeSpnW(void)
+{
+	const CHAR ctestServiceClass[] = { 'H', 'T', 'T', 'P', '\0' };
+	const CHAR ctestServiceName[] = { 'L', 'A', 'B', '1', '-', 'W', '2', 'K', '8', 'R', '2',
+		                              '-', 'G', 'W', '.', 'l', 'a', 'b', '1', '.', 'a', 'w',
+		                              'a', 'k', 'e', '.', 'l', 'o', 'c', 'a', 'l', '\0' };
+	const CHAR ctestSpn[] = { 'H', 'T', 'T', 'P', '/', 'L', 'A', 'B', '1', '-', 'W', '2', 'K',
+		                      '8', 'R', '2', '-', 'G', 'W', '.', 'l', 'a', 'b', '1', '.', 'a',
+		                      'w', 'a', 'k', 'e', '.', 'l', 'o', 'c', 'a', 'l', '\0' };
+	WCHAR testServiceClass[ARRAYSIZE(ctestServiceClass)] = WINPR_C_ARRAY_INIT;
+	WCHAR testServiceName[ARRAYSIZE(ctestServiceName)] = WINPR_C_ARRAY_INIT;
+	WCHAR testSpn[ARRAYSIZE(ctestSpn)] = WINPR_C_ARRAY_INIT;
+
+	BOOL rc = FALSE;
+	WCHAR Spn[100] = WINPR_C_ARRAY_INIT;
+	DWORD status = 0;
+	DWORD SpnLength = -1;
+
+	(void)ConvertUtf8NToWChar(ctestServiceClass, ARRAYSIZE(ctestServiceClass), testServiceClass,
+	                          ARRAYSIZE(testServiceClass));
+	(void)ConvertUtf8NToWChar(ctestServiceName, ARRAYSIZE(ctestServiceName), testServiceName,
+	                          ARRAYSIZE(testServiceName));
+	(void)ConvertUtf8NToWChar(ctestSpn, ARRAYSIZE(ctestSpn), testSpn, ARRAYSIZE(testSpn));
+
+	status =
+	    DsMakeSpnW(testServiceClass, testServiceName, nullptr, 0, nullptr, &SpnLength, nullptr);
+
+	if (status != ERROR_INVALID_PARAMETER)
+	{
+		printf("DsMakeSpnW: expected ERROR_INVALID_PARAMETER\n");
+		goto fail;
+	}
+
+	SpnLength = 0;
+	status =
+	    DsMakeSpnW(testServiceClass, testServiceName, nullptr, 0, nullptr, &SpnLength, nullptr);
+
+	if (status != ERROR_BUFFER_OVERFLOW)
+	{
+		printf("DsMakeSpnW: expected ERROR_BUFFER_OVERFLOW\n");
+		goto fail;
+	}
+
+	if (SpnLength != 37)
+	{
+		printf("DsMakeSpnW: SpnLength mismatch: Actual: %" PRIu32 ", Expected: 37\n", SpnLength);
+		goto fail;
+	}
+
+	status = DsMakeSpnW(testServiceClass, testServiceName, nullptr, 0, nullptr, &SpnLength, Spn);
+
+	if (status != ERROR_SUCCESS)
+	{
+		printf("DsMakeSpnW: expected ERROR_SUCCESS\n");
+		goto fail;
+	}
+
+	if (_wcscmp(Spn, testSpn) != 0)
+	{
+		char buffer1[8192] = WINPR_C_ARRAY_INIT;
+		char buffer2[8192] = WINPR_C_ARRAY_INIT;
+		char* SpnA = buffer1;
+		char* testSpnA = buffer2;
+
+		(void)ConvertWCharToUtf8(Spn, SpnA, ARRAYSIZE(buffer1));
+		(void)ConvertWCharToUtf8(testSpn, testSpnA, ARRAYSIZE(buffer2));
+		printf("DsMakeSpnW: SPN mismatch: Actual: %s, Expected: %s\n", SpnA, testSpnA);
+		goto fail;
+	}
+
+	{
+		char buffer[8192] = WINPR_C_ARRAY_INIT;
+		char* SpnA = buffer;
+
+		(void)ConvertWCharToUtf8(Spn, SpnA, ARRAYSIZE(buffer));
+		printf("DsMakeSpnW: %s\n", SpnA);
+	}
+
+	rc = TRUE;
+fail:
+	return rc;
+}
+int TestDsMakeSpn(int argc, char* argv[])
+{
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
+	if (!test_DsMakeSpnA())
+		return -1;
+	if (!test_DsMakeSpnW())
+		return -2;
+	return 0;
 }

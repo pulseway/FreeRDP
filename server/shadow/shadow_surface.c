@@ -16,42 +16,43 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include "shadow.h"
 
 #include "shadow_surface.h"
-#define ALIGN_SCREEN_SIZE(size, align) ((size + align - 1) & (~(align - 1)))
-rdpShadowSurface* shadow_surface_new(rdpShadowServer* server, int x, int y, int width, int height)
+#define ALIGN_SCREEN_SIZE(size, align) \
+	((((size) % (align)) != 0) ? ((size) + (align) - ((size) % (align))) : (size))
+
+rdpShadowSurface* shadow_surface_new(rdpShadowServer* server, UINT16 x, UINT16 y, UINT32 width,
+                                     UINT32 height)
 {
-	rdpShadowSurface* surface;
+	rdpShadowSurface* surface = nullptr;
 	surface = (rdpShadowSurface*)calloc(1, sizeof(rdpShadowSurface));
 
 	if (!surface)
-		return NULL;
+		return nullptr;
 
 	surface->server = server;
 	surface->x = x;
 	surface->y = y;
 	surface->width = width;
 	surface->height = height;
-	surface->scanline = ALIGN_SCREEN_SIZE(surface->width, 4) * 4;
+	surface->scanline = ALIGN_SCREEN_SIZE(surface->width, 32) * 4;
 	surface->format = PIXEL_FORMAT_BGRX32;
-	surface->data = (BYTE*)calloc(ALIGN_SCREEN_SIZE(surface->height, 4), surface->scanline);
+	surface->data = (BYTE*)calloc(ALIGN_SCREEN_SIZE(surface->height, 32), surface->scanline);
 
 	if (!surface->data)
 	{
 		free(surface);
-		return NULL;
+		return nullptr;
 	}
 
 	if (!InitializeCriticalSectionAndSpinCount(&(surface->lock), 4000))
 	{
 		free(surface->data);
 		free(surface);
-		return NULL;
+		return nullptr;
 	}
 
 	region16_init(&(surface->invalidRegion));
@@ -69,10 +70,11 @@ void shadow_surface_free(rdpShadowSurface* surface)
 	free(surface);
 }
 
-BOOL shadow_surface_resize(rdpShadowSurface* surface, int x, int y, int width, int height)
+BOOL shadow_surface_resize(rdpShadowSurface* surface, UINT16 x, UINT16 y, UINT32 width,
+                           UINT32 height)
 {
-	BYTE* buffer = NULL;
-	int scanline = ALIGN_SCREEN_SIZE(width, 4) * 4;
+	BYTE* buffer = nullptr;
+	UINT32 scanline = ALIGN_SCREEN_SIZE(width, 4) * 4;
 
 	if (!surface)
 		return FALSE;
@@ -85,7 +87,7 @@ BOOL shadow_surface_resize(rdpShadowSurface* surface, int x, int y, int width, i
 		return TRUE;
 	}
 
-	buffer = (BYTE*)realloc(surface->data, scanline * ALIGN_SCREEN_SIZE(height, 4));
+	buffer = (BYTE*)realloc(surface->data, 1ull * scanline * ALIGN_SCREEN_SIZE(height, 4ull));
 
 	if (buffer)
 	{

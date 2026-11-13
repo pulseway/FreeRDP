@@ -19,11 +19,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
-#include <assert.h>
+#include <winpr/assert.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,9 +39,7 @@
 #include "opensl_io.h"
 #include "rdpsnd_main.h"
 
-typedef struct rdpsnd_opensles_plugin rdpsndopenslesPlugin;
-
-struct rdpsnd_opensles_plugin
+typedef struct
 {
 	rdpsndDevicePlugin device;
 
@@ -59,7 +55,7 @@ struct rdpsnd_opensles_plugin
 	UINT32 rate;
 	UINT32 channels;
 	int format;
-};
+} rdpsndopenslesPlugin;
 
 static int rdpsnd_opensles_volume_to_millibel(unsigned short level, int max)
 {
@@ -145,7 +141,7 @@ static BOOL rdpsnd_opensles_open(rdpsndDevicePlugin* device, const AUDIO_FORMAT*
 		return TRUE;
 
 	opensles->stream = android_OpenAudioDevice(opensles->rate, opensles->channels, 20);
-	assert(opensles->stream);
+	WINPR_ASSERT(opensles->stream);
 
 	if (!opensles->stream)
 		WLog_ERR(TAG, "android_OpenAudioDevice failed");
@@ -164,15 +160,15 @@ static void rdpsnd_opensles_close(rdpsndDevicePlugin* device)
 		return;
 
 	android_CloseAudioDevice(opensles->stream);
-	opensles->stream = NULL;
+	opensles->stream = nullptr;
 }
 
 static void rdpsnd_opensles_free(rdpsndDevicePlugin* device)
 {
 	rdpsndopenslesPlugin* opensles = (rdpsndopenslesPlugin*)device;
 	DEBUG_SND("opensles=%p", (void*)opensles);
-	assert(opensles);
-	assert(opensles->device_name);
+	WINPR_ASSERT(opensles);
+	WINPR_ASSERT(opensles->device_name);
 	free(opensles->device_name);
 	free(opensles);
 }
@@ -183,8 +179,8 @@ static BOOL rdpsnd_opensles_format_supported(rdpsndDevicePlugin* device, const A
 	          ", channels=%" PRIu16 ", align=%" PRIu16 "",
 	          format->wFormatTag, format->cbSize, format->nSamplesPerSec, format->wBitsPerSample,
 	          format->nChannels, format->nBlockAlign);
-	assert(device);
-	assert(format);
+	WINPR_ASSERT(device);
+	WINPR_ASSERT(format);
 
 	switch (format->wFormatTag)
 	{
@@ -209,7 +205,7 @@ static UINT32 rdpsnd_opensles_get_volume(rdpsndDevicePlugin* device)
 {
 	rdpsndopenslesPlugin* opensles = (rdpsndopenslesPlugin*)device;
 	DEBUG_SND("opensles=%p", (void*)opensles);
-	assert(opensles);
+	WINPR_ASSERT(opensles);
 
 	if (opensles->stream)
 	{
@@ -232,7 +228,7 @@ static BOOL rdpsnd_opensles_set_volume(rdpsndDevicePlugin* device, UINT32 value)
 {
 	rdpsndopenslesPlugin* opensles = (rdpsndopenslesPlugin*)device;
 	DEBUG_SND("opensles=%p, value=%" PRIu32 "", (void*)opensles, value);
-	assert(opensles);
+	WINPR_ASSERT(opensles);
 	opensles->volume = value;
 
 	if (opensles->stream)
@@ -257,7 +253,8 @@ static BOOL rdpsnd_opensles_set_volume(rdpsndDevicePlugin* device, UINT32 value)
 
 static UINT rdpsnd_opensles_play(rdpsndDevicePlugin* device, const BYTE* data, size_t size)
 {
-	union {
+	union
+	{
 		const BYTE* b;
 		const short* s;
 	} src;
@@ -270,9 +267,9 @@ static UINT rdpsnd_opensles_play(rdpsndDevicePlugin* device, const BYTE* data, s
 
 	src.b = data;
 	DEBUG_SND("size=%d, src=%p", size, (void*)src.b);
-	assert(0 == size % 2);
-	assert(size > 0);
-	assert(src.b);
+	WINPR_ASSERT(0 == size % 2);
+	WINPR_ASSERT(size > 0);
+	WINPR_ASSERT(src.b);
 	ret = android_AudioOut(opensles->stream, src.s, size / 2);
 
 	if (ret < 0)
@@ -288,29 +285,26 @@ static void rdpsnd_opensles_start(rdpsndDevicePlugin* device)
 	DEBUG_SND("opensles=%p", (void*)opensles);
 }
 
-static int rdpsnd_opensles_parse_addin_args(rdpsndDevicePlugin* device, ADDIN_ARGV* args)
+static int rdpsnd_opensles_parse_addin_args(rdpsndDevicePlugin* device, const ADDIN_ARGV* args)
 {
-	int status;
-	DWORD flags;
-	COMMAND_LINE_ARGUMENT_A* arg;
 	rdpsndopenslesPlugin* opensles = (rdpsndopenslesPlugin*)device;
 	COMMAND_LINE_ARGUMENT_A rdpsnd_opensles_args[] = {
-		{ "dev", COMMAND_LINE_VALUE_REQUIRED, "<device>", NULL, NULL, -1, NULL, "device" },
-		{ NULL, 0, NULL, NULL, NULL, -1, NULL, NULL }
+		{ "dev", COMMAND_LINE_VALUE_REQUIRED, "<device>", nullptr, nullptr, -1, nullptr, "device" },
+		{ nullptr, 0, nullptr, nullptr, nullptr, -1, nullptr, nullptr }
 	};
 
-	assert(opensles);
-	assert(args);
+	WINPR_ASSERT(opensles);
+	WINPR_ASSERT(args);
 	DEBUG_SND("opensles=%p, args=%p", (void*)opensles, (void*)args);
-	flags =
+	const DWORD flags =
 	    COMMAND_LINE_SIGIL_NONE | COMMAND_LINE_SEPARATOR_COLON | COMMAND_LINE_IGN_UNKNOWN_KEYWORD;
-	status = CommandLineParseArgumentsA(args->argc, args->argv, rdpsnd_opensles_args, flags,
-	                                    opensles, NULL, NULL);
+	const int status = CommandLineParseArgumentsA(args->argc, args->argv, rdpsnd_opensles_args,
+	                                              flags, opensles, nullptr, nullptr);
 
 	if (status < 0)
 		return status;
 
-	arg = rdpsnd_opensles_args;
+	const COMMAND_LINE_ARGUMENT_A* arg = rdpsnd_opensles_args;
 
 	do
 	{
@@ -325,29 +319,22 @@ static int rdpsnd_opensles_parse_addin_args(rdpsndDevicePlugin* device, ADDIN_AR
 				return ERROR_OUTOFMEMORY;
 		}
 		CommandLineSwitchEnd(arg)
-	} while ((arg = CommandLineFindNextArgumentA(arg)) != NULL);
+	} while ((arg = CommandLineFindNextArgumentA(arg)) != nullptr);
 
 	return status;
 }
-
-#ifdef BUILTIN_CHANNELS
-#define freerdp_rdpsnd_client_subsystem_entry opensles_freerdp_rdpsnd_client_subsystem_entry
-#else
-#define freerdp_rdpsnd_client_subsystem_entry FREERDP_API freerdp_rdpsnd_client_subsystem_entry
-#endif
 
 /**
  * Function description
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT freerdp_rdpsnd_client_subsystem_entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints)
+FREERDP_ENTRY_POINT(UINT VCAPITYPE opensles_freerdp_rdpsnd_client_subsystem_entry(
+    PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints))
 {
-	ADDIN_ARGV* args;
-	rdpsndopenslesPlugin* opensles;
-	UINT error;
+	UINT error = ERROR_INTERNAL_ERROR;
 	DEBUG_SND("pEntryPoints=%p", (void*)pEntryPoints);
-	opensles = (rdpsndopenslesPlugin*)calloc(1, sizeof(rdpsndopenslesPlugin));
+	rdpsndopenslesPlugin* opensles = (rdpsndopenslesPlugin*)calloc(1, sizeof(rdpsndopenslesPlugin));
 
 	if (!opensles)
 		return CHANNEL_RC_NO_MEMORY;
@@ -360,7 +347,7 @@ UINT freerdp_rdpsnd_client_subsystem_entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS p
 	opensles->device.Play = rdpsnd_opensles_play;
 	opensles->device.Close = rdpsnd_opensles_close;
 	opensles->device.Free = rdpsnd_opensles_free;
-	args = pEntryPoints->args;
+	const ADDIN_ARGV* args = pEntryPoints->args;
 	rdpsnd_opensles_parse_addin_args((rdpsndDevicePlugin*)opensles, args);
 
 	if (!opensles->device_name)

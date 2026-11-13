@@ -20,9 +20,10 @@
 #ifndef FREERDP_LOCALE_KEYBOARD_RDP_SCANCODE_H
 #define FREERDP_LOCALE_KEYBOARD_RDP_SCANCODE_H
 
+#include <winpr/wtypes.h>
 #include <winpr/input.h>
 
-/* @msdn{cc240584} says:
+/* msdn{cc240584} says:
  * "... (a scancode is an 8-bit value specifying a key location on the keyboard).
  * The server accepts a scancode value and translates it into the correct character depending on the
  * language locale and keyboard layout used in the session." The 8-bit value is later called
@@ -30,13 +31,13 @@
  * not just a modifier.
  */
 
-#define RDP_SCANCODE_CODE(_rdp_scancode) ((BYTE)(_rdp_scancode & 0xFF))
-#define RDP_SCANCODE_EXTENDED(_rdp_scancode) (((_rdp_scancode)&KBDEXT) ? TRUE : FALSE)
+#define RDP_SCANCODE_CODE(_rdp_scancode) WINPR_CXX_COMPAT_CAST(BYTE, (_rdp_scancode & 0xFF))
+#define RDP_SCANCODE_EXTENDED(_rdp_scancode) (((_rdp_scancode) & KBDEXT) != 0)
 #define MAKE_RDP_SCANCODE(_code, _extended) (((_code)&0xFF) | ((_extended) ? KBDEXT : 0))
 
 /* Defines for known RDP_SCANCODE protocol values.
  * Mostly the same as the PKBDLLHOOKSTRUCT scanCode, "A hardware scan code for the key",
- * @msdn{ms644967}. Based @msdn{ms894073} US, @msdn{ms894072} UK, @msdn{ms892472} */
+ * msdn{ms644967}. Based msdn{ms894073} US, msdn{ms894072} UK, msdn{ms892472} */
 
 #define RDP_SCANCODE_UNKNOWN MAKE_RDP_SCANCODE(0x00, FALSE)
 

@@ -16,9 +16,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,21 +27,18 @@
 
 void string_list_free(char** string_list)
 {
-	int i;
-
-	for (i = 0; string_list[i]; i++)
+	for (size_t i = 0; string_list[i]; i++)
 	{
 		free(string_list[i]);
 	}
 
-	free(string_list);
+	free((void*)string_list);
 }
 
 int string_list_length(const char* const* string_list)
 {
-	int i;
-
-	for (i = 0; string_list[i]; i++)
+	int i = 0;
+	for (; string_list[i]; i++)
 		;
 
 	return i;
@@ -51,32 +46,29 @@ int string_list_length(const char* const* string_list)
 
 char** string_list_copy(const char* const* string_list)
 {
-	int i;
 	int length = string_list_length(string_list);
-	char** copy = calloc(length + 1, sizeof(char*));
+	char** copy = (char**)calloc(WINPR_ASSERTING_INT_CAST(size_t, length) + 1, sizeof(char*));
 
 	if (!copy)
 	{
-		return 0;
+		return nullptr;
 	}
 
-	for (i = 0; i < length; i++)
+	for (int i = 0; i < length; i++)
 	{
 		copy[i] = _strdup(string_list[i]);
 	}
 
-	copy[length] = 0;
+	copy[length] = nullptr;
 	return copy;
 }
 
 void string_list_print(FILE* out, const char* const* string_list)
 {
-	int j;
-
-	for (j = 0; string_list[j]; j++)
+	for (int j = 0; string_list[j]; j++)
 	{
-		fprintf(out, "[%2d]: %s\n", j, string_list[j]);
+		(void)fprintf(out, "[%2d]: %s\n", j, string_list[j]);
 	}
 
-	fflush(out);
+	(void)fflush(out);
 }

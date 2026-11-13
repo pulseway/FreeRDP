@@ -18,9 +18,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,20 +39,21 @@
 
 #endif
 
+#include <freerdp/log.h>
 #define TAG SERVER_TAG("windows")
 
 static void wf_peer_rdpsnd_activated(RdpsndServerContext* context)
 {
 	wfInfo* wfi;
-	int i, j;
 	wfi = wf_info_get_instance();
-	wfi->agreed_format = NULL;
+	wfi->agreed_format = nullptr;
 	WLog_DBG(TAG, "Client supports the following %d formats:", context->num_client_formats);
 
-	for (i = 0; i < context->num_client_formats; i++)
+	size_t i = 0;
+	for (; i < context->num_client_formats; i++)
 	{
 		// TODO: improve the way we agree on a format
-		for (j = 0; j < context->num_server_formats; j++)
+		for (size_t j = 0; j < context->num_server_formats; j++)
 		{
 			if ((context->client_formats[i].wFormatTag == context->server_formats[j].wFormatTag) &&
 			    (context->client_formats[i].nChannels == context->server_formats[j].nChannels) &&
@@ -67,11 +66,11 @@ static void wf_peer_rdpsnd_activated(RdpsndServerContext* context)
 			}
 		}
 
-		if (wfi->agreed_format != NULL)
+		if (wfi->agreed_format != nullptr)
 			break;
 	}
 
-	if (wfi->agreed_format == NULL)
+	if (wfi->agreed_format == nullptr)
 	{
 		WLog_ERR(TAG, "Could not agree on a audio format with the server");
 		return;
@@ -134,7 +133,7 @@ BOOL wf_peer_rdpsnd_init(wfPeerContext* context)
 	if (!wfi)
 		return FALSE;
 
-	if (!(wfi->snd_mutex = CreateMutex(NULL, FALSE, NULL)))
+	if (!(wfi->snd_mutex = CreateMutex(nullptr, FALSE, nullptr)))
 		return FALSE;
 
 	context->rdpsnd = rdpsnd_server_context_new(context->vcm);

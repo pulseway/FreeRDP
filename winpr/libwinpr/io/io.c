@@ -17,15 +17,13 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/io.h>
 
 #ifndef _WIN32
 
-#ifdef HAVE_UNISTD_H
+#ifdef WINPR_HAVE_UNISTD_H
 #include <unistd.h>
 #endif
 
@@ -50,155 +48,98 @@
 
 #define TAG WINPR_TAG("io")
 
-BOOL GetOverlappedResult(HANDLE hFile, LPOVERLAPPED lpOverlapped,
-                         LPDWORD lpNumberOfBytesTransferred, BOOL bWait)
+BOOL GetOverlappedResult(WINPR_ATTR_UNUSED HANDLE hFile,
+                         WINPR_ATTR_UNUSED LPOVERLAPPED lpOverlapped,
+                         WINPR_ATTR_UNUSED LPDWORD lpNumberOfBytesTransferred,
+                         WINPR_ATTR_UNUSED BOOL bWait)
 {
-#if 1
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
-	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-	return FALSE;
-#else
-	ULONG Type;
-	WINPR_HANDLE* Object;
-
-	if (!winpr_Handle_GetInfo(hFile, &Type, &Object))
-		return FALSE;
-
-	else if (Type == HANDLE_TYPE_NAMED_PIPE)
-	{
-		int status = -1;
-		DWORD request;
-		PVOID lpBuffer;
-		DWORD nNumberOfBytes;
-		WINPR_NAMED_PIPE* pipe;
-
-		pipe = (WINPR_NAMED_PIPE*)Object;
-
-		if (!(pipe->dwFlagsAndAttributes & FILE_FLAG_OVERLAPPED))
-			return FALSE;
-
-		lpBuffer = lpOverlapped->Pointer;
-		request = (DWORD)lpOverlapped->Internal;
-		nNumberOfBytes = (DWORD)lpOverlapped->InternalHigh;
-
-		if (request == 0)
-		{
-			if (pipe->clientfd == -1)
-				return FALSE;
-
-			status = read(pipe->clientfd, lpBuffer, nNumberOfBytes);
-		}
-		else if (request == 1)
-		{
-			if (pipe->clientfd == -1)
-				return FALSE;
-
-			status = write(pipe->clientfd, lpBuffer, nNumberOfBytes);
-		}
-		else if (request == 2)
-		{
-			socklen_t length;
-			struct sockaddr_un s;
-
-			if (pipe->serverfd == -1)
-				return FALSE;
-
-			length = sizeof(struct sockaddr_un);
-			ZeroMemory(&s, sizeof(struct sockaddr_un));
-
-			status = accept(pipe->serverfd, (struct sockaddr*)&s, &length);
-
-			if (status < 0)
-				return FALSE;
-
-			pipe->clientfd = status;
-			pipe->ServerMode = FALSE;
-
-			status = 0;
-		}
-
-		if (status < 0)
-		{
-			*lpNumberOfBytesTransferred = 0;
-			return FALSE;
-		}
-
-		*lpNumberOfBytesTransferred = status;
-	}
-
-	return TRUE;
-#endif
-}
-
-BOOL GetOverlappedResultEx(HANDLE hFile, LPOVERLAPPED lpOverlapped,
-                           LPDWORD lpNumberOfBytesTransferred, DWORD dwMilliseconds,
-                           BOOL bAlertable)
-{
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL DeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, LPVOID lpInBuffer, DWORD nInBufferSize,
-                     LPVOID lpOutBuffer, DWORD nOutBufferSize, LPDWORD lpBytesReturned,
-                     LPOVERLAPPED lpOverlapped)
+BOOL GetOverlappedResultEx(WINPR_ATTR_UNUSED HANDLE hFile,
+                           WINPR_ATTR_UNUSED LPOVERLAPPED lpOverlapped,
+                           WINPR_ATTR_UNUSED LPDWORD lpNumberOfBytesTransferred,
+                           WINPR_ATTR_UNUSED DWORD dwMilliseconds,
+                           WINPR_ATTR_UNUSED BOOL bAlertable)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-HANDLE CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
-                              ULONG_PTR CompletionKey, DWORD NumberOfConcurrentThreads)
+BOOL DeviceIoControl(WINPR_ATTR_UNUSED HANDLE hDevice, WINPR_ATTR_UNUSED DWORD dwIoControlCode,
+                     WINPR_ATTR_UNUSED LPVOID lpInBuffer, WINPR_ATTR_UNUSED DWORD nInBufferSize,
+                     WINPR_ATTR_UNUSED LPVOID lpOutBuffer, WINPR_ATTR_UNUSED DWORD nOutBufferSize,
+                     WINPR_ATTR_UNUSED LPDWORD lpBytesReturned,
+                     WINPR_ATTR_UNUSED LPOVERLAPPED lpOverlapped)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
-	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-	return NULL;
-}
-
-BOOL GetQueuedCompletionStatus(HANDLE CompletionPort, LPDWORD lpNumberOfBytesTransferred,
-                               PULONG_PTR lpCompletionKey, LPOVERLAPPED* lpOverlapped,
-                               DWORD dwMilliseconds)
-{
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL GetQueuedCompletionStatusEx(HANDLE CompletionPort, LPOVERLAPPED_ENTRY lpCompletionPortEntries,
-                                 ULONG ulCount, PULONG ulNumEntriesRemoved, DWORD dwMilliseconds,
-                                 BOOL fAlertable)
+HANDLE CreateIoCompletionPort(WINPR_ATTR_UNUSED HANDLE FileHandle,
+                              WINPR_ATTR_UNUSED HANDLE ExistingCompletionPort,
+                              WINPR_ATTR_UNUSED ULONG_PTR CompletionKey,
+                              WINPR_ATTR_UNUSED DWORD NumberOfConcurrentThreads)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
+	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+	return nullptr;
+}
+
+BOOL GetQueuedCompletionStatus(WINPR_ATTR_UNUSED HANDLE CompletionPort,
+                               WINPR_ATTR_UNUSED LPDWORD lpNumberOfBytesTransferred,
+                               WINPR_ATTR_UNUSED PULONG_PTR lpCompletionKey,
+                               WINPR_ATTR_UNUSED LPOVERLAPPED* lpOverlapped,
+                               WINPR_ATTR_UNUSED DWORD dwMilliseconds)
+{
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL PostQueuedCompletionStatus(HANDLE CompletionPort, DWORD dwNumberOfBytesTransferred,
-                                ULONG_PTR dwCompletionKey, LPOVERLAPPED lpOverlapped)
+BOOL GetQueuedCompletionStatusEx(WINPR_ATTR_UNUSED HANDLE CompletionPort,
+                                 WINPR_ATTR_UNUSED LPOVERLAPPED_ENTRY lpCompletionPortEntries,
+                                 WINPR_ATTR_UNUSED ULONG ulCount,
+                                 WINPR_ATTR_UNUSED PULONG ulNumEntriesRemoved,
+                                 WINPR_ATTR_UNUSED DWORD dwMilliseconds,
+                                 WINPR_ATTR_UNUSED BOOL fAlertable)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL CancelIo(HANDLE hFile)
+BOOL PostQueuedCompletionStatus(WINPR_ATTR_UNUSED HANDLE CompletionPort,
+                                WINPR_ATTR_UNUSED DWORD dwNumberOfBytesTransferred,
+                                WINPR_ATTR_UNUSED ULONG_PTR dwCompletionKey,
+                                WINPR_ATTR_UNUSED LPOVERLAPPED lpOverlapped)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL CancelIoEx(HANDLE hFile, LPOVERLAPPED lpOverlapped)
+BOOL CancelIo(WINPR_ATTR_UNUSED HANDLE hFile)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
-BOOL CancelSynchronousIo(HANDLE hThread)
+BOOL CancelIoEx(WINPR_ATTR_UNUSED HANDLE hFile, WINPR_ATTR_UNUSED LPOVERLAPPED lpOverlapped)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
+	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
+	return FALSE;
+}
+
+BOOL CancelSynchronousIo(WINPR_ATTR_UNUSED HANDLE hThread)
+{
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -225,7 +166,7 @@ BOOL DeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, LPVOID lpInBuffer, D
                      LPVOID lpOutBuffer, DWORD nOutBufferSize, LPDWORD lpBytesReturned,
                      LPOVERLAPPED lpOverlapped)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -233,16 +174,16 @@ BOOL DeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, LPVOID lpInBuffer, D
 HANDLE CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
                               ULONG_PTR CompletionKey, DWORD NumberOfConcurrentThreads)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
-	return NULL;
+	return nullptr;
 }
 
 BOOL GetQueuedCompletionStatus(HANDLE CompletionPort, LPDWORD lpNumberOfBytesTransferred,
                                PULONG_PTR lpCompletionKey, LPOVERLAPPED* lpOverlapped,
                                DWORD dwMilliseconds)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -251,7 +192,7 @@ BOOL GetQueuedCompletionStatusEx(HANDLE CompletionPort, LPOVERLAPPED_ENTRY lpCom
                                  ULONG ulCount, PULONG ulNumEntriesRemoved, DWORD dwMilliseconds,
                                  BOOL fAlertable)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
@@ -259,19 +200,19 @@ BOOL GetQueuedCompletionStatusEx(HANDLE CompletionPort, LPOVERLAPPED_ENTRY lpCom
 BOOL PostQueuedCompletionStatus(HANDLE CompletionPort, DWORD dwNumberOfBytesTransferred,
                                 ULONG_PTR dwCompletionKey, LPOVERLAPPED lpOverlapped)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }
 
 BOOL CancelIo(HANDLE hFile)
 {
-	return CancelIoEx(hFile, NULL);
+	return CancelIoEx(hFile, nullptr);
 }
 
 BOOL CancelSynchronousIo(HANDLE hThread)
 {
-	WLog_ERR(TAG, "%s: Not implemented", __FUNCTION__);
+	WLog_ERR(TAG, "Not implemented");
 	SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 	return FALSE;
 }

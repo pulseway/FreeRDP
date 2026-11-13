@@ -15,24 +15,27 @@ int flags;
 int button;
 DEFINE_EVENT_END(MouseButton)
 
-void MouseMotionEventHandler(void* context, MouseMotionEventArgs* e)
+static void MouseMotionEventHandler(void* context, const MouseMotionEventArgs* e)
 {
 	printf("MouseMotionEvent: x: %d y: %d\n", e->x, e->y);
 }
 
-void MouseButtonEventHandler(void* context, MouseButtonEventArgs* e)
+static void MouseButtonEventHandler(void* context, const MouseButtonEventArgs* e)
 {
 	printf("MouseButtonEvent: x: %d y: %d flags: %d button: %d\n", e->x, e->y, e->flags, e->button);
 }
 
-static wEventType Node_Events[] = { DEFINE_EVENT_ENTRY(MouseMotion)
-	                                    DEFINE_EVENT_ENTRY(MouseButton) };
+static wEventType Node_Events[] = { DEFINE_EVENT_ENTRY(MouseMotion),
+	                                DEFINE_EVENT_ENTRY(MouseButton) };
 
 #define NODE_EVENT_COUNT (sizeof(Node_Events) / sizeof(wEventType))
 
 int TestPubSub(int argc, char* argv[])
 {
-	wPubSub* node;
+	wPubSub* node = nullptr;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	node = PubSub_New(TRUE);
 	if (!node)
@@ -40,8 +43,10 @@ int TestPubSub(int argc, char* argv[])
 
 	PubSub_AddEventTypes(node, Node_Events, NODE_EVENT_COUNT);
 
-	PubSub_SubscribeMouseMotion(node, MouseMotionEventHandler);
-	PubSub_SubscribeMouseButton(node, MouseButtonEventHandler);
+	if (PubSub_SubscribeMouseMotion(node, MouseMotionEventHandler) < 0)
+		return -1;
+	if (PubSub_SubscribeMouseButton(node, MouseButtonEventHandler) < 0)
+		return -1;
 
 	/* Call Event Handler */
 	{
@@ -50,7 +55,8 @@ int TestPubSub(int argc, char* argv[])
 		e.x = 64;
 		e.y = 128;
 
-		PubSub_OnMouseMotion(node, NULL, &e);
+		if (PubSub_OnMouseMotion(node, nullptr, &e) < 0)
+			return -1;
 	}
 
 	{
@@ -61,7 +67,8 @@ int TestPubSub(int argc, char* argv[])
 		e.flags = 7;
 		e.button = 1;
 
-		PubSub_OnMouseButton(node, NULL, &e);
+		if (PubSub_OnMouseButton(node, nullptr, &e) < 0)
+			return -1;
 	}
 
 	PubSub_Free(node);

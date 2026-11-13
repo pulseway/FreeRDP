@@ -27,7 +27,7 @@
 /* OpenSSL includes windows.h */
 #include <winpr/windows.h>
 
-typedef struct _SCHANNEL_OPENSSL SCHANNEL_OPENSSL;
+typedef struct S_SCHANNEL_OPENSSL SCHANNEL_OPENSSL;
 
 int schannel_openssl_client_init(SCHANNEL_OPENSSL* context);
 int schannel_openssl_server_init(SCHANNEL_OPENSSL* context);
@@ -44,7 +44,10 @@ SECURITY_STATUS schannel_openssl_encrypt_message(SCHANNEL_OPENSSL* context,
 SECURITY_STATUS schannel_openssl_decrypt_message(SCHANNEL_OPENSSL* context,
                                                  PSecBufferDesc pMessage);
 
-SCHANNEL_OPENSSL* schannel_openssl_new(void);
 void schannel_openssl_free(SCHANNEL_OPENSSL* context);
+
+WINPR_ATTR_MALLOC(schannel_openssl_free, 1)
+WINPR_ATTR_NODISCARD
+SCHANNEL_OPENSSL* schannel_openssl_new(void);
 
 #endif /* WINPR_SSPI_SCHANNEL_OPENSSL_H */

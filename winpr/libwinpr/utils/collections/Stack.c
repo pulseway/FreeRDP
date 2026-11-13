@@ -17,13 +17,12 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/collections.h>
+#include <winpr/assert.h>
 
-struct _wStack
+struct s_wStack
 {
 	size_t size;
 	size_t capacity;
@@ -48,8 +47,8 @@ struct _wStack
 
 size_t Stack_Count(wStack* stack)
 {
-	size_t ret;
-
+	size_t ret = 0;
+	WINPR_ASSERT(stack);
 	if (stack->synchronized)
 		EnterCriticalSection(&stack->lock);
 
@@ -67,13 +66,13 @@ size_t Stack_Count(wStack* stack)
 
 BOOL Stack_IsSynchronized(wStack* stack)
 {
+	WINPR_ASSERT(stack);
 	return stack->synchronized;
 }
 
 wObject* Stack_Object(wStack* stack)
 {
-	if (!stack)
-		return NULL;
+	WINPR_ASSERT(stack);
 	return &stack->object;
 }
 
@@ -87,17 +86,16 @@ wObject* Stack_Object(wStack* stack)
 
 void Stack_Clear(wStack* stack)
 {
-	size_t index;
-
+	WINPR_ASSERT(stack);
 	if (stack->synchronized)
 		EnterCriticalSection(&stack->lock);
 
-	for (index = 0; index < stack->size; index++)
+	for (size_t index = 0; index < stack->size; index++)
 	{
 		if (stack->object.fnObjectFree)
 			stack->object.fnObjectFree(stack->array[index]);
 
-		stack->array[index] = NULL;
+		stack->array[index] = nullptr;
 	}
 
 	stack->size = 0;
@@ -112,13 +110,13 @@ void Stack_Clear(wStack* stack)
 
 BOOL Stack_Contains(wStack* stack, const void* obj)
 {
-	size_t i;
 	BOOL found = FALSE;
 
+	WINPR_ASSERT(stack);
 	if (stack->synchronized)
 		EnterCriticalSection(&stack->lock);
 
-	for (i = 0; i < stack->size; i++)
+	for (size_t i = 0; i < stack->size; i++)
 	{
 		if (stack->object.fnObjectEquals(stack->array[i], obj))
 		{
@@ -139,13 +137,20 @@ BOOL Stack_Contains(wStack* stack, const void* obj)
 
 void Stack_Push(wStack* stack, void* obj)
 {
+	WINPR_ASSERT(stack);
 	if (stack->synchronized)
 		EnterCriticalSection(&stack->lock);
 
-	if ((stack->size + 1) >= stack->capacity)
+	WINPR_ASSERT(stack->size < SIZE_MAX);
+	if ((stack->size + 1ull) >= stack->capacity)
 	{
-		const size_t new_cap = stack->capacity * 2;
-		void** new_arr = (void**)realloc(stack->array, sizeof(void*) * new_cap);
+		size_t new_cap = stack->capacity;
+		do
+		{
+			WINPR_ASSERT(new_cap <= SIZE_MAX - 128ull);
+			new_cap += 128ull;
+		} while (new_cap <= stack->size + 1ull);
+		void** new_arr = (void**)realloc((void*)stack->array, sizeof(void*) * new_cap);
 
 		if (!new_arr)
 			goto end;
@@ -167,8 +172,9 @@ end:
 
 void* Stack_Pop(wStack* stack)
 {
-	void* obj = NULL;
+	void* obj = nullptr;
 
+	WINPR_ASSERT(stack);
 	if (stack->synchronized)
 		EnterCriticalSection(&stack->lock);
 
@@ -187,8 +193,9 @@ void* Stack_Pop(wStack* stack)
 
 void* Stack_Peek(wStack* stack)
 {
-	void* obj = NULL;
+	void* obj = nullptr;
 
+	WINPR_ASSERT(stack);
 	if (stack->synchronized)
 		EnterCriticalSection(&stack->lock);
 
@@ -212,11 +219,11 @@ static BOOL default_stack_equals(const void* obj1, const void* obj2)
 
 wStack* Stack_New(BOOL synchronized)
 {
-	wStack* stack = NULL;
+	wStack* stack = nullptr;
 	stack = (wStack*)calloc(1, sizeof(wStack));
 
 	if (!stack)
-		return NULL;
+		return nullptr;
 
 	stack->object.fnObjectEquals = default_stack_equals;
 	stack->synchronized = synchronized;
@@ -231,8 +238,11 @@ wStack* Stack_New(BOOL synchronized)
 
 	return stack;
 out_free:
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_MISMATCHED_DEALLOC
 	Stack_Free(stack);
-	return NULL;
+	WINPR_PRAGMA_DIAG_POP
+	return nullptr;
 }
 
 void Stack_Free(wStack* stack)
@@ -242,7 +252,7 @@ void Stack_Free(wStack* stack)
 		if (stack->synchronized)
 			DeleteCriticalSection(&stack->lock);
 
-		free(stack->array);
+		free((void*)stack->array);
 		free(stack);
 	}
 }

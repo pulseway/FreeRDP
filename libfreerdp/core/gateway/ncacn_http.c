@@ -17,29 +17,31 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
+#include "../settings.h"
 #include "ncacn_http.h"
 
 #include <winpr/crt.h>
 #include <winpr/tchar.h>
 #include <winpr/stream.h>
 #include <winpr/dsparse.h>
-#include <winpr/winhttp.h>
+
+#include "../utils.h"
 
 #define TAG FREERDP_TAG("core.gateway.ntlm")
 
-static wStream* rpc_ntlm_http_request(HttpContext* http, const char* method, int contentLength,
-                                      const SecBuffer* ntlmToken)
-{
-	wStream* s = NULL;
-	HttpRequest* request = NULL;
-	char* base64NtlmToken = NULL;
-	const char* uri;
+#define AUTH_PKG NTLM_SSP_NAME
 
-	if (!http || !method || !ntlmToken)
+static wStream* rpc_auth_http_request(HttpContext* http, const char* method, size_t contentLength,
+                                      const SecBuffer* authToken, const char* auth_scheme)
+{
+	wStream* s = nullptr;
+	HttpRequest* request = nullptr;
+	char* base64AuthToken = nullptr;
+	const char* uri = nullptr;
+
+	if (!http || !method)
 		goto fail;
 
 	request = http_request_new();
@@ -47,8 +49,8 @@ static wStream* rpc_ntlm_http_request(HttpContext* http, const char* method, int
 	if (!request)
 		goto fail;
 
-	if (ntlmToken)
-		base64NtlmToken = crypto_base64_encode(ntlmToken->pvBuffer, ntlmToken->cbBuffer);
+	if (authToken)
+		base64AuthToken = crypto_base64_encode(authToken->pvBuffer, authToken->cbBuffer);
 
 	uri = http_context_get_uri(http);
 
@@ -57,42 +59,43 @@ static wStream* rpc_ntlm_http_request(HttpContext* http, const char* method, int
 	    !http_request_set_uri(request, uri))
 		goto fail;
 
-	if (base64NtlmToken)
+	if (base64AuthToken)
 	{
-		if (!http_request_set_auth_scheme(request, "NTLM") ||
-		    !http_request_set_auth_param(request, base64NtlmToken))
+		if (!http_request_set_auth_scheme(request, auth_scheme) ||
+		    !http_request_set_auth_param(request, base64AuthToken))
 			goto fail;
 	}
 
 	s = http_request_write(http, request);
 fail:
 	http_request_free(request);
-	free(base64NtlmToken);
+	free(base64AuthToken);
 	return s;
 }
 
 BOOL rpc_ncacn_http_send_in_channel_request(RpcChannel* inChannel)
 {
-	wStream* s;
-	int status;
-	int contentLength;
-	BOOL continueNeeded = FALSE;
-	rdpNtlm* ntlm;
-	HttpContext* http;
-	const SecBuffer* buffer;
+	wStream* s = nullptr;
+	SSIZE_T status = 0;
+	rdpCredsspAuth* auth = nullptr;
+	HttpContext* http = nullptr;
+	const SecBuffer* buffer = nullptr;
+	int rc = 0;
 
-	if (!inChannel || !inChannel->ntlm || !inChannel->http)
+	if (!inChannel || !inChannel->auth || !inChannel->http)
 		return FALSE;
 
-	ntlm = inChannel->ntlm;
+	auth = inChannel->auth;
 	http = inChannel->http;
 
-	if (!ntlm_authenticate(ntlm, &continueNeeded))
+	rc = credssp_auth_authenticate(auth);
+	if (rc < 0)
 		return FALSE;
 
-	contentLength = (continueNeeded) ? 0 : 0x40000000;
-	buffer = ntlm_client_get_output_buffer(ntlm);
-	s = rpc_ntlm_http_request(http, "RPC_IN_DATA", contentLength, buffer);
+	const size_t contentLength = (rc == 0) ? 0 : 0x40000000;
+	buffer = credssp_auth_have_output_token(auth) ? credssp_auth_get_output_buffer(auth) : nullptr;
+	s = rpc_auth_http_request(http, "RPC_IN_DATA", contentLength, buffer,
+	                          credssp_auth_pkg_name(auth));
 
 	if (!s)
 		return -1;
@@ -104,177 +107,173 @@ BOOL rpc_ncacn_http_send_in_channel_request(RpcChannel* inChannel)
 
 BOOL rpc_ncacn_http_recv_in_channel_response(RpcChannel* inChannel, HttpResponse* response)
 {
-	const char* token64 = NULL;
-	int ntlmTokenLength = 0;
-	BYTE* ntlmTokenData = NULL;
-	rdpNtlm* ntlm;
+	size_t authTokenLength = 0;
+	BYTE* authTokenData = nullptr;
 
-	if (!inChannel || !response || !inChannel->ntlm)
+	if (!inChannel || !response || !inChannel->auth)
 		return FALSE;
 
-	ntlm = inChannel->ntlm;
-	token64 = http_response_get_auth_token(response, "NTLM");
+	rdpCredsspAuth* auth = inChannel->auth;
+	const char* token64 = http_response_get_auth_token(response, credssp_auth_pkg_name(auth));
 
 	if (token64)
-		crypto_base64_decode(token64, strlen(token64), &ntlmTokenData, &ntlmTokenLength);
+		crypto_base64_decode(token64, strlen(token64), &authTokenData, &authTokenLength);
 
-	if (ntlmTokenData && ntlmTokenLength)
-		return ntlm_client_set_input_buffer(ntlm, FALSE, ntlmTokenData, ntlmTokenLength);
+	if (authTokenLength > UINT32_MAX)
+	{
+		free(authTokenData);
+		return FALSE;
+	}
 
-	free(ntlmTokenData);
+	SecBuffer buffer = { .pvBuffer = authTokenData, .cbBuffer = (UINT32)authTokenLength };
+
+	if (authTokenData && authTokenLength)
+	{
+		credssp_auth_take_input_buffer(auth, &buffer);
+		return TRUE;
+	}
+
+	sspi_SecBufferFree(&buffer);
 	return TRUE;
 }
 
-BOOL rpc_ncacn_http_ntlm_init(rdpContext* context, RpcChannel* channel)
+BOOL rpc_ncacn_http_auth_init(rdpContext* context, RpcChannel* channel)
 {
-	rdpTls* tls;
-	rdpNtlm* ntlm;
-	rdpSettings* settings;
-	freerdp* instance;
+	rdpTls* tls = nullptr;
+	rdpCredsspAuth* auth = nullptr;
+	rdpSettings* settings = nullptr;
+	freerdp* instance = nullptr;
+	auth_status rc = AUTH_FAILED;
+	SEC_WINNT_AUTH_IDENTITY identity = WINPR_C_ARRAY_INIT;
 
 	if (!context || !channel)
 		return FALSE;
 
 	tls = channel->tls;
-	ntlm = channel->ntlm;
+	auth = channel->auth;
 	settings = context->settings;
 	instance = context->instance;
 
-	if (!tls || !ntlm || !instance || !settings)
+	if (!tls || !auth || !instance || !settings)
 		return FALSE;
 
-	if (!settings->GatewayPassword || !settings->GatewayUsername ||
-	    !strlen(settings->GatewayPassword) || !strlen(settings->GatewayUsername))
+	rc = utils_authenticate_gateway(instance, GW_AUTH_HTTP);
+	switch (rc)
 	{
-		if (freerdp_shall_disconnect(instance))
+		case AUTH_SUCCESS:
+		case AUTH_SKIP:
+			break;
+		case AUTH_CANCELLED:
+			freerdp_set_last_error_log(instance->context, FREERDP_ERROR_CONNECT_CANCELLED);
 			return FALSE;
-
-		if (!instance->GatewayAuthenticate)
-		{
-			freerdp_set_last_error_log(context, FREERDP_ERROR_CONNECT_NO_OR_MISSING_CREDENTIALS);
-			return TRUE;
-		}
-		else
-		{
-			BOOL proceed =
-			    instance->GatewayAuthenticate(instance, &settings->GatewayUsername,
-			                                  &settings->GatewayPassword, &settings->GatewayDomain);
-
-			if (!proceed)
-			{
-				freerdp_set_last_error_log(context,
-				                           FREERDP_ERROR_CONNECT_NO_OR_MISSING_CREDENTIALS);
-				return TRUE;
-			}
-
-			if (settings->GatewayUseSameCredentials)
-			{
-				if (settings->GatewayUsername)
-				{
-					free(settings->Username);
-
-					if (!(settings->Username = _strdup(settings->GatewayUsername)))
-						return FALSE;
-				}
-
-				if (settings->GatewayDomain)
-				{
-					free(settings->Domain);
-
-					if (!(settings->Domain = _strdup(settings->GatewayDomain)))
-						return FALSE;
-				}
-
-				if (settings->GatewayPassword)
-				{
-					free(settings->Password);
-
-					if (!(settings->Password = _strdup(settings->GatewayPassword)))
-						return FALSE;
-				}
-			}
-		}
+		case AUTH_NO_CREDENTIALS:
+			WLog_INFO(TAG, "No credentials provided - using nullptr identity");
+			break;
+		case AUTH_FAILED:
+		default:
+			return FALSE;
 	}
 
-	if (!ntlm_client_init(ntlm, TRUE, settings->GatewayUsername, settings->GatewayDomain,
-	                      settings->GatewayPassword, tls->Bindings))
-	{
-		return TRUE;
-	}
+	if (!credssp_auth_init(auth, AUTH_PKG, tls->Bindings))
+		return FALSE;
 
-	if (!ntlm_client_make_spn(ntlm, _T("HTTP"), settings->GatewayHostname))
-	{
-		return TRUE;
-	}
+	if (!identity_set_from_settings(&identity, settings, FreeRDP_GatewayUsername,
+	                                FreeRDP_GatewayDomain, FreeRDP_GatewayPassword))
+		return FALSE;
 
-	return TRUE;
+	const char* GatewayHostname = freerdp_settings_get_string(settings, FreeRDP_GatewayHostname);
+	const char* GatewayUsername = freerdp_settings_get_string(settings, FreeRDP_GatewayUsername);
+	SEC_WINNT_AUTH_IDENTITY* identityArg = (GatewayUsername ? &identity : nullptr);
+	const BOOL res = credssp_auth_setup_client(auth, "HTTP", GatewayHostname, identityArg, nullptr);
+
+	sspi_FreeAuthIdentity(&identity);
+
+	credssp_auth_set_flags(auth, ISC_REQ_CONFIDENTIALITY);
+
+	return res;
 }
 
-void rpc_ncacn_http_ntlm_uninit(RpcChannel* channel)
+void rpc_ncacn_http_auth_uninit(RpcChannel* channel)
 {
 	if (!channel)
 		return;
 
-	ntlm_free(channel->ntlm);
-	channel->ntlm = NULL;
+	credssp_auth_free(channel->auth);
+	channel->auth = nullptr;
 }
 
 BOOL rpc_ncacn_http_send_out_channel_request(RpcChannel* outChannel, BOOL replacement)
 {
-	BOOL rc = TRUE;
-	wStream* s;
-	int contentLength;
-	BOOL continueNeeded = FALSE;
-	rdpNtlm* ntlm;
-	HttpContext* http;
-	const SecBuffer* buffer;
+	BOOL status = TRUE;
+	wStream* s = nullptr;
+	size_t contentLength = 0;
+	rdpCredsspAuth* auth = nullptr;
+	HttpContext* http = nullptr;
+	const SecBuffer* buffer = nullptr;
+	int rc = 0;
 
-	if (!outChannel || !outChannel->ntlm || !outChannel->http)
+	if (!outChannel || !outChannel->auth || !outChannel->http)
 		return FALSE;
 
-	ntlm = outChannel->ntlm;
+	auth = outChannel->auth;
 	http = outChannel->http;
 
-	if (!ntlm_authenticate(ntlm, &continueNeeded))
+	rc = credssp_auth_authenticate(auth);
+	if (rc < 0)
 		return FALSE;
 
 	if (!replacement)
-		contentLength = (continueNeeded) ? 0 : 76;
+		contentLength = (rc == 0) ? 0 : 76;
 	else
-		contentLength = (continueNeeded) ? 0 : 120;
+		contentLength = (rc == 0) ? 0 : 120;
 
-	buffer = ntlm_client_get_output_buffer(ntlm);
-	s = rpc_ntlm_http_request(http, "RPC_OUT_DATA", contentLength, buffer);
+	buffer = credssp_auth_have_output_token(auth) ? credssp_auth_get_output_buffer(auth) : nullptr;
+	s = rpc_auth_http_request(http, "RPC_OUT_DATA", contentLength, buffer,
+	                          credssp_auth_pkg_name(auth));
 
 	if (!s)
 		return -1;
 
 	if (rpc_channel_write(outChannel, Stream_Buffer(s), Stream_Length(s)) < 0)
-		rc = FALSE;
+		status = FALSE;
 
 	Stream_Free(s, TRUE);
-	return rc;
+	return status;
 }
 
 BOOL rpc_ncacn_http_recv_out_channel_response(RpcChannel* outChannel, HttpResponse* response)
 {
-	const char* token64 = NULL;
-	int ntlmTokenLength = 0;
-	BYTE* ntlmTokenData = NULL;
-	rdpNtlm* ntlm;
+	size_t authTokenLength = 0;
+	BYTE* authTokenData = nullptr;
 
-	if (!outChannel || !response || !outChannel->ntlm)
+	if (!outChannel || !response || !outChannel->auth)
 		return FALSE;
 
-	ntlm = outChannel->ntlm;
-	token64 = http_response_get_auth_token(response, "NTLM");
+	rdpCredsspAuth* auth = outChannel->auth;
+	const char* token64 = http_response_get_auth_token(response, credssp_auth_pkg_name(auth));
 
 	if (token64)
-		crypto_base64_decode(token64, strlen(token64), &ntlmTokenData, &ntlmTokenLength);
+		crypto_base64_decode(token64, strlen(token64), &authTokenData, &authTokenLength);
 
-	if (ntlmTokenData && ntlmTokenLength)
-		return ntlm_client_set_input_buffer(ntlm, FALSE, ntlmTokenData, ntlmTokenLength);
+	if (authTokenLength > UINT32_MAX)
+	{
+		free(authTokenData);
+		return FALSE;
+	}
+	SecBuffer buffer = { .pvBuffer = authTokenData, .cbBuffer = (UINT32)authTokenLength };
 
-	free(ntlmTokenData);
+	if (authTokenData && authTokenLength)
+	{
+		credssp_auth_take_input_buffer(auth, &buffer);
+		return TRUE;
+	}
+
+	sspi_SecBufferFree(&buffer);
 	return TRUE;
+}
+
+BOOL rpc_ncacn_http_is_final_request(RpcChannel* channel)
+{
+	WINPR_ASSERT(channel);
+	return credssp_auth_is_complete(channel->auth);
 }

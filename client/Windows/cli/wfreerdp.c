@@ -19,26 +19,25 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/windows.h>
 
 #include <winpr/crt.h>
-#include <winpr/credui.h>
 
 #include <freerdp/freerdp.h>
 #include <freerdp/constants.h>
+#include <freerdp/streamdump.h>
 
 #include <freerdp/client/file.h>
 #include <freerdp/client/cmdline.h>
 #include <freerdp/client/channels.h>
 #include <freerdp/channels/channels.h>
 
-#include "resource.h"
+#include "../resource/resource.h"
 
-#include "wf_client.h"
+#include <wf_client.h>
+#include <wf_defaults.h>
 
 #include <shellapi.h>
 
@@ -51,11 +50,11 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	rdpContext* context;
 	rdpSettings* settings;
 	LPWSTR cmd;
-	char** argv = NULL;
-	RDP_CLIENT_ENTRY_POINTS clientEntryPoints = { 0 };
+	char** argv = nullptr;
+	RDP_CLIENT_ENTRY_POINTS clientEntryPoints = WINPR_C_ARRAY_INIT;
 	int ret = 1;
-	int argc = 0, i;
-	LPWSTR* args = NULL;
+	int argc = 0;
+	LPWSTR* args = nullptr;
 
 	WINPR_UNUSED(hInstance);
 	WINPR_UNUSED(hPrevInstance);
@@ -83,9 +82,9 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 	if (!argv)
 		goto out;
 
-	for (i = 0; i < argc; i++)
+	for (int i = 0; i < argc; i++)
 	{
-		int size = WideCharToMultiByte(CP_UTF8, 0, args[i], -1, NULL, 0, NULL, NULL);
+		int size = WideCharToMultiByte(CP_UTF8, 0, args[i], -1, nullptr, 0, nullptr, nullptr);
 		if (size <= 0)
 			goto out;
 		argv[i] = calloc((size_t)size, sizeof(char));
@@ -93,9 +92,11 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		if (!argv[i])
 			goto out;
 
-		if (WideCharToMultiByte(CP_UTF8, 0, args[i], -1, argv[i], size, NULL, NULL) != size)
+		if (WideCharToMultiByte(CP_UTF8, 0, args[i], -1, argv[i], size, nullptr, nullptr) != size)
 			goto out;
 	}
+
+	freerdp_client_warn_deprecated(argc, argv);
 
 	settings = context->settings;
 	wfc = (wfContext*)context;
@@ -104,12 +105,16 @@ INT WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
 		goto out;
 
 	status = freerdp_client_settings_parse_command_line(settings, argc, argv, FALSE);
-
 	if (status)
 	{
 		ret = freerdp_client_settings_command_line_status_print(settings, status, argc, argv);
 		goto out;
 	}
+
+	AddDefaultSettings(settings);
+
+	if (!stream_dump_register_handlers(context, CONNECTION_STATE_MCS_CREATE_REQUEST, FALSE))
+		goto out;
 
 	if (freerdp_client_start(context) != 0)
 		goto out;
@@ -133,7 +138,7 @@ out:
 
 	if (argv)
 	{
-		for (i = 0; i < argc; i++)
+		for (int i = 0; i < argc; i++)
 			free(argv[i]);
 
 		free(argv);
@@ -142,3 +147,10 @@ out:
 	LocalFree(args);
 	return ret;
 }
+
+#ifdef WITH_WIN_CONSOLE
+int main()
+{
+	return WinMain(nullptr, nullptr, nullptr, 0);
+}
+#endif

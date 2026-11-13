@@ -29,14 +29,24 @@ extern "C"
 {
 #endif
 
-	rdpShadowSubsystem* shadow_subsystem_new(void);
 	void shadow_subsystem_free(rdpShadowSubsystem* subsystem);
 
-	int shadow_subsystem_init(rdpShadowSubsystem* subsystem, rdpShadowServer* server);
+	WINPR_ATTR_MALLOC(shadow_subsystem_free, 1)
+	WINPR_ATTR_NODISCARD
+	rdpShadowSubsystem* shadow_subsystem_new(void);
+
+	WINPR_ATTR_NODISCARD int shadow_subsystem_init(rdpShadowSubsystem* subsystem,
+	                                               rdpShadowServer* server);
 	void shadow_subsystem_uninit(rdpShadowSubsystem* subsystem);
 
-	int shadow_subsystem_start(rdpShadowSubsystem* subsystem);
+	WINPR_ATTR_NODISCARD int shadow_subsystem_start(rdpShadowSubsystem* subsystem);
 	int shadow_subsystem_stop(rdpShadowSubsystem* subsystem);
+
+	/** @brief Restrict and order the subsystems tried, e.g. "Mutter,X11" */
+	WINPR_ATTR_NODISCARD BOOL shadow_subsystem_set_order(const char* names);
+
+	/** @brief Log the subsystems in the order they are tried, with the monitors each finds */
+	void shadow_subsystem_list(void);
 
 #ifdef __cplusplus
 }

@@ -28,6 +28,7 @@
 #include "shadow_remdesk.h"
 #include "shadow_rdpsnd.h"
 #include "shadow_audin.h"
+#include "shadow_disp.h"
 #include "shadow_rdpgfx.h"
 
 #ifdef __cplusplus
@@ -35,7 +36,7 @@ extern "C"
 {
 #endif
 
-	UINT shadow_client_channels_post_connect(rdpShadowClient* client);
+	WINPR_ATTR_NODISCARD UINT shadow_client_channels_post_connect(rdpShadowClient* client);
 	void shadow_client_channels_free(rdpShadowClient* client);
 
 #ifdef __cplusplus

@@ -17,70 +17,72 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 
 #include <winpr/stream.h>
 
-#include <freerdp/cache/cache.h>
-
 #include "cache.h"
 
-rdpCache* cache_new(rdpSettings* settings)
+rdpCache* cache_new(rdpContext* context)
 {
-	rdpCache* cache;
+	rdpCache* cache = nullptr;
+
+	WINPR_ASSERT(context);
+
 	cache = (rdpCache*)calloc(1, sizeof(rdpCache));
 
 	if (!cache)
-		return NULL;
+		return nullptr;
 
-	cache->glyph = glyph_cache_new(settings);
+	cache->glyph = glyph_cache_new(context);
 
 	if (!cache->glyph)
 		goto error;
 
-	cache->brush = brush_cache_new(settings);
+	cache->brush = brush_cache_new(context);
 
 	if (!cache->brush)
 		goto error;
 
-	cache->pointer = pointer_cache_new(settings);
+	cache->pointer = pointer_cache_new(context);
 
 	if (!cache->pointer)
 		goto error;
 
-	cache->bitmap = bitmap_cache_new(settings);
+	cache->bitmap = bitmap_cache_new(context);
 
 	if (!cache->bitmap)
 		goto error;
 
-	cache->offscreen = offscreen_cache_new(settings);
+	cache->offscreen = offscreen_cache_new(context);
 
 	if (!cache->offscreen)
 		goto error;
 
-	cache->palette = palette_cache_new(settings);
+	cache->palette = palette_cache_new(context);
 
 	if (!cache->palette)
 		goto error;
 
-	cache->nine_grid = nine_grid_cache_new(settings);
+	cache->nine_grid = nine_grid_cache_new(context);
 
 	if (!cache->nine_grid)
 		goto error;
 
 	return cache;
 error:
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_MISMATCHED_DEALLOC
 	cache_free(cache);
-	return NULL;
+	WINPR_PRAGMA_DIAG_POP
+	return nullptr;
 }
 
 void cache_free(rdpCache* cache)
 {
-	if (cache != NULL)
+	if (cache != nullptr)
 	{
 		glyph_cache_free(cache->glyph);
 		brush_cache_free(cache->brush);
@@ -104,11 +106,15 @@ CACHE_COLOR_TABLE_ORDER* copy_cache_color_table_order(rdpContext* context,
 	*dst = *order;
 	return dst;
 fail:
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_MISMATCHED_DEALLOC
 	free_cache_color_table_order(context, dst);
-	return NULL;
+	WINPR_PRAGMA_DIAG_POP
+	return nullptr;
 }
 
-void free_cache_color_table_order(rdpContext* context, CACHE_COLOR_TABLE_ORDER* order)
+void free_cache_color_table_order(WINPR_ATTR_UNUSED rdpContext* context,
+                                  CACHE_COLOR_TABLE_ORDER* order)
 {
 	free(order);
 }
@@ -132,13 +138,31 @@ SURFACE_BITS_COMMAND* copy_surface_bits_command(rdpContext* context,
 	return dst;
 
 fail:
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_MISMATCHED_DEALLOC
 	free_surface_bits_command(context, dst);
-	return NULL;
+	WINPR_PRAGMA_DIAG_POP
+	return nullptr;
 }
 
-void free_surface_bits_command(rdpContext* context, SURFACE_BITS_COMMAND* order)
+void free_surface_bits_command(WINPR_ATTR_UNUSED rdpContext* context, SURFACE_BITS_COMMAND* order)
 {
 	if (order)
 		free(order->bmp.bitmapData);
 	free(order);
+}
+
+BOOL cache_resize(rdpContext* context)
+{
+	WINPR_ASSERT(context);
+
+	if (!context->cache)
+		context->cache = cache_new(context);
+	if (!context->cache)
+		return FALSE;
+	if (!bitmap_cache_resize(context->cache->bitmap))
+		return FALSE;
+	if (!pointer_cache_resize(context->cache->pointer))
+		return FALSE;
+	return TRUE;
 }

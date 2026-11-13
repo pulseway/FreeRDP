@@ -17,3 +17,6 @@
 
 winpr_module_add(bcrypt.c)
 
+if(BUILD_TESTING)
+  add_subdirectory(test)
+endif()

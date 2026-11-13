@@ -15,6 +15,7 @@
 
 // forward declaration
 @class RDPSession;
+@class RDPCursor;
 @class ComputerBookmark;
 @class ConnectionParams;
 
@@ -30,14 +31,22 @@ extern NSString *TSXSessionDidFailToConnectNotification;
 - (void)sessionDidConnect:(RDPSession *)session;
 - (void)sessionWillDisconnect:(RDPSession *)session;
 - (void)sessionDidDisconnect:(RDPSession *)session;
+- (void)sessionWillReconnect:(RDPSession *)session;
+- (void)sessionDidReconnect:(RDPSession *)session;
 - (void)sessionBitmapContextWillChange:(RDPSession *)session;
 - (void)sessionBitmapContextDidChange:(RDPSession *)session;
 - (void)session:(RDPSession *)session needsRedrawInRect:(CGRect)rect;
+- (void)session:(RDPSession *)session didSetRemoteCursor:(RDPCursor *)cursor;
+- (void)session:(RDPSession *)session didMoveRemoteCursor:(CGPoint)position;
+- (void)sessionDidHideRemoteCursor:(RDPSession *)session;
+- (void)sessionDidSetDefaultRemoteCursor:(RDPSession *)session;
+- (void)session:(RDPSession *)session didChangeRemoteClipboardText:(NSString *)text;
 - (CGSize)sizeForFitScreenForSession:(RDPSession *)session;
 
 - (void)session:(RDPSession *)session
     requestsAuthenticationWithParams:(NSMutableDictionary *)params;
 - (void)session:(RDPSession *)session verifyCertificateWithParams:(NSMutableDictionary *)params;
+- (void)session:(RDPSession *)session requestsClipboardTextWithParams:(NSMutableDictionary *)params;
 
 @end
 
@@ -94,13 +103,25 @@ extern NSString *TSXSessionDidFailToConnectNotification;
 // send input event to the server
 - (void)sendInputEvent:(NSDictionary *)event;
 
+// tell the server whether the local clipboard has text
+- (void)sendClipboardHasText:(BOOL)hasText;
+
 // session needs a refresh of its view
 - (void)setNeedsDisplayInRectAsValue:(NSValue *)rect_value;
+
+// handle cursor updated event
+- (void)setRemoteCursor:(RDPCursor *)cursor;
+- (void)setRemoteCursorPositionValue:(NSValue *)positionValue;
+- (void)hideRemoteCursor;
+- (void)setDefaultRemoteCursor;
+
+// handle text copied on the server
+- (void)setRemoteClipboardText:(NSString *)text;
 
 // get a small session screenshot
 - (UIImage *)getScreenshotWithSize:(CGSize)size;
 
-// returns the session's current paramters
+// returns the session's current parameters
 - (rdpSettings *)getSessionParams;
 
 // returns the session's name (usually the label of the bookmark the session was created with)

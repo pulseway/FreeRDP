@@ -12,23 +12,20 @@
 #import "RDPSession.h"
 #import "RDPKeyboard.h"
 #import "RDPSessionView.h"
-#import "TouchPointerView.h"
+#import "RDPCursor.h"
 #import "AdvancedKeyboardView.h"
+#import "RDPKeyboardToolbarView.h"
 
 @interface RDPSessionViewController
-    : UIViewController <RDPSessionDelegate, TouchPointerDelegate, AdvancedKeyboardDelegate,
-                        RDPKeyboardDelegate, UIScrollViewDelegate, UITextFieldDelegate>
+    : UIViewController <RDPSessionDelegate, AdvancedKeyboardDelegate, RDPKeyboardDelegate,
+                        UIScrollViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate,
+                        UIPointerInteractionDelegate>
 {
 	// scrollview that hosts the rdp session view
 	IBOutlet UIScrollView *_session_scrollview;
 
 	// rdp session view
 	IBOutlet RDPSessionView *_session_view;
-
-	// touch pointer view
-	IBOutlet TouchPointerView *_touchpointer_view;
-	BOOL _autoscroll_with_touchpointer;
-	BOOL _is_autoscrolling;
 
 	// rdp session toolbar
 	IBOutlet UIToolbar *_session_toolbar;
@@ -37,6 +34,9 @@
 	// dummy text field used to display the keyboard
 	IBOutlet UITextField *_dummy_textfield;
 
+	// dummy text field that has already been sent to the remote session
+	NSString *_sent_text;
+
 	// connecting view and the controls within that view
 	IBOutlet UIView *_connecting_view;
 	IBOutlet UILabel *_lbl_connecting;
@@ -44,28 +44,35 @@
 	IBOutlet UIButton *_cancel_connect_button;
 
 	// extended keyboard toolbar
-	UIToolbar *_keyboard_toolbar;
+	RDPKeyboardToolbarView *_keyboard_toolbar;
 
 	// rdp session
 	RDPSession *_session;
 	BOOL _session_initilized;
 
-	// flag that indicates whether the keyboard is visible or not
-	BOOL _keyboard_visible;
-
-	// flag to switch between left/right mouse button mode
-	BOOL _toggle_mouse_button;
-
 	// keyboard extension view
 	AdvancedKeyboardView *_advanced_keyboard_view;
-	BOOL _advanced_keyboard_visible;
-	BOOL _requesting_advanced_keyboard;
-	CGFloat _keyboard_last_height;
 
-	// delayed mouse move event sending
-	NSTimer *_mouse_move_event_timer;
-	int _mouse_move_events_skipped;
+	// height of the system keyboard per orientation
+	CGFloat _keyboard_height_portrait;
+	CGFloat _keyboard_height_landscape;
+	CGSize _last_session_viewport_size;
+
 	CGPoint _prev_long_press_position;
+	CGPoint _cursor_view_position;
+	CGPoint _last_mouse_pan_location;
+	BOOL _has_cursor_view_position;
+	BOOL _has_user_moved_cursor;
+	BOOL _mouse_pan_active;
+	BOOL _long_press_active;
+	BOOL _mouse_drag_active;
+	BOOL _pointer_is_indirect;
+
+	// last local clipboard change already sent to the server
+	NSInteger _pasteboard_change_count;
+
+	// keeps the session running for a moment when app switched background
+	UIBackgroundTaskIdentifier _background_task;
 }
 
 - (id)initWithNibName:(NSString *)nibNameOrNil

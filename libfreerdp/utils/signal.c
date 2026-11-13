@@ -17,111 +17,107 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
-#include <stddef.h>
-#include <errno.h>
 #include <string.h>
 
 #include <winpr/crt.h>
+#include <winpr/debug.h>
 
 #include <freerdp/utils/signal.h>
 #include <freerdp/log.h>
 
-#define TAG FREERDP_TAG("utils")
+#include "platform_signal.h"
 
-#ifdef _WIN32
+#define TAG FREERDP_TAG("utils.signal")
 
-int freerdp_handle_signals(void)
+#if defined(_WIN32)
+const char* strsignal(int signum);
+#endif
+
+BOOL fsig_handlers_registered = FALSE;
+
+typedef struct
 {
-	errno = ENOSYS;
-	return -1;
-}
+	void* context;
+	freerdp_signal_handler_t handler;
+} cleanup_handler_t;
 
-#else
+static size_t cleanup_handler_count = 0;
+static cleanup_handler_t cleanup_handlers[20] = WINPR_C_ARRAY_INIT;
 
-#include <pthread.h>
-#include <winpr/debug.h>
-
-volatile sig_atomic_t terminal_needs_reset = 0;
-int terminal_fildes = 0;
-struct termios orig_flags;
-struct termios new_flags;
-
-static void fatal_handler(int signum)
+void fsig_term_handler(int signum)
 {
-	struct sigaction default_sigaction;
-	sigset_t this_mask;
 	static BOOL recursive = FALSE;
 
 	if (!recursive)
 	{
 		recursive = TRUE;
+		// NOLINTNEXTLINE(concurrency-mt-unsafe)
 		WLog_ERR(TAG, "Caught signal '%s' [%d]", strsignal(signum), signum);
-
-		winpr_log_backtrace(TAG, WLOG_ERROR, 20);
 	}
-	if (terminal_needs_reset)
-		tcsetattr(terminal_fildes, TCSAFLUSH, &orig_flags);
 
-	default_sigaction.sa_handler = SIG_DFL;
-	sigfillset(&(default_sigaction.sa_mask));
-	default_sigaction.sa_flags = 0;
-	sigaction(signum, &default_sigaction, NULL);
-	sigemptyset(&this_mask);
-	sigaddset(&this_mask, signum);
-	pthread_sigmask(SIG_UNBLOCK, &this_mask, NULL);
-	raise(signum);
+	fsig_lock();
+	for (size_t x = 0; x < cleanup_handler_count; x++)
+	{
+		const cleanup_handler_t empty = WINPR_C_ARRAY_INIT;
+		cleanup_handler_t* cur = &cleanup_handlers[x];
+		if (cur->handler)
+		{
+			// NOLINTNEXTLINE(concurrency-mt-unsafe)
+			cur->handler(signum, strsignal(signum), cur->context);
+		}
+		*cur = empty;
+	}
+	cleanup_handler_count = 0;
+	fsig_unlock();
 }
 
-const int fatal_signals[] = { SIGABRT,   SIGALRM, SIGBUS,  SIGFPE,  SIGHUP,  SIGILL,
-	                          SIGINT,    SIGKILL, SIGQUIT, SIGSEGV, SIGSTOP, SIGTERM,
-	                          SIGTSTP,   SIGTTIN, SIGTTOU, SIGUSR1, SIGUSR2,
-#ifdef SIGPOLL
-	                          SIGPOLL,
-#endif
-#ifdef SIGPROF
-	                          SIGPROF,
-#endif
-#ifdef SIGSYS
-	                          SIGSYS,
-#endif
-	                          SIGTRAP,
-#ifdef SIGVTALRM
-	                          SIGVTALRM,
-#endif
-	                          SIGXCPU,   SIGXFSZ };
-
-int freerdp_handle_signals(void)
+BOOL freerdp_add_signal_cleanup_handler(void* context, freerdp_signal_handler_t handler)
 {
-	size_t signal_index;
-	sigset_t orig_set;
-	struct sigaction orig_sigaction;
-	struct sigaction fatal_sigaction;
-	WLog_DBG(TAG, "Registering signal hook...");
-	sigfillset(&(fatal_sigaction.sa_mask));
-	sigdelset(&(fatal_sigaction.sa_mask), SIGCONT);
-	pthread_sigmask(SIG_BLOCK, &(fatal_sigaction.sa_mask), &orig_set);
-	fatal_sigaction.sa_handler = fatal_handler;
-	fatal_sigaction.sa_flags = 0;
-
-	for (signal_index = 0; signal_index < ARRAYSIZE(fatal_signals); signal_index++)
+	BOOL rc = FALSE;
+	fsig_lock();
+	if (fsig_handlers_registered)
 	{
-		if (sigaction(fatal_signals[signal_index], NULL, &orig_sigaction) == 0)
+		if (cleanup_handler_count < ARRAYSIZE(cleanup_handlers))
 		{
-			if (orig_sigaction.sa_handler != SIG_IGN)
+			cleanup_handler_t* cur = &cleanup_handlers[cleanup_handler_count++];
+			cur->context = context;
+			cur->handler = handler;
+		}
+		else
+			WLog_WARN(TAG, "Failed to register cleanup handler, only %" PRIuz " handlers supported",
+			          ARRAYSIZE(cleanup_handlers));
+	}
+	rc = TRUE;
+	fsig_unlock();
+	return rc;
+}
+
+BOOL freerdp_del_signal_cleanup_handler(void* context, freerdp_signal_handler_t handler)
+{
+	BOOL rc = FALSE;
+	fsig_lock();
+	if (fsig_handlers_registered)
+	{
+		for (size_t x = 0; x < cleanup_handler_count; x++)
+		{
+			cleanup_handler_t* cur = &cleanup_handlers[x];
+			if ((cur->context == context) && (cur->handler == handler))
 			{
-				sigaction(fatal_signals[signal_index], &fatal_sigaction, NULL);
+				const cleanup_handler_t empty = WINPR_C_ARRAY_INIT;
+				for (size_t y = x + 1; y < cleanup_handler_count - 1; y++)
+				{
+					*cur++ = cleanup_handlers[y];
+				}
+
+				*cur = empty;
+				cleanup_handler_count--;
+				break;
 			}
 		}
 	}
-
-	pthread_sigmask(SIG_SETMASK, &orig_set, NULL);
-	/* Ignore SIGPIPE signal. */
-	signal(SIGPIPE, SIG_IGN);
-	return 0;
+	rc = TRUE;
+	fsig_unlock();
+	return rc;
 }
-
-#endif

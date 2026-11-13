@@ -26,17 +26,12 @@
 #include <freerdp/client/rail.h>
 #include <freerdp/client/cliprdr.h>
 #include <freerdp/client/rdpgfx.h>
-#include <freerdp/client/encomsp.h>
 
-struct tf_context
+typedef struct
 {
-	rdpContext context;
+	rdpClientContext common;
 
 	/* Channels */
-	RdpeiClientContext* rdpei;
-	RdpgfxClientContext* gfx;
-	EncomspClientContext* encomsp;
-};
-typedef struct tf_context tfContext;
+} tfContext;
 
 #endif /* FREERDP_CLIENT_SAMPLE_H */

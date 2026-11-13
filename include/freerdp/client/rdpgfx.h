@@ -22,143 +22,207 @@
 #ifndef FREERDP_CHANNEL_RDPGFX_CLIENT_RDPGFX_H
 #define FREERDP_CHANNEL_RDPGFX_CLIENT_RDPGFX_H
 
-#include <freerdp/freerdp.h>
+#include <freerdp/api.h>
+#include <freerdp/types.h>
+
+#include <freerdp/codecs.h>
+
 #include <freerdp/channels/rdpgfx.h>
 #include <freerdp/utils/profiler.h>
 
-/**
- * Client Interface
- */
-
-typedef struct _rdpgfx_client_context RdpgfxClientContext;
-
-typedef UINT (*pcRdpgfxResetGraphics)(RdpgfxClientContext* context,
-                                      const RDPGFX_RESET_GRAPHICS_PDU* resetGraphics);
-typedef UINT (*pcRdpgfxStartFrame)(RdpgfxClientContext* context,
-                                   const RDPGFX_START_FRAME_PDU* startFrame);
-typedef UINT (*pcRdpgfxEndFrame)(RdpgfxClientContext* context,
-                                 const RDPGFX_END_FRAME_PDU* endFrame);
-typedef UINT (*pcRdpgfxSurfaceCommand)(RdpgfxClientContext* context,
-                                       const RDPGFX_SURFACE_COMMAND* cmd);
-typedef UINT (*pcRdpgfxDeleteEncodingContext)(
-    RdpgfxClientContext* context, const RDPGFX_DELETE_ENCODING_CONTEXT_PDU* deleteEncodingContext);
-typedef UINT (*pcRdpgfxCreateSurface)(RdpgfxClientContext* context,
-                                      const RDPGFX_CREATE_SURFACE_PDU* createSurface);
-typedef UINT (*pcRdpgfxDeleteSurface)(RdpgfxClientContext* context,
-                                      const RDPGFX_DELETE_SURFACE_PDU* deleteSurface);
-typedef UINT (*pcRdpgfxSolidFill)(RdpgfxClientContext* context,
-                                  const RDPGFX_SOLID_FILL_PDU* solidFill);
-typedef UINT (*pcRdpgfxSurfaceToSurface)(RdpgfxClientContext* context,
-                                         const RDPGFX_SURFACE_TO_SURFACE_PDU* surfaceToSurface);
-typedef UINT (*pcRdpgfxSurfaceToCache)(RdpgfxClientContext* context,
-                                       const RDPGFX_SURFACE_TO_CACHE_PDU* surfaceToCache);
-typedef UINT (*pcRdpgfxCacheToSurface)(RdpgfxClientContext* context,
-                                       const RDPGFX_CACHE_TO_SURFACE_PDU* cacheToSurface);
-typedef UINT (*pcRdpgfxCacheImportOffer)(RdpgfxClientContext* context,
-                                         const RDPGFX_CACHE_IMPORT_OFFER_PDU* cacheImportOffer);
-typedef UINT (*pcRdpgfxCacheImportReply)(RdpgfxClientContext* context,
-                                         const RDPGFX_CACHE_IMPORT_REPLY_PDU* cacheImportReply);
-typedef UINT (*pcRdpgfxEvictCacheEntry)(RdpgfxClientContext* context,
-                                        const RDPGFX_EVICT_CACHE_ENTRY_PDU* evictCacheEntry);
-typedef UINT (*pcRdpgfxMapSurfaceToOutput)(RdpgfxClientContext* context,
-                                           const RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU* surfaceToOutput);
-typedef UINT (*pcRdpgfxMapSurfaceToScaledOutput)(
-    RdpgfxClientContext* context, const RDPGFX_MAP_SURFACE_TO_SCALED_OUTPUT_PDU* surfaceToOutput);
-typedef UINT (*pcRdpgfxMapSurfaceToWindow)(RdpgfxClientContext* context,
-                                           const RDPGFX_MAP_SURFACE_TO_WINDOW_PDU* surfaceToWindow);
-typedef UINT (*pcRdpgfxMapSurfaceToScaledWindow)(
-    RdpgfxClientContext* context, const RDPGFX_MAP_SURFACE_TO_SCALED_WINDOW_PDU* surfaceToWindow);
-typedef UINT (*pcRdpgfxSetSurfaceData)(RdpgfxClientContext* context, UINT16 surfaceId, void* pData);
-typedef void* (*pcRdpgfxGetSurfaceData)(RdpgfxClientContext* context, UINT16 surfaceId);
-typedef UINT (*pcRdpgfxGetSurfaceIds)(RdpgfxClientContext* context, UINT16** ppSurfaceIds,
-                                      UINT16* count);
-typedef UINT (*pcRdpgfxSetCacheSlotData)(RdpgfxClientContext* context, UINT16 cacheSlot,
-                                         void* pData);
-typedef void* (*pcRdpgfxGetCacheSlotData)(RdpgfxClientContext* context, UINT16 cacheSlot);
-
-typedef UINT (*pcRdpgfxUpdateSurfaces)(RdpgfxClientContext* context);
-
-typedef UINT (*pcRdpgfxUpdateSurfaceArea)(RdpgfxClientContext* context, UINT16 surfaceId,
-                                          UINT32 nrRects, const RECTANGLE_16* rects);
-
-typedef UINT (*pcRdpgfxOnOpen)(RdpgfxClientContext* context, BOOL* do_caps_advertise,
-                               BOOL* do_frame_acks);
-typedef UINT (*pcRdpgfxOnClose)(RdpgfxClientContext* context);
-typedef UINT (*pcRdpgfxCapsAdvertise)(RdpgfxClientContext* context,
-                                      const RDPGFX_CAPS_ADVERTISE_PDU* capsAdvertise);
-typedef UINT (*pcRdpgfxCapsConfirm)(RdpgfxClientContext* context,
-                                    const RDPGFX_CAPS_CONFIRM_PDU* capsConfirm);
-typedef UINT (*pcRdpgfxFrameAcknowledge)(RdpgfxClientContext* context,
-                                         const RDPGFX_FRAME_ACKNOWLEDGE_PDU* frameAcknowledge);
-typedef UINT (*pcRdpgfxQoeFrameAcknowledge)(
-    RdpgfxClientContext* context, const RDPGFX_QOE_FRAME_ACKNOWLEDGE_PDU* qoeFrameAcknowledge);
-
-typedef UINT (*pcRdpgfxMapWindowForSurface)(RdpgfxClientContext* context, UINT16 surfaceID,
-                                            UINT64 windowID);
-typedef UINT (*pcRdpgfxUnmapWindowForSurface)(RdpgfxClientContext* context, UINT64 windowID);
-
-struct _rdpgfx_client_context
-{
-	void* handle;
-	void* custom;
-
-	/* Implementations require locking */
-	pcRdpgfxResetGraphics ResetGraphics;
-	pcRdpgfxStartFrame StartFrame;
-	pcRdpgfxEndFrame EndFrame;
-	pcRdpgfxSurfaceCommand SurfaceCommand;
-	pcRdpgfxDeleteEncodingContext DeleteEncodingContext;
-	pcRdpgfxCreateSurface CreateSurface;
-	pcRdpgfxDeleteSurface DeleteSurface;
-	pcRdpgfxSolidFill SolidFill;
-	pcRdpgfxSurfaceToSurface SurfaceToSurface;
-	pcRdpgfxSurfaceToCache SurfaceToCache;
-	pcRdpgfxCacheToSurface CacheToSurface;
-	pcRdpgfxCacheImportOffer CacheImportOffer;
-	pcRdpgfxCacheImportReply CacheImportReply;
-	pcRdpgfxEvictCacheEntry EvictCacheEntry;
-	pcRdpgfxMapSurfaceToOutput MapSurfaceToOutput;
-	pcRdpgfxMapSurfaceToScaledOutput MapSurfaceToScaledOutput;
-	pcRdpgfxMapSurfaceToWindow MapSurfaceToWindow;
-	pcRdpgfxMapSurfaceToScaledWindow MapSurfaceToScaledWindow;
-
-	pcRdpgfxGetSurfaceIds GetSurfaceIds;
-	pcRdpgfxSetSurfaceData SetSurfaceData;
-	pcRdpgfxGetSurfaceData GetSurfaceData;
-	pcRdpgfxSetCacheSlotData SetCacheSlotData;
-	pcRdpgfxGetCacheSlotData GetCacheSlotData;
-
-	/* Proxy callbacks */
-	pcRdpgfxOnOpen OnOpen;
-	pcRdpgfxOnClose OnClose;
-	pcRdpgfxCapsAdvertise CapsAdvertise;
-	pcRdpgfxCapsConfirm CapsConfirm;
-	pcRdpgfxFrameAcknowledge FrameAcknowledge;
-	pcRdpgfxQoeFrameAcknowledge QoeFrameAcknowledge;
-
-	/* No locking required */
-	pcRdpgfxUpdateSurfaces UpdateSurfaces;
-	pcRdpgfxUpdateSurfaceArea UpdateSurfaceArea;
-
-	/* These callbacks allow crating/destroying a window directly
-	 * mapped to a surface.
-	 * NOTE: The surface is already locked.
-	 */
-	pcRdpgfxMapWindowForSurface MapWindowForSurface;
-	pcRdpgfxUnmapWindowForSurface UnmapWindowForSurface;
-
-	CRITICAL_SECTION mux;
-	rdpCodecs* codecs;
-	PROFILER_DEFINE(SurfaceProfiler)
-};
+#include <freerdp/cache/persistent.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-	FREERDP_API RdpgfxClientContext* rdpgfx_client_context_new(rdpSettings* settings);
+	/**
+	 * Client Interface
+	 */
+	typedef struct gdi_gfx_surface gdiGfxSurface;
+	typedef struct s_rdpgfx_client_context RdpgfxClientContext;
+
+	typedef UINT (*pcRdpgfxResetGraphics)(RdpgfxClientContext* context,
+	                                      const RDPGFX_RESET_GRAPHICS_PDU* resetGraphics);
+	typedef UINT (*pcRdpgfxStartFrame)(RdpgfxClientContext* context,
+	                                   const RDPGFX_START_FRAME_PDU* startFrame);
+	typedef UINT (*pcRdpgfxEndFrame)(RdpgfxClientContext* context,
+	                                 const RDPGFX_END_FRAME_PDU* endFrame);
+	typedef UINT (*pcRdpgfxSurfaceCommand)(RdpgfxClientContext* context,
+	                                       const RDPGFX_SURFACE_COMMAND* cmd);
+	typedef UINT (*pcRdpgfxDeleteEncodingContext)(
+	    RdpgfxClientContext* context,
+	    const RDPGFX_DELETE_ENCODING_CONTEXT_PDU* deleteEncodingContext);
+	typedef UINT (*pcRdpgfxCreateSurface)(RdpgfxClientContext* context,
+	                                      const RDPGFX_CREATE_SURFACE_PDU* createSurface);
+	typedef UINT (*pcRdpgfxDeleteSurface)(RdpgfxClientContext* context,
+	                                      const RDPGFX_DELETE_SURFACE_PDU* deleteSurface);
+	typedef UINT (*pcRdpgfxSolidFill)(RdpgfxClientContext* context,
+	                                  const RDPGFX_SOLID_FILL_PDU* solidFill);
+	typedef UINT (*pcRdpgfxSurfaceToSurface)(RdpgfxClientContext* context,
+	                                         const RDPGFX_SURFACE_TO_SURFACE_PDU* surfaceToSurface);
+	typedef UINT (*pcRdpgfxSurfaceToCache)(RdpgfxClientContext* context,
+	                                       const RDPGFX_SURFACE_TO_CACHE_PDU* surfaceToCache);
+	typedef UINT (*pcRdpgfxCacheToSurface)(RdpgfxClientContext* context,
+	                                       const RDPGFX_CACHE_TO_SURFACE_PDU* cacheToSurface);
+	typedef UINT (*pcRdpgfxCacheImportOffer)(RdpgfxClientContext* context,
+	                                         const RDPGFX_CACHE_IMPORT_OFFER_PDU* cacheImportOffer);
+	typedef UINT (*pcRdpgfxCacheImportReply)(RdpgfxClientContext* context,
+	                                         const RDPGFX_CACHE_IMPORT_REPLY_PDU* cacheImportReply);
+	typedef UINT (*pcRdpgfxEvictCacheEntry)(RdpgfxClientContext* context,
+	                                        const RDPGFX_EVICT_CACHE_ENTRY_PDU* evictCacheEntry);
+	typedef UINT (*pcRdpgfxImportCacheEntry)(RdpgfxClientContext* context, UINT16 cacheSlot,
+	                                         const PERSISTENT_CACHE_ENTRY* importCacheEntry);
+	typedef UINT (*pcRdpgfxExportCacheEntry)(RdpgfxClientContext* context, UINT16 cacheSlot,
+	                                         PERSISTENT_CACHE_ENTRY* importCacheEntry);
+	typedef UINT (*pcRdpgfxMapSurfaceToOutput)(
+	    RdpgfxClientContext* context, const RDPGFX_MAP_SURFACE_TO_OUTPUT_PDU* surfaceToOutput);
+	typedef UINT (*pcRdpgfxMapSurfaceToScaledOutput)(
+	    RdpgfxClientContext* context,
+	    const RDPGFX_MAP_SURFACE_TO_SCALED_OUTPUT_PDU* surfaceToOutput);
+	typedef UINT (*pcRdpgfxMapSurfaceToWindow)(
+	    RdpgfxClientContext* context, const RDPGFX_MAP_SURFACE_TO_WINDOW_PDU* surfaceToWindow);
+	typedef UINT (*pcRdpgfxMapSurfaceToScaledWindow)(
+	    RdpgfxClientContext* context,
+	    const RDPGFX_MAP_SURFACE_TO_SCALED_WINDOW_PDU* surfaceToWindow);
+	typedef UINT (*pcRdpgfxSetSurfaceData)(RdpgfxClientContext* context, UINT16 surfaceId,
+	                                       void* pData);
+	typedef void* (*pcRdpgfxGetSurfaceData)(RdpgfxClientContext* context, UINT16 surfaceId);
+	typedef UINT (*pcRdpgfxGetSurfaceIds)(RdpgfxClientContext* context, UINT16** ppSurfaceIds,
+	                                      UINT16* count);
+	typedef UINT (*pcRdpgfxSetCacheSlotData)(RdpgfxClientContext* context, UINT16 cacheSlot,
+	                                         void* pData);
+	typedef void* (*pcRdpgfxGetCacheSlotData)(RdpgfxClientContext* context, UINT16 cacheSlot);
+
+	typedef UINT (*pcRdpgfxUpdateSurfaces)(RdpgfxClientContext* context);
+
+	typedef UINT (*pcRdpgfxUpdateWindowFromSurface)(RdpgfxClientContext* context,
+	                                                gdiGfxSurface* surface);
+
+	typedef UINT (*pcRdpgfxUpdateSurfaceArea)(RdpgfxClientContext* context, UINT16 surfaceId,
+	                                          UINT32 nrRects, const RECTANGLE_16* rects);
+
+	typedef UINT (*pcRdpgfxOnOpen)(RdpgfxClientContext* context, BOOL* do_caps_advertise,
+	                               BOOL* do_frame_acks);
+	typedef UINT (*pcRdpgfxOnClose)(RdpgfxClientContext* context);
+	typedef UINT (*pcRdpgfxCapsAdvertise)(RdpgfxClientContext* context,
+	                                      const RDPGFX_CAPS_ADVERTISE_PDU* capsAdvertise);
+	typedef UINT (*pcRdpgfxCapsConfirm)(RdpgfxClientContext* context,
+	                                    const RDPGFX_CAPS_CONFIRM_PDU* capsConfirm);
+	typedef UINT (*pcRdpgfxFrameAcknowledge)(RdpgfxClientContext* context,
+	                                         const RDPGFX_FRAME_ACKNOWLEDGE_PDU* frameAcknowledge);
+	typedef UINT (*pcRdpgfxQoeFrameAcknowledge)(
+	    RdpgfxClientContext* context, const RDPGFX_QOE_FRAME_ACKNOWLEDGE_PDU* qoeFrameAcknowledge);
+
+	typedef UINT (*pcRdpgfxMapWindowForSurface)(RdpgfxClientContext* context, UINT16 surfaceID,
+	                                            UINT64 windowID);
+	typedef UINT (*pcRdpgfxUnmapWindowForSurface)(RdpgfxClientContext* context, UINT64 windowID);
+
+	struct s_rdpgfx_client_context
+	{
+		void* handle;
+		void* custom;
+
+		/* Implementations require locking */
+		WINPR_ATTR_NODISCARD pcRdpgfxResetGraphics ResetGraphics;
+		WINPR_ATTR_NODISCARD pcRdpgfxStartFrame StartFrame;
+		WINPR_ATTR_NODISCARD pcRdpgfxEndFrame EndFrame;
+		WINPR_ATTR_NODISCARD pcRdpgfxSurfaceCommand SurfaceCommand;
+		WINPR_ATTR_NODISCARD pcRdpgfxDeleteEncodingContext DeleteEncodingContext;
+		WINPR_ATTR_NODISCARD pcRdpgfxCreateSurface CreateSurface;
+		WINPR_ATTR_NODISCARD pcRdpgfxDeleteSurface DeleteSurface;
+		WINPR_ATTR_NODISCARD pcRdpgfxSolidFill SolidFill;
+		WINPR_ATTR_NODISCARD pcRdpgfxSurfaceToSurface SurfaceToSurface;
+		WINPR_ATTR_NODISCARD pcRdpgfxSurfaceToCache SurfaceToCache;
+		WINPR_ATTR_NODISCARD pcRdpgfxCacheToSurface CacheToSurface;
+		WINPR_ATTR_NODISCARD pcRdpgfxCacheImportOffer CacheImportOffer;
+		WINPR_ATTR_NODISCARD pcRdpgfxCacheImportReply CacheImportReply;
+		WINPR_ATTR_NODISCARD pcRdpgfxImportCacheEntry ImportCacheEntry;
+		WINPR_ATTR_NODISCARD pcRdpgfxExportCacheEntry ExportCacheEntry;
+		WINPR_ATTR_NODISCARD pcRdpgfxEvictCacheEntry EvictCacheEntry;
+		WINPR_ATTR_NODISCARD pcRdpgfxMapSurfaceToOutput MapSurfaceToOutput;
+		WINPR_ATTR_NODISCARD pcRdpgfxMapSurfaceToScaledOutput MapSurfaceToScaledOutput;
+		WINPR_ATTR_NODISCARD pcRdpgfxMapSurfaceToWindow MapSurfaceToWindow;
+		WINPR_ATTR_NODISCARD pcRdpgfxMapSurfaceToScaledWindow MapSurfaceToScaledWindow;
+
+		WINPR_ATTR_NODISCARD pcRdpgfxGetSurfaceIds GetSurfaceIds;
+		WINPR_ATTR_NODISCARD pcRdpgfxSetSurfaceData SetSurfaceData;
+		WINPR_ATTR_NODISCARD pcRdpgfxGetSurfaceData GetSurfaceData;
+		WINPR_ATTR_NODISCARD pcRdpgfxSetCacheSlotData SetCacheSlotData;
+		WINPR_ATTR_NODISCARD pcRdpgfxGetCacheSlotData GetCacheSlotData;
+
+		/* Proxy callbacks */
+		WINPR_ATTR_NODISCARD pcRdpgfxOnOpen OnOpen;
+		WINPR_ATTR_NODISCARD pcRdpgfxOnClose OnClose;
+		WINPR_ATTR_NODISCARD pcRdpgfxCapsAdvertise CapsAdvertise;
+		WINPR_ATTR_NODISCARD pcRdpgfxCapsConfirm CapsConfirm;
+		WINPR_ATTR_NODISCARD pcRdpgfxFrameAcknowledge FrameAcknowledge;
+		WINPR_ATTR_NODISCARD pcRdpgfxQoeFrameAcknowledge QoeFrameAcknowledge;
+
+		/* No locking required */
+		WINPR_ATTR_NODISCARD pcRdpgfxUpdateSurfaces UpdateSurfaces;
+		WINPR_ATTR_NODISCARD pcRdpgfxUpdateSurfaceArea UpdateSurfaceArea;
+		WINPR_ATTR_NODISCARD pcRdpgfxUpdateWindowFromSurface UpdateWindowFromSurface;
+
+		/* These callbacks allow creating/destroying a window directly
+		 * mapped to a surface.
+		 * NOTE: The surface is already locked.
+		 */
+		WINPR_ATTR_NODISCARD pcRdpgfxMapWindowForSurface MapWindowForSurface;
+		WINPR_ATTR_NODISCARD pcRdpgfxUnmapWindowForSurface UnmapWindowForSurface;
+
+		CRITICAL_SECTION mux;
+		rdpCodecs* codecs;
+		PROFILER_DEFINE(SurfaceProfiler)
+
+		/** The RDPGFX_CAPVERSION_* the server confirmed, 0 before the caps confirm PDU.
+		 * Tells what RDPGFX_CODECID_AV1 carries: AV1 with RDPGFX_CAPVERSION_FRDP_1, AV2 with
+		 * RDPGFX_CAPVERSION_FRDP_2.
+		 * @since version 3.34.0 */
+		UINT32 CapsVersion;
+	};
+
 	FREERDP_API void rdpgfx_client_context_free(RdpgfxClientContext* context);
+
+	WINPR_ATTR_MALLOC(rdpgfx_client_context_free, 1)
+	FREERDP_API RdpgfxClientContext* rdpgfx_client_context_new(rdpContext* context);
+
+	/** @brief Get the number of GFX stats indices in use.
+	 *
+	 *  The indices hold, in this order: surface commands per codec ID, PDUs per command ID with
+	 *  one more slot for invalid command IDs, encoded bytes per codec ID (the name of the codec's
+	 *  slot with _BYTES added), frames the server ended and frames not yet acknowledged. The
+	 *  frames counted as ended are the ones reported as decoded in the frame acknowledge PDU,
+	 *  whatever the decoders made of them. Codec IDs nothing uses read RDPGFX_CODECID_UNKNOWN.
+	 *  All of them start at 0 when the channel opens and are still readable after it closed.
+	 *  New stats are added at the end, an index never changes its meaning. Use the name to find
+	 *  one.
+	 *
+	 *  @return The number of GFX stats indices that will return a value
+	 *  @since version 3.27.0
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API size_t rdpgfx_stats_max_index(void);
+
+	/** @brief Get the name of a GFX stats index.
+	 *
+	 *  @param index The index to query
+	 *  @return The name of the stats index or RDPGFX_STATS_UNUSED if an invalid index is used
+	 *  @since version 3.27.0
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API const char* rdpgfx_stats_name_for_index(size_t index);
+
+	/** @brief Get the value of a GFX stats index.
+	 *
+	 *  @param context The GFX context to query. Must not be nullptr.
+	 *  @param index The index to query
+	 *  @return The value of a GFX stats index
+	 *  @since version 3.27.0
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API uint64_t rdpgfx_stats_value_for_index(RdpgfxClientContext* context, size_t index);
 
 #ifdef __cplusplus
 }

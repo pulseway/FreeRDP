@@ -14,11 +14,14 @@
 
 int TestCryptoCertEnumCertificatesInStore(int argc, char* argv[])
 {
-	int index;
-	DWORD status;
-	LPTSTR pszNameString;
-	HCERTSTORE hCertStore = NULL;
-	PCCERT_CONTEXT pCertContext = NULL;
+	int index = 0;
+	DWORD status = 0;
+	LPTSTR pszNameString = nullptr;
+	HCERTSTORE hCertStore = nullptr;
+	PCCERT_CONTEXT pCertContext = nullptr;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	/**
 	 * System Store Locations:
@@ -27,12 +30,12 @@ int TestCryptoCertEnumCertificatesInStore(int argc, char* argv[])
 
 	/**
 	 * Requires elevated rights:
-	 * hCertStore = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, (HCRYPTPROV_LEGACY) NULL,
+	 * hCertStore = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, 0,
 	 * CERT_SYSTEM_STORE_LOCAL_MACHINE, _T("Remote Desktop"));
 	 */
 
-	hCertStore = CertOpenSystemStore((HCRYPTPROV_LEGACY)NULL, _T("MY"));
-	// hCertStore = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, (HCRYPTPROV_LEGACY) NULL,
+	hCertStore = CertOpenSystemStore(0, _T("MY"));
+	// hCertStore = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, 0,
 	// CERT_SYSTEM_STORE_CURRENT_USER, _T("MY"));
 
 	if (!hCertStore)
@@ -45,7 +48,8 @@ int TestCryptoCertEnumCertificatesInStore(int argc, char* argv[])
 
 	while ((pCertContext = CertEnumCertificatesInStore(hCertStore, pCertContext)))
 	{
-		status = CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, NULL, 0);
+		status =
+		    CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr, nullptr, 0);
 		if (status == 0)
 			return -1;
 
@@ -56,7 +60,7 @@ int TestCryptoCertEnumCertificatesInStore(int argc, char* argv[])
 			return -1;
 		}
 
-		status = CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL,
+		status = CertGetNameString(pCertContext, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, nullptr,
 		                           pszNameString, status);
 		if (status == 0)
 		{
@@ -69,7 +73,8 @@ int TestCryptoCertEnumCertificatesInStore(int argc, char* argv[])
 		free(pszNameString);
 
 #ifdef WITH_CRYPTUI
-		CryptUIDlgViewContext(CERT_STORE_CERTIFICATE_CONTEXT, pCertContext, NULL, NULL, 0, NULL);
+		CryptUIDlgViewContext(CERT_STORE_CERTIFICATE_CONTEXT, pCertContext, nullptr, nullptr, 0,
+		                      nullptr);
 #endif
 	}
 

@@ -20,20 +20,97 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/print.h>
+#include <winpr/clipboard.h>
 
 #include <freerdp/types.h>
+#include <freerdp/freerdp.h>
+#include <freerdp/settings.h>
 #include <freerdp/constants.h>
 #include <freerdp/client/cliprdr.h>
 
 #include "cliprdr_main.h"
 #include "cliprdr_format.h"
 #include "../cliprdr_common.h"
+
+CLIPRDR_FORMAT_LIST cliprdr_filter_format_list(const CLIPRDR_FORMAT_LIST* list, UINT32 mask,
+                                               UINT32 checkMask)
+{
+	const UINT32 maskData =
+	    checkMask & (CLIPRDR_FLAG_LOCAL_TO_REMOTE | CLIPRDR_FLAG_REMOTE_TO_LOCAL);
+	const UINT32 maskFiles =
+	    checkMask & (CLIPRDR_FLAG_LOCAL_TO_REMOTE_FILES | CLIPRDR_FLAG_REMOTE_TO_LOCAL_FILES);
+	WINPR_ASSERT(list);
+
+	CLIPRDR_FORMAT_LIST filtered = WINPR_C_ARRAY_INIT;
+	filtered.common.msgType = CB_FORMAT_LIST;
+	filtered.numFormats = list->numFormats;
+	if (filtered.numFormats > 0)
+	{
+		filtered.formats = calloc(filtered.numFormats, sizeof(CLIPRDR_FORMAT));
+		if (!filtered.formats)
+		{
+			const CLIPRDR_FORMAT_LIST empty = WINPR_C_ARRAY_INIT;
+			return empty;
+		}
+	}
+
+	size_t wpos = 0;
+	if ((mask & checkMask) == checkMask)
+	{
+		for (size_t x = 0; x < list->numFormats; x++)
+		{
+			const CLIPRDR_FORMAT* format = &list->formats[x];
+			CLIPRDR_FORMAT* cur = &filtered.formats[x];
+			cur->formatId = format->formatId;
+			if (format->formatName)
+				cur->formatName = _strdup(format->formatName);
+			wpos++;
+		}
+	}
+	else if ((mask & maskFiles) != 0)
+	{
+		for (size_t x = 0; x < list->numFormats; x++)
+		{
+			const CLIPRDR_FORMAT* format = &list->formats[x];
+			CLIPRDR_FORMAT* cur = &filtered.formats[wpos];
+
+			if (!format->formatName)
+				continue;
+			if (strcmp(format->formatName, type_FileGroupDescriptorW) == 0 ||
+			    strcmp(format->formatName, type_FileContents) == 0)
+			{
+				cur->formatId = format->formatId;
+				cur->formatName = _strdup(format->formatName);
+				wpos++;
+			}
+		}
+	}
+	else if ((mask & maskData) != 0)
+	{
+		for (size_t x = 0; x < list->numFormats; x++)
+		{
+			const CLIPRDR_FORMAT* format = &list->formats[x];
+			CLIPRDR_FORMAT* cur = &filtered.formats[wpos];
+
+			if (!format->formatName ||
+			    (strcmp(format->formatName, type_FileGroupDescriptorW) != 0 &&
+			     strcmp(format->formatName, type_FileContents) != 0))
+			{
+				cur->formatId = format->formatId;
+				if (format->formatName)
+					cur->formatName = _strdup(format->formatName);
+				wpos++;
+			}
+		}
+	}
+	WINPR_ASSERT(wpos <= UINT32_MAX);
+	filtered.numFormats = (UINT32)wpos;
+	return filtered;
+}
 
 /**
  * Function description
@@ -43,33 +120,62 @@
 UINT cliprdr_process_format_list(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen,
                                  UINT16 msgFlags)
 {
-	CLIPRDR_FORMAT_LIST formatList = { 0 };
+	CLIPRDR_FORMAT_LIST formatList = WINPR_C_ARRAY_INIT;
+	CLIPRDR_FORMAT_LIST filteredFormatList = WINPR_C_ARRAY_INIT;
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
 	UINT error = CHANNEL_RC_OK;
 
-	if (!context->custom)
-	{
-		WLog_ERR(TAG, "context->custom not set!");
-		return ERROR_INTERNAL_ERROR;
-	}
+	formatList.common.msgType = CB_FORMAT_LIST;
+	formatList.common.msgFlags = msgFlags;
+	formatList.common.dataLen = dataLen;
 
-	formatList.msgType = CB_FORMAT_LIST;
-	formatList.msgFlags = msgFlags;
-	formatList.dataLen = dataLen;
-
-	if ((error = cliprdr_read_format_list(s, &formatList, cliprdr->useLongFormatNames)))
+	if ((error =
+	         cliprdr_read_format_list(cliprdr->log, s, &formatList, cliprdr->useLongFormatNames)))
 		goto error_out;
 
-	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatList: numFormats: %" PRIu32 "",
-	           formatList.numFormats);
+	{
+		const UINT32 mask = freerdp_settings_get_uint32(context->rdpcontext->settings,
+		                                                FreeRDP_ClipboardFeatureMask);
+		filteredFormatList = cliprdr_filter_format_list(
+		    &formatList, mask, CLIPRDR_FLAG_REMOTE_TO_LOCAL | CLIPRDR_FLAG_REMOTE_TO_LOCAL_FILES);
+	}
+
+	if (filteredFormatList.numFormats != 0)
+	{
+		const DWORD level = WLOG_DEBUG;
+		if (WLog_IsLevelActive(cliprdr->log, level))
+		{
+			WLog_Print(cliprdr->log, level, "ServerFormatList: numFormats: %" PRIu32 "",
+			           formatList.numFormats);
+			for (size_t x = 0; x < formatList.numFormats; x++)
+			{
+				const CLIPRDR_FORMAT* format = &formatList.formats[x];
+				WLog_Print(cliprdr->log, level, "[%" PRIuz "]: id=0x%08" PRIx32 " [%s|%s]", x,
+				           format->formatId, ClipboardGetFormatIdString(format->formatId),
+				           format->formatName);
+			}
+
+			WLog_Print(cliprdr->log, level, "ServerFormatList [filtered]: numFormats: %" PRIu32 "",
+			           filteredFormatList.numFormats);
+			for (size_t x = 0; x < filteredFormatList.numFormats; x++)
+			{
+				const CLIPRDR_FORMAT* format = &filteredFormatList.formats[x];
+				WLog_Print(cliprdr->log, level, "[%" PRIuz "]: id=0x%08" PRIx32 " [%s|%s]", x,
+				           format->formatId, ClipboardGetFormatIdString(format->formatId),
+				           format->formatName);
+			}
+		}
+	}
 
 	if (context->ServerFormatList)
 	{
-		if ((error = context->ServerFormatList(context, &formatList)))
-			WLog_ERR(TAG, "ServerFormatList failed with error %" PRIu32 "", error);
+		if ((error = context->ServerFormatList(context, &filteredFormatList)))
+			WLog_Print(cliprdr->log, WLOG_ERROR, "ServerFormatList failed with error %" PRIu32 "",
+			           error);
 	}
 
 error_out:
+	cliprdr_free_format_list(&filteredFormatList);
 	cliprdr_free_format_list(&formatList);
 	return error;
 }
@@ -79,28 +185,23 @@ error_out:
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT cliprdr_process_format_list_response(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen,
-                                          UINT16 msgFlags)
+UINT cliprdr_process_format_list_response(cliprdrPlugin* cliprdr, WINPR_ATTR_UNUSED wStream* s,
+                                          UINT32 dataLen, UINT16 msgFlags)
 {
-	CLIPRDR_FORMAT_LIST_RESPONSE formatListResponse = { 0 };
+	CLIPRDR_FORMAT_LIST_RESPONSE formatListResponse = WINPR_C_ARRAY_INIT;
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
 	UINT error = CHANNEL_RC_OK;
 
 	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatListResponse");
 
-	if (!context->custom)
-	{
-		WLog_ERR(TAG, "context->custom not set!");
-		return ERROR_INTERNAL_ERROR;
-	}
-
-	formatListResponse.msgType = CB_FORMAT_LIST_RESPONSE;
-	formatListResponse.msgFlags = msgFlags;
-	formatListResponse.dataLen = dataLen;
+	formatListResponse.common.msgType = CB_FORMAT_LIST_RESPONSE;
+	formatListResponse.common.msgFlags = msgFlags;
+	formatListResponse.common.dataLen = dataLen;
 
 	IFCALLRET(context->ServerFormatListResponse, error, context, &formatListResponse);
 	if (error)
-		WLog_ERR(TAG, "ServerFormatListResponse failed with error %" PRIu32 "!", error);
+		WLog_Print(cliprdr->log, WLOG_ERROR,
+		           "ServerFormatListResponse failed with error %" PRIu32 "!", error);
 
 	return error;
 }
@@ -113,29 +214,33 @@ UINT cliprdr_process_format_list_response(cliprdrPlugin* cliprdr, wStream* s, UI
 UINT cliprdr_process_format_data_request(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen,
                                          UINT16 msgFlags)
 {
-	CLIPRDR_FORMAT_DATA_REQUEST formatDataRequest;
+	CLIPRDR_FORMAT_DATA_REQUEST formatDataRequest = WINPR_C_ARRAY_INIT;
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
 	UINT error = CHANNEL_RC_OK;
 
-	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatDataRequest");
-
-	if (!context->custom)
-	{
-		WLog_ERR(TAG, "context->custom not set!");
-		return ERROR_INTERNAL_ERROR;
-	}
-
-	formatDataRequest.msgType = CB_FORMAT_DATA_REQUEST;
-	formatDataRequest.msgFlags = msgFlags;
-	formatDataRequest.dataLen = dataLen;
+	formatDataRequest.common.msgType = CB_FORMAT_DATA_REQUEST;
+	formatDataRequest.common.msgFlags = msgFlags;
+	formatDataRequest.common.dataLen = dataLen;
 
 	if ((error = cliprdr_read_format_data_request(s, &formatDataRequest)))
 		return error;
 
+	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatDataRequest (0x%08" PRIx32 " [%s])",
+	           formatDataRequest.requestedFormatId,
+	           ClipboardGetFormatIdString(formatDataRequest.requestedFormatId));
+
+	const UINT32 mask =
+	    freerdp_settings_get_uint32(context->rdpcontext->settings, FreeRDP_ClipboardFeatureMask);
+	if ((mask & (CLIPRDR_FLAG_LOCAL_TO_REMOTE | CLIPRDR_FLAG_LOCAL_TO_REMOTE_FILES)) == 0)
+	{
+		return cliprdr_send_error_response(cliprdr, CB_FORMAT_DATA_RESPONSE);
+	}
+
 	context->lastRequestedFormatId = formatDataRequest.requestedFormatId;
 	IFCALLRET(context->ServerFormatDataRequest, error, context, &formatDataRequest);
 	if (error)
-		WLog_ERR(TAG, "ServerFormatDataRequest failed with error %" PRIu32 "!", error);
+		WLog_Print(cliprdr->log, WLOG_ERROR,
+		           "ServerFormatDataRequest failed with error %" PRIu32 "!", error);
 
 	return error;
 }
@@ -148,223 +253,34 @@ UINT cliprdr_process_format_data_request(cliprdrPlugin* cliprdr, wStream* s, UIN
 UINT cliprdr_process_format_data_response(cliprdrPlugin* cliprdr, wStream* s, UINT32 dataLen,
                                           UINT16 msgFlags)
 {
-	CLIPRDR_FORMAT_DATA_RESPONSE formatDataResponse;
+	CLIPRDR_FORMAT_DATA_RESPONSE formatDataResponse = WINPR_C_ARRAY_INIT;
 	CliprdrClientContext* context = cliprdr_get_client_interface(cliprdr);
 	UINT error = CHANNEL_RC_OK;
 
-	WLog_Print(cliprdr->log, WLOG_DEBUG, "ServerFormatDataResponse");
+	WLog_Print(cliprdr->log, WLOG_DEBUG,
+	           "ServerFormatDataResponse: msgFlags=0x%08" PRIx32 ", dataLen=%" PRIu32, msgFlags,
+	           dataLen);
 
-	if (!context->custom)
-	{
-		WLog_ERR(TAG, "context->custom not set!");
-		return ERROR_INTERNAL_ERROR;
-	}
-
-	formatDataResponse.msgType = CB_FORMAT_DATA_RESPONSE;
-	formatDataResponse.msgFlags = msgFlags;
-	formatDataResponse.dataLen = dataLen;
+	formatDataResponse.common.msgType = CB_FORMAT_DATA_RESPONSE;
+	formatDataResponse.common.msgFlags = msgFlags;
+	formatDataResponse.common.dataLen = dataLen;
 
 	if ((error = cliprdr_read_format_data_response(s, &formatDataResponse)))
 		return error;
 
+	const UINT32 mask =
+	    freerdp_settings_get_uint32(context->rdpcontext->settings, FreeRDP_ClipboardFeatureMask);
+	if ((mask & (CLIPRDR_FLAG_REMOTE_TO_LOCAL | CLIPRDR_FLAG_REMOTE_TO_LOCAL_FILES)) == 0)
+	{
+		WLog_Print(cliprdr->log, WLOG_WARN,
+		           "Received ServerFormatDataResponse but remote -> local clipboard is disabled");
+		return CHANNEL_RC_OK;
+	}
+
 	IFCALLRET(context->ServerFormatDataResponse, error, context, &formatDataResponse);
 	if (error)
-		WLog_ERR(TAG, "ServerFormatDataResponse failed with error %" PRIu32 "!", error);
+		WLog_Print(cliprdr->log, WLOG_ERROR,
+		           "ServerFormatDataResponse failed with error %" PRIu32 "!", error);
 
 	return error;
-}
-
-static UINT64 filetime_to_uint64(FILETIME value)
-{
-	UINT64 converted = 0;
-	converted |= (UINT32)value.dwHighDateTime;
-	converted <<= 32;
-	converted |= (UINT32)value.dwLowDateTime;
-	return converted;
-}
-
-static FILETIME uint64_to_filetime(UINT64 value)
-{
-	FILETIME converted;
-	converted.dwLowDateTime = (UINT32)(value >> 0);
-	converted.dwHighDateTime = (UINT32)(value >> 32);
-	return converted;
-}
-
-#define CLIPRDR_FILEDESCRIPTOR_SIZE (4 + 32 + 4 + 16 + 8 + 8 + 520)
-
-/**
- * Parse a packed file list.
- *
- * The resulting array must be freed with the `free()` function.
- *
- * @param [in]  format_data            packed `CLIPRDR_FILELIST` to parse.
- * @param [in]  format_data_length     length of `format_data` in bytes.
- * @param [out] file_descriptor_array  parsed array of `FILEDESCRIPTOR` structs.
- * @param [out] file_descriptor_count  number of elements in `file_descriptor_array`.
- *
- * @returns 0 on success, otherwise a Win32 error code.
- */
-UINT cliprdr_parse_file_list(const BYTE* format_data, UINT32 format_data_length,
-                             FILEDESCRIPTORW** file_descriptor_array, UINT32* file_descriptor_count)
-{
-	UINT result = NO_ERROR;
-	UINT32 i;
-	UINT32 count = 0;
-	wStream* s = NULL;
-
-	if (!format_data || !file_descriptor_array || !file_descriptor_count)
-		return ERROR_BAD_ARGUMENTS;
-
-	s = Stream_New((BYTE*)format_data, format_data_length);
-	if (!s)
-		return ERROR_NOT_ENOUGH_MEMORY;
-
-	if (Stream_GetRemainingLength(s) < 4)
-	{
-		WLog_ERR(TAG, "invalid packed file list");
-
-		result = ERROR_INCORRECT_SIZE;
-		goto out;
-	}
-
-	Stream_Read_UINT32(s, count); /* cItems (4 bytes) */
-
-	if (Stream_GetRemainingLength(s) / CLIPRDR_FILEDESCRIPTOR_SIZE < count)
-	{
-		WLog_ERR(TAG, "packed file list is too short: expected %" PRIuz ", have %" PRIuz,
-		         ((size_t)count) * CLIPRDR_FILEDESCRIPTOR_SIZE, Stream_GetRemainingLength(s));
-
-		result = ERROR_INCORRECT_SIZE;
-		goto out;
-	}
-
-	*file_descriptor_count = count;
-	*file_descriptor_array = calloc(count, sizeof(FILEDESCRIPTORW));
-	if (!*file_descriptor_array)
-	{
-		result = ERROR_NOT_ENOUGH_MEMORY;
-		goto out;
-	}
-
-	for (i = 0; i < count; i++)
-	{
-		int c;
-		UINT64 lastWriteTime;
-		FILEDESCRIPTORW* file = &((*file_descriptor_array)[i]);
-
-		Stream_Read_UINT32(s, file->dwFlags);          /* flags (4 bytes) */
-		Stream_Seek(s, 32);                            /* reserved1 (32 bytes) */
-		Stream_Read_UINT32(s, file->dwFileAttributes); /* fileAttributes (4 bytes) */
-		Stream_Seek(s, 16);                            /* reserved2 (16 bytes) */
-		Stream_Read_UINT64(s, lastWriteTime);          /* lastWriteTime (8 bytes) */
-		file->ftLastWriteTime = uint64_to_filetime(lastWriteTime);
-		Stream_Read_UINT32(s, file->nFileSizeHigh); /* fileSizeHigh (4 bytes) */
-		Stream_Read_UINT32(s, file->nFileSizeLow);  /* fileSizeLow (4 bytes) */
-		for (c = 0; c < 260; c++)                   /* cFileName (520 bytes) */
-			Stream_Read_UINT16(s, file->cFileName[c]);
-	}
-
-	if (Stream_GetRemainingLength(s) > 0)
-		WLog_WARN(TAG, "packed file list has %" PRIuz " excess bytes",
-		          Stream_GetRemainingLength(s));
-out:
-	Stream_Free(s, FALSE);
-
-	return result;
-}
-
-#define CLIPRDR_MAX_FILE_SIZE (2U * 1024 * 1024 * 1024)
-
-/**
- * Serialize a packed file list.
- *
- * The resulting format data must be freed with the `free()` function.
- *
- * @param [in]  file_descriptor_array  array of `FILEDESCRIPTOR` structs to serialize.
- * @param [in]  file_descriptor_count  number of elements in `file_descriptor_array`.
- * @param [out] format_data            serialized CLIPRDR_FILELIST.
- * @param [out] format_data_length     length of `format_data` in bytes.
- *
- * @returns 0 on success, otherwise a Win32 error code.
- */
-UINT cliprdr_serialize_file_list(const FILEDESCRIPTORW* file_descriptor_array,
-                                 UINT32 file_descriptor_count, BYTE** format_data,
-                                 UINT32* format_data_length)
-{
-	return cliprdr_serialize_file_list_ex(CB_STREAM_FILECLIP_ENABLED, file_descriptor_array,
-	                                      file_descriptor_count, format_data, format_data_length);
-}
-
-UINT cliprdr_serialize_file_list_ex(UINT32 flags, const FILEDESCRIPTORW* file_descriptor_array,
-                                    UINT32 file_descriptor_count, BYTE** format_data,
-                                    UINT32* format_data_length)
-{
-	UINT result = NO_ERROR;
-	UINT32 i;
-	wStream* s = NULL;
-
-	if (!file_descriptor_array || !format_data || !format_data_length)
-		return ERROR_BAD_ARGUMENTS;
-
-	if ((flags & CB_STREAM_FILECLIP_ENABLED) == 0)
-	{
-		WLog_WARN(TAG, "No file clipboard support annouonced!");
-		return ERROR_BAD_ARGUMENTS;
-	}
-
-	s = Stream_New(NULL, 4 + file_descriptor_count * CLIPRDR_FILEDESCRIPTOR_SIZE);
-	if (!s)
-		return ERROR_NOT_ENOUGH_MEMORY;
-
-	Stream_Write_UINT32(s, file_descriptor_count); /* cItems (4 bytes) */
-
-	for (i = 0; i < file_descriptor_count; i++)
-	{
-		int c;
-		UINT64 lastWriteTime;
-		const FILEDESCRIPTORW* file = &file_descriptor_array[i];
-
-		/*
-		 * There is a known issue with Windows server getting stuck in
-		 * an infinite loop when downloading files that are larger than
-		 * 2 gigabytes. Do not allow clients to send such file lists.
-		 *
-		 * https://support.microsoft.com/en-us/help/2258090
-		 */
-		if ((flags & CB_HUGE_FILE_SUPPORT_ENABLED) == 0)
-		{
-			if ((file->nFileSizeHigh > 0) || (file->nFileSizeLow >= CLIPRDR_MAX_FILE_SIZE))
-			{
-				WLog_ERR(TAG, "cliprdr does not support files over 2 GB");
-				result = ERROR_FILE_TOO_LARGE;
-				goto error;
-			}
-		}
-
-		Stream_Write_UINT32(s, file->dwFlags);          /* flags (4 bytes) */
-		Stream_Zero(s, 32);                             /* reserved1 (32 bytes) */
-		Stream_Write_UINT32(s, file->dwFileAttributes); /* fileAttributes (4 bytes) */
-		Stream_Zero(s, 16);                             /* reserved2 (16 bytes) */
-		lastWriteTime = filetime_to_uint64(file->ftLastWriteTime);
-		Stream_Write_UINT64(s, lastWriteTime);       /* lastWriteTime (8 bytes) */
-		Stream_Write_UINT32(s, file->nFileSizeHigh); /* fileSizeHigh (4 bytes) */
-		Stream_Write_UINT32(s, file->nFileSizeLow);  /* fileSizeLow (4 bytes) */
-		for (c = 0; c < 260; c++)                    /* cFileName (520 bytes) */
-			Stream_Write_UINT16(s, file->cFileName[c]);
-	}
-
-	Stream_SealLength(s);
-
-	Stream_GetBuffer(s, *format_data);
-	Stream_GetLength(s, *format_data_length);
-
-	Stream_Free(s, FALSE);
-
-	return result;
-
-error:
-	Stream_Free(s, TRUE);
-
-	return result;
 }

@@ -2,6 +2,7 @@
 # FreeRDP Client Common
 #
 # Copyright 2012 Marc-Andre Moreau <marcandre.moreau@gmail.com>
+# Copyright 2025 Siemens
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,73 +19,157 @@
 set(MODULE_NAME "freerdp-client")
 set(MODULE_PREFIX "FREERDP_CLIENT")
 
-#  Policy CMP0022: INTERFACE_LINK_LIBRARIES defines the link
-#  interface.  Run "cmake --help-policy CMP0022" for policy details.  Use the
-#  cmake_policy command to set the policy and suppress this warning.
-if(POLICY CMP0022)
-  cmake_policy(SET CMP0022 NEW)
-endif()
+set(PRIV_LIBS "")
+set(PUB_LIBS "")
 
-set(${MODULE_PREFIX}_SRCS
-	client.c
-	cmdline.c
-	compatibility.c
-	compatibility.h
-	file.c
-	geometry.c)
+set(SRCS
+    client.c
+    cmdline.c
+    cmdline.h
+    file.c
+    client_cliprdr_file.c
+    geometry.c
+    window_info_service.c
+    smartcard_cli.c
+    aad_helper.c
+    oauth2.h
+    oauth2.c
+)
+
+add_compile_definitions(CMAKE_EXECUTABLE_SUFFIX="${CMAKE_EXECUTABLE_SUFFIX}")
 
 foreach(FREERDP_CHANNELS_CLIENT_SRC ${FREERDP_CHANNELS_CLIENT_SRCS})
-	get_filename_component(NINC ${FREERDP_CHANNELS_CLIENT_SRC} PATH)
-	include_directories(${NINC})
-	set(${MODULE_PREFIX}_SRCS ${${MODULE_PREFIX}_SRCS} "${FREERDP_CHANNELS_CLIENT_SRC}")
+  get_filename_component(NINC ${FREERDP_CHANNELS_CLIENT_SRC} PATH)
+  include_directories(${NINC})
+  list(APPEND SRCS "${FREERDP_CHANNELS_CLIENT_SRC}")
 endforeach()
 
-
-# On windows create dll version information.
-# Vendor, product and year are already set in top level CMakeLists.txt
-if (WIN32 AND BUILD_SHARED_LIBS)
-  set (RC_VERSION_MAJOR ${FREERDP_VERSION_MAJOR})
-  set (RC_VERSION_MINOR ${FREERDP_VERSION_MINOR})
-  set (RC_VERSION_BUILD ${FREERDP_VERSION_REVISION})
-  set (RC_VERSION_FILE "${CMAKE_SHARED_LIBRARY_PREFIX}${MODULE_NAME}${CMAKE_SHARED_LIBRARY_SUFFIX}" )
-
-  configure_file(
-    ${CMAKE_SOURCE_DIR}/cmake/WindowsDLLVersion.rc.in
-    ${CMAKE_CURRENT_BINARY_DIR}/version.rc
-    @ONLY)
-
-  set ( ${MODULE_PREFIX}_SRCS ${${MODULE_PREFIX}_SRCS} ${CMAKE_CURRENT_BINARY_DIR}/version.rc)
-endif()
-
-add_library(${MODULE_NAME} ${${MODULE_PREFIX}_SRCS})
-
-set_target_properties(${MODULE_NAME} PROPERTIES OUTPUT_NAME ${MODULE_NAME}${FREERDP_API_VERSION})
-include_directories(${OPENSSL_INCLUDE_DIR})
-if (WITH_LIBRARY_VERSIONING)
-  set_target_properties(${MODULE_NAME} PROPERTIES VERSION ${FREERDP_VERSION} SOVERSION ${FREERDP_API_VERSION})
-endif()
-
-set(${MODULE_PREFIX}_LIBS ${${MODULE_PREFIX}_LIBS} winpr)
-
-target_link_libraries(${MODULE_NAME} ${PRIVATE_KEYWORD} ${FREERDP_CHANNELS_CLIENT_LIBS})
-if(OPENBSD)
-	target_link_libraries(${MODULE_NAME} ${PUBLIC_KEYWORD} ${${MODULE_PREFIX}_LIBS} sndio)
+if(UNIX)
+  option(WITH_SSO_MIB "Build with sso-mib support" OFF)
 else()
-	target_link_libraries(${MODULE_NAME} ${PUBLIC_KEYWORD} ${${MODULE_PREFIX}_LIBS})
+  set(WITH_SSO_MIB OFF CACHE INTERNAL "unsupported platform")
 endif()
 
-
-install(TARGETS ${MODULE_NAME} DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT libraries EXPORT FreeRDP-ClientTargets)
-
-if (WITH_DEBUG_SYMBOLS AND MSVC AND BUILD_SHARED_LIBS)
-	get_target_property(OUTPUT_FILENAME ${MODULE_NAME} OUTPUT_NAME)
-	install(FILES ${CMAKE_PDB_BINARY_DIR}/${OUTPUT_FILENAME}.pdb DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT symbols)
+if(NOT APPLE AND NOT WIN32 AND NOT ANDROID)
+  set(OPT_FUSE_DEFAULT ON)
+else()
+  set(OPT_FUSE_DEFAULT OFF)
 endif()
+
+option(WITH_EMBEDDED_CLI_IN_RDP_FILES "[dangrous] allow embedded cli arguments in rdp files" OFF)
+if(WITH_EMBEDDED_CLI_IN_RDP_FILES)
+  add_compile_definitions(WITH_EMBEDDED_CLI_IN_RDP_FILES)
+endif()
+
+option(WITH_FUSE "Build clipboard with FUSE file copy support" ${OPT_FUSE_DEFAULT})
+if(WITH_FUSE)
+  find_package(PkgConfig REQUIRED)
+
+  pkg_check_modules(FUSE3 REQUIRED IMPORTED_TARGET GLOBAL fuse3)
+  freerdp_client_pc_add_requires_private("fuse3")
+
+  add_compile_definitions(WITH_FUSE)
+  list(APPEND PRIV_LIBS PkgConfig::FUSE3)
+
+  add_compile_definitions(_FILE_OFFSET_BITS=64)
+endif()
+
+cmake_dependent_option(WITH_CLIPRDR_FILE_APPLE "Pasteboard file support" ON "NOT WITH_FUSE;APPLE;NOT IOS" OFF)
+if(WITH_CLIPRDR_FILE_APPLE)
+  # Server files are offered and local files read on the pasteboard instead
+  list(APPEND SRCS client_cliprdr_file_apple.h client_cliprdr_file_apple.m)
+  set_source_files_properties(client_cliprdr_file_apple.m PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+  add_compile_definitions(WITH_CLIPRDR_FILE_APPLE)
+
+  find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+  find_library(UTI_FRAMEWORK UniformTypeIdentifiers REQUIRED)
+  list(APPEND PRIV_LIBS ${APPKIT_FRAMEWORK} ${UTI_FRAMEWORK})
+endif()
+
+include_directories(SYSTEM ${OPENSSL_INCLUDE_DIR})
+
+if(WITH_SSO_MIB)
+  list(APPEND SRCS sso_mib_tokens.c)
+endif()
+
+addtargetwithresourcefile(${MODULE_NAME} FALSE "${FREERDP_VERSION}" SRCS)
+
+if(WITH_SSO_MIB)
+  if(SSO_MIB_EXTERNAL_DIR)
+    add_dependencies(${MODULE_NAME} sso-mib-external)
+  endif()
+
+  find_package(sso-mib REQUIRED)
+  add_compile_definitions(WITH_SSO_MIB)
+  list(APPEND PRIV_LIBS sso-mib)
+endif()
+
+list(APPEND PUB_LIBS freerdp winpr)
+
+include(CheckLibraryExists)
+include(PackageConfigDependencies)
+check_library_exists(m lround "" HAVE_LIB_M)
+if(HAVE_LIB_M)
+  list(APPEND PUB_LIBS m)
+endif()
+
+target_include_directories(${MODULE_NAME} INTERFACE $<INSTALL_INTERFACE:include/freerdp${FREERDP_VERSION_MAJOR}>)
+target_link_libraries(${MODULE_NAME} PRIVATE ${FREERDP_CHANNELS_CLIENT_LIBS})
+target_link_libraries(${MODULE_NAME} PRIVATE ${PRIV_LIBS})
+target_link_libraries(${MODULE_NAME} PUBLIC ${PUB_LIBS})
+# here, where the imported targets freerdp-client links are visible; the config file is made one level up
+package_config_dependencies(${MODULE_NAME} FREERDP_CLIENT_CMAKE_FIND_DEPENDENCIES)
+set(FREERDP_CLIENT_CMAKE_FIND_DEPENDENCIES "${FREERDP_CLIENT_CMAKE_FIND_DEPENDENCIES}" PARENT_SCOPE)
+
+installwithrpath(
+  TARGETS
+  ${MODULE_NAME}
+  COMPONENT
+  libraries
+  EXPORT
+  FreeRDP-ClientTargets
+  ARCHIVE
+  DESTINATION
+  ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY
+  DESTINATION
+  ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME
+  DESTINATION
+  ${CMAKE_INSTALL_BINDIR}
+)
 
 set_property(TARGET ${MODULE_NAME} PROPERTY FOLDER "Client/Common")
 
-if(BUILD_TESTING)
-	add_subdirectory(test)
+option(WITH_WEBVIEW_AAD_AUTH_HELPER
+       "Build the out-of-process webview-based AAD auth helper (used for AAD login popups)" OFF
+)
+if(WITH_WEBVIEW_AAD_AUTH_HELPER)
+  add_subdirectory(webview-aad-helper)
 endif()
 
-export_complex_library(LIBNAME ${MODULE_NAME})
+option(WITH_QT_AAD_AUTH_HELPER "Build the out-of-process Qt-based AAD auth helper (used for AAD login popups)" OFF)
+if(WITH_QT_AAD_AUTH_HELPER)
+  add_subdirectory(qt-aad-helper)
+endif()
+
+# relies on .desktop files / xdg-mime / xdg-open, i.e. the freedesktop.org conventions - only
+# meaningful on Linux/BSD-style desktops, not Windows, macOS or Android.
+if(NOT APPLE AND NOT WIN32 AND NOT ANDROID)
+  option(WITH_XDG_AAD_AUTH_HELPER "Build the out-of-process xdg-open-based AAD auth helper (used for AAD login popups)"
+         OFF
+  )
+else()
+  set(WITH_XDG_AAD_AUTH_HELPER OFF CACHE INTERNAL "unsupported platform")
+endif()
+if(WITH_XDG_AAD_AUTH_HELPER)
+  add_subdirectory(xdg-aad-helper)
+endif()
+
+if(BUILD_TESTING)
+  add_subdirectory(test)
+endif()
+
+if(WITH_MANPAGES)
+  add_subdirectory(man)
+endif()

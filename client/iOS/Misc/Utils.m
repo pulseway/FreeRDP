@@ -14,7 +14,7 @@
 
 #import <freerdp/input.h>
 #import <freerdp/version.h>
-#import "config.h"
+#import <freerdp/config.h>
 
 #include <sys/types.h>
 #include <sys/sysctl.h>
@@ -130,7 +130,7 @@ NSArray *ResolutionModes()
 
 NSString *LocalizedAutomaticSecurity()
 {
-	return NSLocalizedString(@"Automatic", @"Automatic protocl security selection");
+	return NSLocalizedString(@"Automatic", @"Automatic protocol security selection");
 }
 
 NSString *ProtocolSecurityDescription(TSXProtocolSecurityOptions type)
@@ -247,27 +247,19 @@ NSMutableArray *FilterHistory(NSArray *history, NSString *filterStr)
 #pragma mark Version Info
 NSString *TSXAppFullVersion()
 {
-	return [NSString stringWithUTF8String:GIT_REVISION];
+	return [NSString stringWithUTF8String:FREERDP_GIT_REVISION];
 }
 
 #pragma mark iPad/iPhone detection
 
 BOOL IsPad()
 {
-#ifdef UI_USER_INTERFACE_IDIOM
-	return (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad);
-#else
-	return NO;
-#endif
+	return ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad);
 }
 
 BOOL IsPhone()
 {
-#ifdef UI_USER_INTERFACE_IDIOM
-	return (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPhone);
-#else
-	return NO;
-#endif
+	return ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPhone);
 }
 
 // set mouse buttons swapped flag
@@ -326,15 +318,6 @@ CGFloat GetScrollGestureDelta()
 	return 10.0f;
 }
 
-// this hack activates the iphone's WWAN interface in case it is offline
-void WakeUpWWAN()
-{
-	NSURL *url = [[[NSURL alloc] initWithString:@"http://www.nonexistingdummyurl.com"] autorelease];
-	// NSData * data =
-	[NSData dataWithContentsOfURL:url]; // we don't need data but assigning one causes a "data not
-	                                    // used" compiler warning
-}
-
 #pragma mark System Info functions
 
 NSString *TSXGetPrimaryMACAddress(NSString *sep)
@@ -348,7 +331,7 @@ NSString *TSXGetPrimaryMACAddress(NSString *sep)
 		return macaddress;
 	}
 
-	for (struct ifaddrs *cursor = addrs; cursor != NULL; cursor = cursor->ifa_next)
+	for (struct ifaddrs *cursor = addrs; cursor != nullptr; cursor = cursor->ifa_next)
 	{
 		if (strcmp(cursor->ifa_name, "en0"))
 			continue;
@@ -388,9 +371,9 @@ BOOL TSXDeviceHasJailBreak()
 NSString *TSXGetPlatform()
 {
 	size_t size;
-	sysctlbyname("hw.machine", NULL, &size, NULL, 0);
+	sysctlbyname("hw.machine", nullptr, &size, nullptr, 0);
 	char *machine = malloc(size);
-	sysctlbyname("hw.machine", machine, &size, NULL, 0);
+	sysctlbyname("hw.machine", machine, &size, nullptr, 0);
 	NSString *platform = [NSString stringWithCString:machine encoding:NSASCIIStringEncoding];
 	free(machine);
 	return platform;

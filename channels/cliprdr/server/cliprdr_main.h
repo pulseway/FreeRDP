@@ -27,22 +27,23 @@
 
 #include <freerdp/server/cliprdr.h>
 #include <freerdp/channels/log.h>
+#include <freerdp/utils/channel_pdu_tracker.h>
 
 #define TAG CHANNELS_TAG("cliprdr.server")
 
 #define CLIPRDR_HEADER_LENGTH 8
 
-struct _cliprdr_server_private
+typedef struct
 {
 	HANDLE vcm;
 	HANDLE Thread;
 	HANDLE StopEvent;
-	void* ChannelHandle;
+	HANDLE ChannelHandle;
 	HANDLE ChannelEvent;
+	ChannelPduTracker* channelPduTracker;
 
-	wStream* s;
-	char* temporaryDirectory;
-};
-typedef struct _cliprdr_server_private CliprdrServerPrivate;
+	char temporaryDirectory[260];
+	wLog* log;
+} CliprdrServerPrivate;
 
 #endif /* FREERDP_CHANNEL_CLIPRDR_SERVER_MAIN_H */

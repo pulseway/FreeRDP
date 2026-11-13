@@ -17,9 +17,8 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/assert.h>
+#include <freerdp/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/print.h>
@@ -27,9 +26,11 @@
 #include <winpr/bitstream.h>
 
 #include <freerdp/log.h>
-#include <freerdp/codec/mppc.h>
+#include "mppc.h"
 
 #define TAG FREERDP_TAG("codec.mppc")
+
+//#define DEBUG_MPPC	1
 
 #define MPPC_MATCH_INDEX(_sym1, _sym2, _sym3)                             \
 	((((MPPC_MATCH_TABLE[_sym3] << 16) + (MPPC_MATCH_TABLE[_sym2] << 8) + \
@@ -37,16 +38,16 @@
 	  0x07FFF000) >>                                                      \
 	 12)
 
-struct _MPPC_CONTEXT
+struct s_MPPC_CONTEXT
 {
-	wBitStream* bs;
-	BOOL Compressor;
-	BYTE* HistoryPtr;
-	UINT32 HistoryOffset;
-	UINT32 HistoryBufferSize;
-	BYTE HistoryBuffer[65536];
-	UINT16 MatchBuffer[32768];
-	UINT32 CompressionLevel;
+	ALIGN64 wBitStream* bs;
+	ALIGN64 BOOL Compressor;
+	ALIGN64 BYTE* HistoryPtr;
+	ALIGN64 UINT32 HistoryOffset;
+	ALIGN64 UINT32 HistoryBufferSize;
+	ALIGN64 BYTE HistoryBuffer[65536];
+	ALIGN64 UINT16 MatchBuffer[32768];
+	ALIGN64 UINT32 CompressionLevel;
 };
 
 static const UINT32 MPPC_MATCH_TABLE[256] = {
@@ -84,23 +85,31 @@ static const UINT32 MPPC_MATCH_TABLE[256] = {
 	0x97E91668, 0x9885E5FB, 0x9922B58E, 0x99BF8521, 0x9A5C54B4, 0x9AF92447, 0x9B95F3DA, 0x9C32C36D
 };
 
-//#define DEBUG_MPPC	1
-
-int mppc_decompress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppDstData,
-                    UINT32* pDstSize, UINT32 flags)
+int mppc_decompress(MPPC_CONTEXT* mppc, const BYTE* pSrcData, UINT32 SrcSize,
+                    const BYTE** ppDstData, UINT32* pDstSize, UINT32 flags)
 {
-	BYTE Literal;
-	BYTE* SrcPtr;
-	UINT32 CopyOffset;
-	UINT32 LengthOfMatch;
-	UINT32 accumulator;
-	BYTE* HistoryPtr;
-	BYTE* HistoryBuffer;
-	BYTE* HistoryBufferEnd;
-	UINT32 HistoryBufferSize;
-	UINT32 CompressionLevel;
-	wBitStream* bs = mppc->bs;
+	BYTE Literal = 0;
+	UINT32 CopyOffset = 0;
+	UINT32 LengthOfMatch = 0;
+	UINT32 accumulator = 0;
+	BYTE* HistoryPtr = nullptr;
+	BYTE* HistoryBuffer = nullptr;
+	BYTE* HistoryBufferEnd = nullptr;
+	UINT32 HistoryBufferSize = 0;
+	UINT32 CompressionLevel = 0;
+	wBitStream* bs = nullptr;
+
+	WINPR_ASSERT(mppc);
+	WINPR_ASSERT(pSrcData);
+	WINPR_ASSERT(ppDstData);
+	WINPR_ASSERT(pDstSize);
+
+	bs = mppc->bs;
+	WINPR_ASSERT(bs);
+
 	HistoryBuffer = mppc->HistoryBuffer;
+	WINPR_ASSERT(HistoryBuffer);
+
 	HistoryBufferSize = mppc->HistoryBufferSize;
 	HistoryBufferEnd = &HistoryBuffer[HistoryBufferSize - 1];
 	CompressionLevel = mppc->CompressionLevel;
@@ -397,7 +406,7 @@ int mppc_decompress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** p
 			return -1003;
 		}
 
-#ifdef DEBUG_MPPC
+#if defined(DEBUG_MPPC)
 		WLog_DBG(TAG, "<%" PRIu32 ",%" PRIu32 ">", CopyOffset, LengthOfMatch);
 #endif
 
@@ -407,8 +416,13 @@ int mppc_decompress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** p
 			return -1005;
 		}
 
-		SrcPtr = &HistoryBuffer[(HistoryPtr - HistoryBuffer - CopyOffset) &
-		                        (CompressionLevel ? 0xFFFF : 0x1FFF)];
+		const BYTE* SrcPtr = &HistoryBuffer[(HistoryPtr - HistoryBuffer - CopyOffset) &
+		                                    (CompressionLevel ? 0xFFFF : 0x1FFF)];
+		if ((SrcPtr < HistoryBuffer) || (SrcPtr + LengthOfMatch > HistoryBufferEnd))
+		{
+			WLog_ERR(TAG, "CopyOffset %" PRIu32 " target is out of bounds", CopyOffset);
+			return -1006;
+		}
 
 		do
 		{
@@ -422,28 +436,43 @@ int mppc_decompress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** p
 	return 1;
 }
 
-int mppc_compress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppDstData,
-                  UINT32* pDstSize, UINT32* pFlags)
+int mppc_compress(MPPC_CONTEXT* mppc, const BYTE* pSrcData, UINT32 SrcSize, BYTE* pDstBuffer,
+                  const BYTE** ppDstData, UINT32* pDstSize, UINT32* pFlags)
 {
-	BYTE* pSrcPtr;
-	BYTE* pSrcEnd;
-	BYTE* MatchPtr;
-	UINT32 DstSize;
-	BYTE* pDstData;
-	UINT32 MatchIndex;
-	UINT32 accumulator;
-	BOOL PacketFlushed;
-	BOOL PacketAtFront;
-	DWORD CopyOffset;
-	DWORD LengthOfMatch;
-	BYTE* HistoryBuffer;
-	BYTE* HistoryPtr;
-	UINT32 HistoryOffset;
-	UINT32 HistoryBufferSize;
-	BYTE Sym1, Sym2, Sym3;
-	UINT32 CompressionLevel;
-	wBitStream* bs = mppc->bs;
+	const BYTE* pSrcPtr = nullptr;
+	const BYTE* pSrcEnd = nullptr;
+	BYTE* MatchPtr = nullptr;
+	UINT32 DstSize = 0;
+	BYTE* pDstData = nullptr;
+	UINT32 MatchIndex = 0;
+	UINT32 accumulator = 0;
+	BOOL PacketFlushed = 0;
+	BOOL PacketAtFront = 0;
+	DWORD CopyOffset = 0;
+	DWORD LengthOfMatch = 0;
+	BYTE* HistoryBuffer = nullptr;
+	BYTE* HistoryPtr = nullptr;
+	UINT32 HistoryOffset = 0;
+	UINT32 HistoryBufferSize = 0;
+	BYTE Sym1 = 0;
+	BYTE Sym2 = 0;
+	BYTE Sym3 = 0;
+	UINT32 CompressionLevel = 0;
+	wBitStream* bs = nullptr;
+
+	WINPR_ASSERT(mppc);
+	WINPR_ASSERT(pSrcData);
+	WINPR_ASSERT(pDstBuffer);
+	WINPR_ASSERT(ppDstData);
+	WINPR_ASSERT(pDstSize);
+	WINPR_ASSERT(pFlags);
+
+	bs = mppc->bs;
+	WINPR_ASSERT(bs);
+
 	HistoryBuffer = mppc->HistoryBuffer;
+	WINPR_ASSERT(HistoryBuffer);
+
 	HistoryBufferSize = mppc->HistoryBufferSize;
 	CompressionLevel = mppc->CompressionLevel;
 	HistoryOffset = mppc->HistoryOffset;
@@ -464,7 +493,8 @@ int mppc_compress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppD
 	}
 
 	HistoryPtr = &(HistoryBuffer[HistoryOffset]);
-	pDstData = *ppDstData;
+	pDstData = pDstBuffer;
+	*ppDstData = pDstBuffer;
 
 	if (!pDstData)
 		return -1;
@@ -508,7 +538,7 @@ int mppc_compress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppD
 			}
 
 			accumulator = Sym1;
-#ifdef DEBUG_MPPC
+#if defined(DEBUG_MPPC)
 			WLog_DBG(TAG, "%" PRIu32 "", accumulator);
 #endif
 
@@ -540,7 +570,7 @@ int mppc_compress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppD
 				LengthOfMatch++;
 			}
 
-#ifdef DEBUG_MPPC
+#if defined(DEBUG_MPPC)
 			WLog_DBG(TAG, "<%" PRIu32 ",%" PRIu32 ">", CopyOffset, LengthOfMatch);
 #endif
 
@@ -717,7 +747,7 @@ int mppc_compress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppD
 		}
 
 		accumulator = *pSrcPtr;
-#ifdef DEBUG_MPPC
+#if defined(DEBUG_MPPC)
 		WLog_DBG(TAG, "%" PRIu32 "", accumulator);
 #endif
 
@@ -748,12 +778,17 @@ int mppc_compress(MPPC_CONTEXT* mppc, BYTE* pSrcData, UINT32 SrcSize, BYTE** ppD
 
 	*pDstSize = ((bs->position + 7) / 8);
 	mppc->HistoryPtr = HistoryPtr;
-	mppc->HistoryOffset = HistoryPtr - HistoryBuffer;
+	const intptr_t diff = HistoryPtr - HistoryBuffer;
+	if (diff > UINT32_MAX)
+		return -1;
+	mppc->HistoryOffset = (UINT32)diff;
 	return 1;
 }
 
 void mppc_set_compression_level(MPPC_CONTEXT* mppc, DWORD CompressionLevel)
 {
+	WINPR_ASSERT(mppc);
+
 	if (CompressionLevel < 1)
 	{
 		mppc->CompressionLevel = 0;
@@ -768,6 +803,8 @@ void mppc_set_compression_level(MPPC_CONTEXT* mppc, DWORD CompressionLevel)
 
 void mppc_context_reset(MPPC_CONTEXT* mppc, BOOL flush)
 {
+	WINPR_ASSERT(mppc);
+
 	ZeroMemory(&(mppc->HistoryBuffer), sizeof(mppc->HistoryBuffer));
 	ZeroMemory(&(mppc->MatchBuffer), sizeof(mppc->MatchBuffer));
 
@@ -779,42 +816,42 @@ void mppc_context_reset(MPPC_CONTEXT* mppc, BOOL flush)
 	else
 	{
 		mppc->HistoryOffset = 0;
-	mppc->HistoryPtr = &(mppc->HistoryBuffer[mppc->HistoryOffset]);
+		mppc->HistoryPtr = &(mppc->HistoryBuffer[mppc->HistoryOffset]);
 	}
 }
 
 MPPC_CONTEXT* mppc_context_new(DWORD CompressionLevel, BOOL Compressor)
 {
-	MPPC_CONTEXT* mppc;
-	mppc = calloc(1, sizeof(MPPC_CONTEXT));
+	MPPC_CONTEXT* mppc = calloc(1, sizeof(MPPC_CONTEXT));
 
-	if (mppc)
+	if (!mppc)
+		goto fail;
+
+	mppc->Compressor = Compressor;
+
+	if (CompressionLevel < 1)
 	{
-		mppc->Compressor = Compressor;
-
-		if (CompressionLevel < 1)
-		{
-			mppc->CompressionLevel = 0;
-			mppc->HistoryBufferSize = 8192;
-		}
-		else
-		{
-			mppc->CompressionLevel = 1;
-			mppc->HistoryBufferSize = 65536;
-		}
-
-		mppc->bs = BitStream_New();
-
-		if (!mppc->bs)
-		{
-			free(mppc);
-			return NULL;
-		}
-
-		mppc_context_reset(mppc, FALSE);
+		mppc->CompressionLevel = 0;
+		mppc->HistoryBufferSize = 8192;
+	}
+	else
+	{
+		mppc->CompressionLevel = 1;
+		mppc->HistoryBufferSize = 65536;
 	}
 
+	mppc->bs = BitStream_New();
+
+	if (!mppc->bs)
+		goto fail;
+
+	mppc_context_reset(mppc, FALSE);
+
 	return mppc;
+
+fail:
+	mppc_context_free(mppc);
+	return nullptr;
 }
 
 void mppc_context_free(MPPC_CONTEXT* mppc)

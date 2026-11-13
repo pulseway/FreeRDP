@@ -19,11 +19,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
-#include <assert.h>
+#include <winpr/assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +29,7 @@
 #include <winpr/crt.h>
 #include <winpr/cmdline.h>
 
+#include <freerdp/freerdp.h>
 #include <freerdp/addin.h>
 #include <freerdp/channels/rdpsnd.h>
 
@@ -40,7 +39,7 @@
 #include "audin_main.h"
 #include "opensl_io.h"
 
-typedef struct _AudinOpenSLESDevice
+typedef struct
 {
 	IAudinDevice iface;
 
@@ -69,7 +68,7 @@ static void audin_receive(void* context, const void* data, size_t size)
 
 	if (!opensles || !data)
 	{
-		WLog_ERR(TAG, "[%s] Invalid arguments context=%p, data=%p", __FUNCTION__, opensles, data);
+		WLog_ERR(TAG, "Invalid arguments context=%p, data=%p", opensles, data);
 		return;
 	}
 
@@ -106,7 +105,7 @@ static BOOL audin_opensles_format_supported(IAudinDevice* device, const AUDIO_FO
 		return FALSE;
 
 	WLog_Print(opensles->log, WLOG_DEBUG, "device=%p, format=%p", (void*)opensles, (void*)format);
-	assert(format);
+	WINPR_ASSERT(format);
 
 	switch (format->wFormatTag)
 	{
@@ -121,7 +120,7 @@ static BOOL audin_opensles_format_supported(IAudinDevice* device, const AUDIO_FO
 			break;
 
 		default:
-			WLog_Print(opensles->log, WLOG_DEBUG, "Encoding '%s' [0x%04X" PRIX16 "] not supported",
+			WLog_Print(opensles->log, WLOG_DEBUG, "Encoding '%s' [0x%04" PRIX16 "] not supported",
 			           audio_format_get_tag_string(format->wFormatTag), format->wFormatTag);
 			break;
 	}
@@ -144,7 +143,7 @@ static UINT audin_opensles_set_format(IAudinDevice* device, const AUDIO_FORMAT* 
 
 	WLog_Print(opensles->log, WLOG_DEBUG, "device=%p, format=%p, FramesPerPacket=%" PRIu32 "",
 	           (void*)device, (void*)format, FramesPerPacket);
-	assert(format);
+	WINPR_ASSERT(format);
 
 	opensles->format = *format;
 
@@ -233,9 +232,9 @@ UINT audin_opensles_close(IAudinDevice* device)
 
 	WLog_Print(opensles->log, WLOG_DEBUG, "device=%p", (void*)device);
 	android_CloseRecDevice(opensles->stream);
-	opensles->receive = NULL;
-	opensles->user_data = NULL;
-	opensles->stream = NULL;
+	opensles->receive = nullptr;
+	opensles->user_data = nullptr;
+	opensles->stream = nullptr;
 	return CHANNEL_RC_OK;
 }
 
@@ -248,19 +247,19 @@ static UINT audin_opensles_parse_addin_args(AudinOpenSLESDevice* device, const A
 {
 	UINT status;
 	DWORD flags;
-	COMMAND_LINE_ARGUMENT_A* arg;
+	const COMMAND_LINE_ARGUMENT_A* arg;
 	AudinOpenSLESDevice* opensles = (AudinOpenSLESDevice*)device;
 	COMMAND_LINE_ARGUMENT_A audin_opensles_args[] = {
-		{ "dev", COMMAND_LINE_VALUE_REQUIRED, "<device>", NULL, NULL, -1, NULL,
+		{ "dev", COMMAND_LINE_VALUE_REQUIRED, "<device>", nullptr, nullptr, -1, nullptr,
 		  "audio device name" },
-		{ NULL, 0, NULL, NULL, NULL, -1, NULL, NULL }
+		{ nullptr, 0, nullptr, nullptr, nullptr, -1, nullptr, nullptr }
 	};
 
 	WLog_Print(opensles->log, WLOG_DEBUG, "device=%p, args=%p", (void*)device, (void*)args);
 	flags =
 	    COMMAND_LINE_SIGIL_NONE | COMMAND_LINE_SEPARATOR_COLON | COMMAND_LINE_IGN_UNKNOWN_KEYWORD;
 	status = CommandLineParseArgumentsA(args->argc, args->argv, audin_opensles_args, flags,
-	                                    opensles, NULL, NULL);
+	                                    opensles, nullptr, nullptr);
 
 	if (status < 0)
 		return status;
@@ -283,28 +282,21 @@ static UINT audin_opensles_parse_addin_args(AudinOpenSLESDevice* device, const A
 			}
 		}
 		CommandLineSwitchEnd(arg)
-	} while ((arg = CommandLineFindNextArgumentA(arg)) != NULL);
+	} while ((arg = CommandLineFindNextArgumentA(arg)) != nullptr);
 
 	return CHANNEL_RC_OK;
 }
-
-#ifdef BUILTIN_CHANNELS
-#define freerdp_audin_client_subsystem_entry opensles_freerdp_audin_client_subsystem_entry
-#else
-#define freerdp_audin_client_subsystem_entry FREERDP_API freerdp_audin_client_subsystem_entry
-#endif
 
 /**
  * Function description
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT freerdp_audin_client_subsystem_entry(PFREERDP_AUDIN_DEVICE_ENTRY_POINTS pEntryPoints)
+FREERDP_ENTRY_POINT(UINT VCAPITYPE opensles_freerdp_audin_client_subsystem_entry(
+    PFREERDP_AUDIN_DEVICE_ENTRY_POINTS pEntryPoints))
 {
-	const ADDIN_ARGV* args;
-	AudinOpenSLESDevice* opensles;
-	UINT error;
-	opensles = (AudinOpenSLESDevice*)calloc(1, sizeof(AudinOpenSLESDevice));
+	UINT error = ERROR_INTERNAL_ERROR;
+	AudinOpenSLESDevice* opensles = (AudinOpenSLESDevice*)calloc(1, sizeof(AudinOpenSLESDevice));
 
 	if (!opensles)
 	{
@@ -319,7 +311,7 @@ UINT freerdp_audin_client_subsystem_entry(PFREERDP_AUDIN_DEVICE_ENTRY_POINTS pEn
 	opensles->iface.Close = audin_opensles_close;
 	opensles->iface.Free = audin_opensles_free;
 	opensles->rdpcontext = pEntryPoints->rdpcontext;
-	args = pEntryPoints->args;
+	const ADDIN_ARGV* args = pEntryPoints->args;
 
 	if ((error = audin_opensles_parse_addin_args(opensles, args)))
 	{

@@ -4,9 +4,10 @@
 
 #include <initguid.h>
 #include <mmdeviceapi.h>
-#include <Functiondiscoverykeys_devpkey.h>
-#include <Audioclient.h>
+#include <functiondiscoverykeys_devpkey.h>
+#include <audioclient.h>
 
+#include <freerdp/log.h>
 #define TAG SERVER_TAG("windows")
 
 //#define REFTIMES_PER_SEC  10000000
@@ -18,6 +19,7 @@
 //#define REFTIMES_PER_SEC  50000
 //#define REFTIMES_PER_MILLISEC  50
 
+#ifndef __MINGW32__
 DEFINE_GUID(CLSID_MMDeviceEnumerator, 0xBCDE0395, 0xE52F, 0x467C, 0x8E, 0x3D, 0xC4, 0x57, 0x92,
             0x91, 0x69, 0x2E);
 DEFINE_GUID(IID_IMMDeviceEnumerator, 0xA95664D2, 0x9614, 0x4F35, 0xA7, 0x46, 0xDE, 0x8D, 0xB6, 0x36,
@@ -26,9 +28,10 @@ DEFINE_GUID(IID_IAudioClient, 0x1cb9ad4c, 0xdbfa, 0x4c32, 0xb1, 0x78, 0xc2, 0xf5
             0xb2);
 DEFINE_GUID(IID_IAudioCaptureClient, 0xc8adbd64, 0xe71e, 0x48a0, 0xa4, 0xde, 0x18, 0x5c, 0x39, 0x5c,
             0xd3, 0x17);
+#endif
 
-LPWSTR devStr = NULL;
-wfPeerContext* latestPeer = NULL;
+LPWSTR devStr = nullptr;
+wfPeerContext* latestPeer = nullptr;
 
 int wf_rdpsnd_set_latest_peer(wfPeerContext* peer)
 {
@@ -43,19 +46,19 @@ int wf_wasapi_activate(RdpsndServerContext* context)
 
 	wf_wasapi_get_device_string(pattern, &devStr);
 
-	if (devStr == NULL)
+	if (devStr == nullptr)
 	{
 		WLog_ERR(TAG, "Failed to match for output device! Disabling rdpsnd.");
 		return 1;
 	}
 
 	WLog_DBG(TAG, "RDPSND (WASAPI) Activated");
-	if (!(hThread = CreateThread(NULL, 0, wf_rdpsnd_wasapi_thread, latestPeer, 0, NULL)))
+	if (!(hThread = CreateThread(nullptr, 0, wf_rdpsnd_wasapi_thread, latestPeer, 0, nullptr)))
 	{
 		WLog_ERR(TAG, "CreateThread failed");
 		return 1;
 	}
-	CloseHandle(hThread);
+	(void)CloseHandle(hThread);
 
 	return 0;
 }
@@ -63,15 +66,15 @@ int wf_wasapi_activate(RdpsndServerContext* context)
 int wf_wasapi_get_device_string(LPWSTR pattern, LPWSTR* deviceStr)
 {
 	HRESULT hr;
-	IMMDeviceEnumerator* pEnumerator = NULL;
-	IMMDeviceCollection* pCollection = NULL;
-	IMMDevice* pEndpoint = NULL;
-	IPropertyStore* pProps = NULL;
-	LPWSTR pwszID = NULL;
-	unsigned int count, i;
+	IMMDeviceEnumerator* pEnumerator = nullptr;
+	IMMDeviceCollection* pCollection = nullptr;
+	IMMDevice* pEndpoint = nullptr;
+	IPropertyStore* pProps = nullptr;
+	LPWSTR pwszID = nullptr;
+	unsigned int count;
 
-	CoInitialize(NULL);
-	hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &IID_IMMDeviceEnumerator,
+	CoInitialize(nullptr);
+	hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, nullptr, CLSCTX_ALL, &IID_IMMDeviceEnumerator,
 	                      (void**)&pEnumerator);
 	if (FAILED(hr))
 	{
@@ -96,7 +99,7 @@ int wf_wasapi_get_device_string(LPWSTR pattern, LPWSTR* deviceStr)
 		exit(1);
 	}
 
-	for (i = 0; i < count; ++i)
+	for (unsigned int i = 0; i < count; ++i)
 	{
 		PROPVARIANT nameVar;
 		PropVariantInit(&nameVar);
@@ -133,7 +136,7 @@ int wf_wasapi_get_device_string(LPWSTR pattern, LPWSTR* deviceStr)
 		if (wcscmp(pattern, nameVar.pwszVal) < 0)
 		{
 			unsigned int devStrLen;
-			WLog_INFO(TAG, "Using sound ouput endpoint: [%s] (%s)", nameVar.pwszVal, pwszID);
+			WLog_INFO(TAG, "Using sound output endpoint: [%s] (%s)", nameVar.pwszVal, pwszID);
 			// WLog_INFO(TAG, "matched %d characters", wcscmp(pattern, nameVar.pwszVal);
 			devStrLen = wcslen(pwszID);
 			*deviceStr = (LPWSTR)calloc(devStrLen + 1, 2);
@@ -142,33 +145,33 @@ int wf_wasapi_get_device_string(LPWSTR pattern, LPWSTR* deviceStr)
 			wcscpy_s(*deviceStr, devStrLen + 1, pwszID);
 		}
 		CoTaskMemFree(pwszID);
-		pwszID = NULL;
+		pwszID = nullptr;
 		PropVariantClear(&nameVar);
 
 		pProps->lpVtbl->Release(pProps);
-		pProps = NULL;
+		pProps = nullptr;
 
 		pEndpoint->lpVtbl->Release(pEndpoint);
-		pEndpoint = NULL;
+		pEndpoint = nullptr;
 	}
 
 	pCollection->lpVtbl->Release(pCollection);
-	pCollection = NULL;
+	pCollection = nullptr;
 
 	pEnumerator->lpVtbl->Release(pEnumerator);
-	pEnumerator = NULL;
+	pEnumerator = nullptr;
 	CoUninitialize();
 
 	return 0;
 }
 
-static DWORD WINAPI wf_rdpsnd_wasapi_thread(LPVOID lpParam)
+DWORD WINAPI wf_rdpsnd_wasapi_thread(LPVOID lpParam)
 {
-	IMMDeviceEnumerator* pEnumerator = NULL;
-	IMMDevice* pDevice = NULL;
-	IAudioClient* pAudioClient = NULL;
-	IAudioCaptureClient* pCaptureClient = NULL;
-	WAVEFORMATEX* pwfx = NULL;
+	IMMDeviceEnumerator* pEnumerator = nullptr;
+	IMMDevice* pDevice = nullptr;
+	IAudioClient* pAudioClient = nullptr;
+	IAudioCaptureClient* pCaptureClient = nullptr;
+	WAVEFORMATEX* pwfx = nullptr;
 	HRESULT hr;
 	REFERENCE_TIME hnsRequestedDuration = REFTIMES_PER_SEC;
 	REFERENCE_TIME hnsActualDuration;
@@ -184,8 +187,8 @@ static DWORD WINAPI wf_rdpsnd_wasapi_thread(LPVOID lpParam)
 	wfi = wf_info_get_instance();
 	context = (wfPeerContext*)lpParam;
 
-	CoInitialize(NULL);
-	hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &IID_IMMDeviceEnumerator,
+	CoInitialize(nullptr);
+	hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, nullptr, CLSCTX_ALL, &IID_IMMDeviceEnumerator,
 	                      (void**)&pEnumerator);
 	if (FAILED(hr))
 	{
@@ -200,7 +203,7 @@ static DWORD WINAPI wf_rdpsnd_wasapi_thread(LPVOID lpParam)
 		exit(1);
 	}
 
-	hr = pDevice->lpVtbl->Activate(pDevice, &IID_IAudioClient, CLSCTX_ALL, NULL,
+	hr = pDevice->lpVtbl->Activate(pDevice, &IID_IAudioClient, CLSCTX_ALL, nullptr,
 	                               (void**)&pAudioClient);
 	if (FAILED(hr))
 	{
@@ -224,7 +227,7 @@ static DWORD WINAPI wf_rdpsnd_wasapi_thread(LPVOID lpParam)
 	pwfx->cbSize = wfi->agreed_format->cbSize;
 
 	hr = pAudioClient->lpVtbl->Initialize(pAudioClient, AUDCLNT_SHAREMODE_SHARED, 0,
-	                                      hnsRequestedDuration, 0, pwfx, NULL);
+	                                      hnsRequestedDuration, 0, pwfx, nullptr);
 
 	if (FAILED(hr))
 	{
@@ -274,7 +277,7 @@ static DWORD WINAPI wf_rdpsnd_wasapi_thread(LPVOID lpParam)
 		while (packetLength != 0)
 		{
 			hr = pCaptureClient->lpVtbl->GetBuffer(pCaptureClient, &pData, &numFramesAvailable,
-			                                       &flags, NULL, NULL);
+			                                       &flags, nullptr, nullptr);
 			if (FAILED(hr))
 			{
 				WLog_ERR(TAG, "Failed to get buffer");
@@ -312,16 +315,16 @@ static DWORD WINAPI wf_rdpsnd_wasapi_thread(LPVOID lpParam)
 
 	CoTaskMemFree(pwfx);
 
-	if (pEnumerator != NULL)
+	if (pEnumerator != nullptr)
 		pEnumerator->lpVtbl->Release(pEnumerator);
 
-	if (pDevice != NULL)
+	if (pDevice != nullptr)
 		pDevice->lpVtbl->Release(pDevice);
 
-	if (pAudioClient != NULL)
+	if (pAudioClient != nullptr)
 		pAudioClient->lpVtbl->Release(pAudioClient);
 
-	if (pCaptureClient != NULL)
+	if (pCaptureClient != nullptr)
 		pCaptureClient->lpVtbl->Release(pCaptureClient);
 
 	CoUninitialize();

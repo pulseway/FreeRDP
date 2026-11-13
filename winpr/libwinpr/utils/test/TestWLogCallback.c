@@ -10,7 +10,7 @@ typedef struct
 	char* channel;
 } test_t;
 
-static const char* function = NULL;
+static const char* function = nullptr;
 static const char* channels[] = { "com.test.channelA", "com.test.channelB" };
 
 static const test_t messages[] = { { WLOG_INFO, "this is a test", "com.test.channelA" },
@@ -30,66 +30,71 @@ static BOOL check(const wLogMessage* msg)
 	BOOL rc = TRUE;
 	if (!msg)
 		rc = FALSE;
-	else if (strcmp(msg->FileName, __FILE__))
+	else if (strcmp(msg->FileName, __FILE__) != 0)
 		rc = FALSE;
-	else if (strcmp(msg->FunctionName, function))
+	else if (strcmp(msg->FunctionName, function) != 0)
 		rc = FALSE;
-	else if (strcmp(msg->PrefixString, messages[pos].channel))
+	else if (strcmp(msg->PrefixString, messages[pos].channel) != 0)
 		rc = FALSE;
 	else if (msg->Level != messages[pos].level)
 		rc = FALSE;
-	else if (strcmp(msg->FormatString, messages[pos].msg))
+	else if (strcmp(msg->FormatString, messages[pos].msg) != 0)
 		rc = FALSE;
 	pos++;
 
 	if (!rc)
 	{
-		fprintf(stderr, "Test failed!\n");
+		(void)fprintf(stderr, "Test failed!\n");
 		success = FALSE;
 	}
 	return rc;
 }
 
-BOOL CallbackAppenderMessage(const wLogMessage* msg)
+static BOOL CallbackAppenderMessage(const wLogMessage* msg)
 {
 	check(msg);
 	return TRUE;
 }
 
-BOOL CallbackAppenderData(const wLogMessage* msg)
+static BOOL CallbackAppenderData(const wLogMessage* msg)
 {
-	fprintf(stdout, "%s\n", __FUNCTION__);
+	(void)fprintf(stdout, "%s\n", __func__);
 	return TRUE;
 }
 
-BOOL CallbackAppenderImage(const wLogMessage* msg)
+static BOOL CallbackAppenderImage(const wLogMessage* msg)
 {
-	fprintf(stdout, "%s\n", __FUNCTION__);
+	(void)fprintf(stdout, "%s\n", __func__);
 	return TRUE;
 }
 
-BOOL CallbackAppenderPackage(const wLogMessage* msg)
+static BOOL CallbackAppenderPackage(const wLogMessage* msg)
 {
-	fprintf(stdout, "%s\n", __FUNCTION__);
+	(void)fprintf(stdout, "%s\n", __func__);
 	return TRUE;
 }
 
 int TestWLogCallback(int argc, char* argv[])
 {
-	wLog* root;
-	wLog* logA;
-	wLog* logB;
-	wLogLayout* layout;
-	wLogAppender* appender;
+	wLog* root = nullptr;
+	wLog* logA = nullptr;
+	wLog* logB = nullptr;
+	wLogLayout* layout = nullptr;
+	wLogAppender* appender = nullptr;
 	wLogCallbacks callbacks;
 
-	function = __FUNCTION__;
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
+	function = __func__;
 
 	root = WLog_GetRoot();
 
-	WLog_SetLogAppenderType(root, WLOG_APPENDER_CALLBACK);
+	if (!WLog_SetLogAppenderType(root, WLOG_APPENDER_CALLBACK))
+		return -1;
 
 	appender = WLog_GetLogAppender(root);
+	WINPR_ASSERT(appender);
 
 	callbacks.data = CallbackAppenderData;
 	callbacks.image = CallbackAppenderImage;
@@ -100,15 +105,22 @@ int TestWLogCallback(int argc, char* argv[])
 		return -1;
 
 	layout = WLog_GetLogLayout(root);
-	WLog_Layout_SetPrefixFormat(root, layout, "%mn");
+	if (!WLog_Layout_SetPrefixFormat(root, layout, "%mn"))
+		return -1;
 
-	WLog_OpenAppender(root);
+	if (!WLog_OpenAppender(root))
+		return -1;
 
 	logA = WLog_Get(channels[0]);
-	logB = WLog_Get(channels[1]);
+	WINPR_ASSERT(logA);
 
-	WLog_SetLogLevel(logA, WLOG_TRACE);
-	WLog_SetLogLevel(logB, WLOG_TRACE);
+	logB = WLog_Get(channels[1]);
+	WINPR_ASSERT(logB);
+
+	if (!WLog_SetLogLevel(logA, WLOG_TRACE))
+		return -1;
+	if (!WLog_SetLogLevel(logB, WLOG_TRACE))
+		return -1;
 
 	WLog_Print(logA, messages[0].level, messages[0].msg);
 	WLog_Print(logB, messages[1].level, messages[1].msg);
@@ -119,7 +131,8 @@ int TestWLogCallback(int argc, char* argv[])
 	WLog_Print(logA, messages[6].level, messages[6].msg);
 	WLog_Print(logB, messages[7].level, messages[7].msg);
 
-	WLog_CloseAppender(root);
+	if (!WLog_CloseAppender(root))
+		return -1;
 
 	return success ? 0 : -1;
 }

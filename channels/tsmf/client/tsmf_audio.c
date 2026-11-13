@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,27 +27,29 @@
 
 static ITSMFAudioDevice* tsmf_load_audio_device_by_name(const char* name, const char* device)
 {
-	ITSMFAudioDevice* audio;
-	TSMF_AUDIO_DEVICE_ENTRY entry;
+	ITSMFAudioDevice* audio = nullptr;
+	union
+	{
+		PVIRTUALCHANNELENTRY pvce;
+		TSMF_AUDIO_DEVICE_ENTRY entry;
+	} cnv;
+	cnv.pvce = freerdp_load_channel_addin_entry("tsmf", name, "audio", 0);
 
-	entry =
-	    (TSMF_AUDIO_DEVICE_ENTRY)(void*)freerdp_load_channel_addin_entry("tsmf", name, "audio", 0);
+	if (!cnv.entry)
+		return nullptr;
 
-	if (!entry)
-		return NULL;
+	const UINT rc = cnv.entry(&audio);
 
-	audio = entry();
-
-	if (!audio)
+	if ((rc != CHANNEL_RC_OK) || !audio)
 	{
 		WLog_ERR(TAG, "failed to call export function in %s", name);
-		return NULL;
+		return nullptr;
 	}
 
 	if (!audio->Open(audio, device))
 	{
 		audio->Free(audio);
-		audio = NULL;
+		audio = nullptr;
 		WLog_ERR(TAG, "failed to open, name: %s, device: %s", name, device);
 	}
 	else
@@ -62,7 +62,7 @@ static ITSMFAudioDevice* tsmf_load_audio_device_by_name(const char* name, const 
 
 ITSMFAudioDevice* tsmf_load_audio_device(const char* name, const char* device)
 {
-	ITSMFAudioDevice* audio = NULL;
+	ITSMFAudioDevice* audio = nullptr;
 
 	if (name)
 	{
@@ -86,7 +86,7 @@ ITSMFAudioDevice* tsmf_load_audio_device(const char* name, const char* device)
 #endif
 	}
 
-	if (audio == NULL)
+	if (audio == nullptr)
 	{
 		WLog_ERR(TAG, "no sound device.");
 	}

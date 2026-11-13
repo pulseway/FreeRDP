@@ -17,11 +17,9 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
-#include <assert.h>
+#include <winpr/assert.h>
 
 #include "ntlm.h"
 #include "../sspi.h"
@@ -36,21 +34,33 @@
 
 #include "ntlm_av_pairs.h"
 
+#if defined(WITH_DEBUG_NTLM)
 #include "../../log.h"
 #define TAG WINPR_TAG("sspi.NTLM")
+#endif
 
+struct NTLM_AV_PAIR_IMPL
+{
+	UINT16 AvId;
+	UINT16 AvLen;
+};
+
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_av_pair_get_next_offset(const NTLM_AV_PAIR* pAvPair, size_t size, size_t* pOffset);
 
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_av_pair_check_data(const NTLM_AV_PAIR* pAvPair, size_t cbAvPair, size_t size)
 {
-	size_t offset;
-	if (!pAvPair || cbAvPair < sizeof(NTLM_AV_PAIR) + size)
+	size_t offset = 0;
+	if (!pAvPair || cbAvPair < sizeof(struct NTLM_AV_PAIR_IMPL) + size)
 		return FALSE;
 	if (!ntlm_av_pair_get_next_offset(pAvPair, cbAvPair, &offset))
 		return FALSE;
 	return cbAvPair >= offset;
 }
 
+#ifdef WITH_DEBUG_NTLM
+WINPR_ATTR_NODISCARD
 static const char* get_av_pair_string(UINT16 pair)
 {
 	switch (pair)
@@ -75,31 +85,40 @@ static const char* get_av_pair_string(UINT16 pair)
 			return "MsvAvSingleHost";
 		case MsvAvTargetName:
 			return "MsvAvTargetName";
-		case MsvChannelBindings:
-			return "MsvChannelBindings";
+		case MsvAvChannelBindings:
+			return "MsvAvChannelBindings";
 		default:
 			return "UNKNOWN";
 	}
 }
+#endif
 
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_av_pair_check(const NTLM_AV_PAIR* pAvPair, size_t cbAvPair);
+
+WINPR_ATTR_NODISCARD
 static NTLM_AV_PAIR* ntlm_av_pair_next(NTLM_AV_PAIR* pAvPairList, size_t* pcbAvPairList);
 
-static INLINE void ntlm_av_pair_set_id(NTLM_AV_PAIR* pAvPair, UINT16 id)
+static inline void ntlm_av_pair_set_id(NTLM_AV_PAIR* pAvPair, UINT16 id)
 {
-	Data_Write_UINT16(&pAvPair->AvId, id);
+	WINPR_ASSERT(pAvPair);
+	struct NTLM_AV_PAIR_IMPL* impl = (struct NTLM_AV_PAIR_IMPL*)pAvPair;
+	winpr_Data_Write_UINT16(&impl->AvId, id);
 }
 
-static INLINE void ntlm_av_pair_set_len(NTLM_AV_PAIR* pAvPair, UINT16 len)
+static inline void ntlm_av_pair_set_len(NTLM_AV_PAIR* pAvPair, UINT16 len)
 {
-	Data_Write_UINT16(&pAvPair->AvLen, len);
+	WINPR_ASSERT(pAvPair);
+	struct NTLM_AV_PAIR_IMPL* impl = (struct NTLM_AV_PAIR_IMPL*)pAvPair;
+	winpr_Data_Write_UINT16(&impl->AvLen, len);
 }
 
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_av_pair_list_init(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList)
 {
 	NTLM_AV_PAIR* pAvPair = pAvPairList;
 
-	if (!pAvPair || (cbAvPairList < sizeof(NTLM_AV_PAIR)))
+	if (!pAvPair || (cbAvPairList < sizeof(struct NTLM_AV_PAIR_IMPL)))
 		return FALSE;
 
 	ntlm_av_pair_set_id(pAvPair, MsvAvEOL);
@@ -107,16 +126,17 @@ static BOOL ntlm_av_pair_list_init(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairLis
 	return TRUE;
 }
 
-static INLINE BOOL ntlm_av_pair_get_id(const NTLM_AV_PAIR* pAvPair, size_t size, UINT16* pair)
+WINPR_ATTR_NODISCARD static inline BOOL ntlm_av_pair_get_id(const NTLM_AV_PAIR* pAvPair,
+                                                            size_t size, UINT16* pair)
 {
-	UINT16 AvId;
 	if (!pAvPair || !pair)
 		return FALSE;
 
-	if (size < sizeof(NTLM_AV_PAIR))
+	if (size < sizeof(struct NTLM_AV_PAIR_IMPL))
 		return FALSE;
 
-	Data_Read_UINT16(&pAvPair->AvId, AvId);
+	const struct NTLM_AV_PAIR_IMPL* impl = (const struct NTLM_AV_PAIR_IMPL*)pAvPair;
+	const UINT16 AvId = winpr_Data_Get_UINT16(&impl->AvId);
 
 	*pair = AvId;
 	return TRUE;
@@ -124,107 +144,128 @@ static INLINE BOOL ntlm_av_pair_get_id(const NTLM_AV_PAIR* pAvPair, size_t size,
 
 ULONG ntlm_av_pair_list_length(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList)
 {
-	size_t cbAvPair;
-	NTLM_AV_PAIR* pAvPair;
+	size_t cbAvPair = 0;
 
-	pAvPair = ntlm_av_pair_get(pAvPairList, cbAvPairList, MsvAvEOL, &cbAvPair);
+	NTLM_AV_PAIR* pAvPair = ntlm_av_pair_get(pAvPairList, cbAvPairList, MsvAvEOL, &cbAvPair);
 	if (!pAvPair)
 		return 0;
 
-	return ((PBYTE)pAvPair - (PBYTE)pAvPairList) + sizeof(NTLM_AV_PAIR);
+	if (pAvPair < pAvPairList)
+		return 0;
+
+	const size_t size = WINPR_ASSERTING_INT_CAST(size_t, ((PBYTE)pAvPair - (PBYTE)pAvPairList)) +
+	                    sizeof(struct NTLM_AV_PAIR_IMPL);
+	WINPR_ASSERT(size <= UINT32_MAX);
+	WINPR_ASSERT(size >= 0);
+	return (ULONG)size;
 }
 
-static INLINE BOOL ntlm_av_pair_get_len(const NTLM_AV_PAIR* pAvPair, size_t size, size_t* pAvLen)
+WINPR_ATTR_NODISCARD static inline BOOL ntlm_av_pair_get_len(const NTLM_AV_PAIR* pAvPair,
+                                                             size_t size, size_t* pAvLen)
 {
-	UINT16 AvLen;
 	if (!pAvPair)
 		return FALSE;
 
-	if (size < sizeof(NTLM_AV_PAIR))
+	if (size < sizeof(struct NTLM_AV_PAIR_IMPL))
 		return FALSE;
 
-	Data_Read_UINT16(&pAvPair->AvLen, AvLen);
+	const struct NTLM_AV_PAIR_IMPL* impl = (const struct NTLM_AV_PAIR_IMPL*)pAvPair;
+	const UINT16 AvLen = winpr_Data_Get_UINT16(&impl->AvLen);
 
 	*pAvLen = AvLen;
 	return TRUE;
 }
 
+#ifdef WITH_DEBUG_NTLM
 void ntlm_print_av_pair_list(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList)
 {
-	UINT16 pair;
+	UINT16 pair = 0;
 	size_t cbAvPair = cbAvPairList;
 	NTLM_AV_PAIR* pAvPair = pAvPairList;
 
 	if (!ntlm_av_pair_check(pAvPair, cbAvPair))
 		return;
 
-	WLog_INFO(TAG, "AV_PAIRs =");
+	WLog_VRB(TAG, "AV_PAIRs =");
 
 	while (pAvPair && ntlm_av_pair_get_id(pAvPair, cbAvPair, &pair) && (pair != MsvAvEOL))
 	{
 		size_t cbLen = 0;
-		ntlm_av_pair_get_len(pAvPair, cbAvPair, &cbLen);
+		if (!ntlm_av_pair_get_len(pAvPair, cbAvPair, &cbLen))
+			WLog_WARN(TAG, "ntlm_av_pair_get_len failed");
 
-		WLog_INFO(TAG, "\t%s AvId: %" PRIu16 " AvLen: %" PRIu16 "", get_av_pair_string(pair), pair);
-		winpr_HexDump(TAG, WLOG_INFO, ntlm_av_pair_get_value_pointer(pAvPair), cbLen);
+		WLog_VRB(TAG, "\t%s AvId: %" PRIu16 " AvLen: %" PRIuz "", get_av_pair_string(pair), pair,
+		         cbLen);
+		winpr_HexDump(TAG, WLOG_TRACE, ntlm_av_pair_get_value_pointer(pAvPair, cbAvPair), cbLen);
 
 		pAvPair = ntlm_av_pair_next(pAvPair, &cbAvPair);
 	}
 }
+#endif
 
-static ULONG ntlm_av_pair_list_size(ULONG AvPairsCount, ULONG AvPairsValueLength)
+WINPR_ATTR_NODISCARD
+static size_t ntlm_av_pair_list_size(size_t AvPairsCount, size_t AvPairsValueLength)
 {
 	/* size of headers + value lengths + terminating MsvAvEOL AV_PAIR */
-	return ((AvPairsCount + 1) * 4) + AvPairsValueLength;
+	return ((AvPairsCount + 1) * 4ULL) + AvPairsValueLength;
 }
 
-PBYTE ntlm_av_pair_get_value_pointer(NTLM_AV_PAIR* pAvPair)
+PBYTE ntlm_av_pair_get_value_pointer(NTLM_AV_PAIR* pAvPair, size_t cbAvPair)
 {
-	return (PBYTE)pAvPair + sizeof(NTLM_AV_PAIR);
+	WINPR_ASSERT(pAvPair);
+	if (cbAvPair < sizeof(struct NTLM_AV_PAIR_IMPL))
+		return nullptr;
+	return (PBYTE)pAvPair + sizeof(struct NTLM_AV_PAIR_IMPL);
 }
 
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_av_pair_get_next_offset(const NTLM_AV_PAIR* pAvPair, size_t size, size_t* pOffset)
 {
-	size_t avLen;
+	size_t avLen = 0;
 	if (!pOffset)
 		return FALSE;
 
 	if (!ntlm_av_pair_get_len(pAvPair, size, &avLen))
 		return FALSE;
-	*pOffset = avLen + sizeof(NTLM_AV_PAIR);
+	*pOffset = avLen + sizeof(struct NTLM_AV_PAIR_IMPL);
 	return TRUE;
 }
 
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_av_pair_check(const NTLM_AV_PAIR* pAvPair, size_t cbAvPair)
 {
 	return ntlm_av_pair_check_data(pAvPair, cbAvPair, 0);
 }
 
+WINPR_ATTR_NODISCARD
 static NTLM_AV_PAIR* ntlm_av_pair_next(NTLM_AV_PAIR* pAvPair, size_t* pcbAvPair)
 {
-	size_t offset;
+	size_t offset = 0;
 
 	if (!pcbAvPair)
-		return NULL;
+		return nullptr;
 	if (!ntlm_av_pair_check(pAvPair, *pcbAvPair))
-		return NULL;
+		return nullptr;
 
 	if (!ntlm_av_pair_get_next_offset(pAvPair, *pcbAvPair, &offset))
-		return NULL;
+		return nullptr;
 
 	*pcbAvPair -= offset;
-	return (NTLM_AV_PAIR*)((PBYTE)pAvPair + offset);
+	NTLM_AV_PAIR* next = WINPR_CXX_COMPAT_CAST(NTLM_AV_PAIR*, ((PBYTE)pAvPair + offset));
+	if (!ntlm_av_pair_check(next, *pcbAvPair))
+		return nullptr;
+	return next;
 }
 
 NTLM_AV_PAIR* ntlm_av_pair_get(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList, NTLM_AV_ID AvId,
                                size_t* pcbAvPairListRemaining)
 {
-	UINT16 id;
+	UINT16 id = 0;
 	size_t cbAvPair = cbAvPairList;
 	NTLM_AV_PAIR* pAvPair = pAvPairList;
 
 	if (!ntlm_av_pair_check(pAvPair, cbAvPair))
-		pAvPair = NULL;
+		pAvPair = nullptr;
 
 	while (pAvPair && ntlm_av_pair_get_id(pAvPair, cbAvPair, &id))
 	{
@@ -232,7 +273,7 @@ NTLM_AV_PAIR* ntlm_av_pair_get(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList, N
 			break;
 		if (id == MsvAvEOL)
 		{
-			pAvPair = NULL;
+			pAvPair = nullptr;
 			break;
 		}
 
@@ -247,35 +288,59 @@ NTLM_AV_PAIR* ntlm_av_pair_get(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList, N
 	return pAvPair;
 }
 
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_av_pair_add(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList, NTLM_AV_ID AvId,
                              PBYTE Value, UINT16 AvLen)
 {
-	size_t cbAvPair;
-	NTLM_AV_PAIR* pAvPair;
+	size_t cbAvPair = 0;
+	NTLM_AV_PAIR* pAvPair = nullptr;
 
 	pAvPair = ntlm_av_pair_get(pAvPairList, cbAvPairList, MsvAvEOL, &cbAvPair);
 
 	/* size of header + value length + terminating MsvAvEOL AV_PAIR */
-	if (!pAvPair || cbAvPair < 2 * sizeof(NTLM_AV_PAIR) + AvLen)
+	if (!pAvPair || cbAvPair < 2 * sizeof(struct NTLM_AV_PAIR_IMPL) + AvLen)
 		return FALSE;
 
-	ntlm_av_pair_set_id(pAvPair, AvId);
+	ntlm_av_pair_set_id(pAvPair, (UINT16)AvId);
 	ntlm_av_pair_set_len(pAvPair, AvLen);
 	if (AvLen)
 	{
-		assert(Value != NULL);
-		CopyMemory(ntlm_av_pair_get_value_pointer(pAvPair), Value, AvLen);
+		WINPR_ASSERT(Value != nullptr);
+		CopyMemory(ntlm_av_pair_get_value_pointer(pAvPair, cbAvPair), Value, AvLen);
 	}
 
 	pAvPair = ntlm_av_pair_next(pAvPair, &cbAvPair);
 	return ntlm_av_pair_list_init(pAvPair, cbAvPair);
 }
 
+WINPR_ATTR_NODISCARD
+static BOOL ntlm_av_pair_valid(UINT16 pair)
+{
+	switch (pair)
+	{
+		case MsvAvEOL:
+		case MsvAvNbComputerName:
+		case MsvAvNbDomainName:
+		case MsvAvDnsComputerName:
+		case MsvAvDnsDomainName:
+		case MsvAvDnsTreeName:
+		case MsvAvFlags:
+		case MsvAvTimestamp:
+		case MsvAvSingleHost:
+		case MsvAvTargetName:
+		case MsvAvChannelBindings:
+			return TRUE;
+		default:
+			return FALSE;
+	}
+}
+
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_av_pair_add_copy(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList,
                                   NTLM_AV_PAIR* pAvPair, size_t cbAvPair)
 {
-	UINT16 pair;
-	size_t avLen;
+	UINT16 pair = 0;
+	size_t avLen = 0;
 
 	if (!ntlm_av_pair_check(pAvPair, cbAvPair))
 		return FALSE;
@@ -286,68 +351,88 @@ static BOOL ntlm_av_pair_add_copy(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList
 	if (!ntlm_av_pair_get_len(pAvPair, cbAvPair, &avLen))
 		return FALSE;
 
-	return ntlm_av_pair_add(pAvPairList, cbAvPairList, pair,
-	                        ntlm_av_pair_get_value_pointer(pAvPair), avLen);
+	if (!ntlm_av_pair_valid(pair))
+		return FALSE;
+
+	WINPR_ASSERT(avLen <= UINT16_MAX);
+	return ntlm_av_pair_add(pAvPairList, cbAvPairList, WINPR_ASSERTING_INT_CAST(NTLM_AV_ID, pair),
+	                        ntlm_av_pair_get_value_pointer(pAvPair, cbAvPair), (UINT16)avLen);
 }
 
-static int ntlm_get_target_computer_name(PUNICODE_STRING pName, COMPUTER_NAME_FORMAT type)
+void ntlm_free_unicode_string(UNICODE_STRING* string)
 {
-	char* name;
-	int status;
-	DWORD nSize = 0;
-	CHAR* computerName;
+	if (!string)
+		return;
 
-	if (GetComputerNameExA(ComputerNameNetBIOS, NULL, &nSize) || GetLastError() != ERROR_MORE_DATA)
-		return -1;
-
-	computerName = calloc(nSize, sizeof(CHAR));
-
-	if (!computerName)
-		return -1;
-
-	if (!GetComputerNameExA(ComputerNameNetBIOS, computerName, &nSize))
-	{
-		free(computerName);
-		return -1;
-	}
-
-	if (nSize > MAX_COMPUTERNAME_LENGTH)
-		computerName[MAX_COMPUTERNAME_LENGTH] = '\0';
-
-	name = computerName;
-
-	if (!name)
-		return -1;
-
-	if (type == ComputerNameNetBIOS)
-		CharUpperA(name);
-
-	status = ConvertToUnicode(CP_UTF8, 0, name, -1, &pName->Buffer, 0);
-
-	if (status <= 0)
-	{
-		free(name);
-		return status;
-	}
-
-	pName->Length = (USHORT)((status - 1) * 2);
-	pName->MaximumLength = pName->Length;
-	free(name);
-	return 1;
+	if (string->Length != 0)
+		free(string->Buffer);
+	string->Buffer = nullptr;
+	string->Length = 0;
+	string->MaximumLength = 0;
 }
 
-static void ntlm_free_unicode_string(PUNICODE_STRING string)
+UNICODE_STRING ntlm_clone_unicode_string(const UNICODE_STRING* other)
 {
-	if (string)
+	UNICODE_STRING clone = WINPR_C_ARRAY_INIT;
+	if (!other || (other->Length == 0) || (other->MaximumLength == 0))
+		return clone;
+	if (other->Length > other->MaximumLength)
+		return clone;
+
+	/* Ensure copy is always \0 terminated. */
+	clone.Buffer = calloc(other->MaximumLength / sizeof(WCHAR) + 1ull, sizeof(WCHAR));
+	if (!clone.Buffer)
+		return clone;
+	clone.Length = other->Length;
+	clone.MaximumLength = other->MaximumLength;
+	memcpy(clone.Buffer, other->Buffer, clone.Length);
+	return clone;
+}
+
+UNICODE_STRING ntlm_from_unicode_string_w(const WCHAR* str, size_t wcharlen)
+{
+	UNICODE_STRING clone = WINPR_C_ARRAY_INIT;
+	if (!str || (wcharlen == 0))
+		return clone;
+	if (wcharlen > USHRT_MAX / sizeof(WCHAR))
+		return clone;
+	clone.Buffer = wcsndup(str, wcharlen);
+	if (!clone.Buffer)
+		return clone;
+	clone.Length = WINPR_ASSERTING_INT_CAST(UINT16, wcharlen * sizeof(WCHAR));
+	clone.MaximumLength = WINPR_ASSERTING_INT_CAST(UINT16, wcharlen * sizeof(WCHAR));
+	return clone;
+}
+
+UNICODE_STRING ntlm_from_unicode_string_utf8(const char* str, size_t charlen)
+{
+	UNICODE_STRING clone = WINPR_C_ARRAY_INIT;
+	if (!str || (charlen == 0))
+		return clone;
+
+	size_t wlen = 0;
+	clone.Buffer = ConvertUtf8NToWCharAlloc(str, charlen, &wlen);
+	if (!clone.Buffer)
+		return clone;
+	if (wlen > USHRT_MAX / sizeof(WCHAR))
 	{
-		if (string->Length > 0)
-		{
-			free(string->Buffer);
-			string->Buffer = NULL;
-			string->Length = 0;
-			string->MaximumLength = 0;
-		}
+		free(clone.Buffer);
+		clone.Buffer = nullptr;
+		return clone;
 	}
+	clone.Length = WINPR_ASSERTING_INT_CAST(UINT16, wlen * sizeof(WCHAR));
+	clone.MaximumLength = WINPR_ASSERTING_INT_CAST(UINT16, wlen * sizeof(WCHAR));
+	return clone;
+}
+
+BOOL ntlm_is_unicode_string_empty(const UNICODE_STRING* str)
+{
+	WINPR_ASSERT(str);
+	if (str->Length == 0)
+		return TRUE;
+	if (str->MaximumLength == 0)
+		return TRUE;
+	return str->Buffer == nullptr;
 }
 
 /**
@@ -377,7 +462,7 @@ typedef struct gss_channel_bindings_struct {
     gss_buffer_desc application_data;
 } *gss_channel_bindings_t;
  */
-
+WINPR_ATTR_NODISCARD
 static BOOL ntlm_md5_update_uint32_be(WINPR_DIGEST_CTX* md5, UINT32 num)
 {
 	BYTE be32[4];
@@ -390,10 +475,13 @@ static BOOL ntlm_md5_update_uint32_be(WINPR_DIGEST_CTX* md5, UINT32 num)
 
 static void ntlm_compute_channel_bindings(NTLM_CONTEXT* context)
 {
-	WINPR_DIGEST_CTX* md5;
-	BYTE* ChannelBindingToken;
-	UINT32 ChannelBindingTokenLength;
-	SEC_CHANNEL_BINDINGS* ChannelBindings;
+	WINPR_DIGEST_CTX* md5 = nullptr;
+	BYTE* ChannelBindingToken = nullptr;
+	UINT32 ChannelBindingTokenLength = 0;
+	SEC_CHANNEL_BINDINGS* ChannelBindings = nullptr;
+
+	WINPR_ASSERT(context);
+
 	ZeroMemory(context->ChannelBindingsHash, WINPR_MD5_DIGEST_LENGTH);
 	ChannelBindings = context->Bindings.Bindings;
 
@@ -436,6 +524,7 @@ out:
 
 static void ntlm_compute_single_host_data(NTLM_CONTEXT* context)
 {
+	WINPR_ASSERT(context);
 	/**
 	 * The Single_Host_Data structure allows a client to send machine-specific information
 	 * within an authentication exchange to services on the same machine. The client can
@@ -444,110 +533,84 @@ static void ntlm_compute_single_host_data(NTLM_CONTEXT* context)
 	 * different or if they are on different hosts, then the information MUST be ignored.
 	 * Any fields after the MachineID field MUST be ignored on receipt.
 	 */
-	Data_Write_UINT32(&context->SingleHostData.Size, 48);
-	Data_Write_UINT32(&context->SingleHostData.Z4, 0);
-	Data_Write_UINT32(&context->SingleHostData.DataPresent, 1);
-	Data_Write_UINT32(&context->SingleHostData.CustomData, SECURITY_MANDATORY_MEDIUM_RID);
+	winpr_Data_Write_UINT32(&context->SingleHostData.Size, 48);
+	winpr_Data_Write_UINT32(&context->SingleHostData.Z4, 0);
+	winpr_Data_Write_UINT32(&context->SingleHostData.DataPresent, 1);
+	winpr_Data_Write_UINT32(&context->SingleHostData.CustomData, SECURITY_MANDATORY_MEDIUM_RID);
 	FillMemory(context->SingleHostData.MachineID, 32, 0xAA);
 }
 
-int ntlm_construct_challenge_target_info(NTLM_CONTEXT* context)
+BOOL ntlm_construct_challenge_target_info(NTLM_CONTEXT* context)
 {
-	int rc = -1;
-	int length;
-	ULONG AvPairsCount;
-	ULONG AvPairsLength;
-	NTLM_AV_PAIR* pAvPairList;
-	size_t cbAvPairList;
-	UNICODE_STRING NbDomainName = { 0 };
-	UNICODE_STRING NbComputerName = { 0 };
-	UNICODE_STRING DnsDomainName = { 0 };
-	UNICODE_STRING DnsComputerName = { 0 };
+	BOOL rc = FALSE;
 
-	if (ntlm_get_target_computer_name(&NbDomainName, ComputerNameNetBIOS) < 0)
-		goto fail;
+	WINPR_ASSERT(context);
 
-	NbComputerName.Buffer = NULL;
+	const ULONG AvPairsCount = 5;
+	const ULONG AvPairsLength = context->NbDomainName.Length + context->NbComputerName.Length +
+	                            context->DnsDomainName.Length + context->DnsComputerName.Length + 8;
+	{
+		const size_t length = ntlm_av_pair_list_size(AvPairsCount, AvPairsLength);
+		if (!ntlm_SecBufferRealloc(&context->ChallengeTargetInfo,
+		                           WINPR_ASSERTING_INT_CAST(uint32_t, length)))
+			goto fail;
+	}
 
-	if (ntlm_get_target_computer_name(&NbComputerName, ComputerNameNetBIOS) < 0)
-		goto fail;
-
-	DnsDomainName.Buffer = NULL;
-
-	if (ntlm_get_target_computer_name(&DnsDomainName, ComputerNameDnsDomain) < 0)
-		goto fail;
-
-	DnsComputerName.Buffer = NULL;
-
-	if (ntlm_get_target_computer_name(&DnsComputerName, ComputerNameDnsHostname) < 0)
-		goto fail;
-
-	AvPairsCount = 5;
-	AvPairsLength = NbDomainName.Length + NbComputerName.Length + DnsDomainName.Length +
-	                DnsComputerName.Length + 8;
-	length = ntlm_av_pair_list_size(AvPairsCount, AvPairsLength);
-
-	if (!sspi_SecBufferAlloc(&context->ChallengeTargetInfo, length))
-		goto fail;
-
-	pAvPairList = (NTLM_AV_PAIR*)context->ChallengeTargetInfo.pvBuffer;
-	cbAvPairList = context->ChallengeTargetInfo.cbBuffer;
+	NTLM_AV_PAIR* pAvPairList = (NTLM_AV_PAIR*)context->ChallengeTargetInfo.pvBuffer;
+	const size_t cbAvPairList = context->ChallengeTargetInfo.cbBuffer;
 
 	if (!ntlm_av_pair_list_init(pAvPairList, cbAvPairList))
 		goto fail;
 
-	if (!ntlm_av_pair_add(pAvPairList, cbAvPairList, MsvAvNbDomainName, (PBYTE)NbDomainName.Buffer,
-	                      NbDomainName.Length))
+	if (!ntlm_av_pair_add(pAvPairList, cbAvPairList, MsvAvNbDomainName,
+	                      (PBYTE)context->NbDomainName.Buffer, context->NbDomainName.Length))
 		goto fail;
 
 	if (!ntlm_av_pair_add(pAvPairList, cbAvPairList, MsvAvNbComputerName,
-	                      (PBYTE)NbComputerName.Buffer, NbComputerName.Length))
+	                      (PBYTE)context->NbComputerName.Buffer, context->NbComputerName.Length))
 		goto fail;
 
 	if (!ntlm_av_pair_add(pAvPairList, cbAvPairList, MsvAvDnsDomainName,
-	                      (PBYTE)DnsDomainName.Buffer, DnsDomainName.Length))
+	                      (PBYTE)context->DnsDomainName.Buffer, context->DnsDomainName.Length))
 		goto fail;
 
 	if (!ntlm_av_pair_add(pAvPairList, cbAvPairList, MsvAvDnsComputerName,
-	                      (PBYTE)DnsComputerName.Buffer, DnsComputerName.Length))
+	                      (PBYTE)context->DnsComputerName.Buffer, context->DnsComputerName.Length))
 		goto fail;
 
 	if (!ntlm_av_pair_add(pAvPairList, cbAvPairList, MsvAvTimestamp, context->Timestamp,
 	                      sizeof(context->Timestamp)))
 		goto fail;
 
-	rc = 1;
+	rc = TRUE;
 fail:
-	ntlm_free_unicode_string(&NbDomainName);
-	ntlm_free_unicode_string(&NbComputerName);
-	ntlm_free_unicode_string(&DnsDomainName);
-	ntlm_free_unicode_string(&DnsComputerName);
 	return rc;
 }
 
-int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
+BOOL ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 {
-	ULONG size;
-	ULONG AvPairsCount;
-	ULONG AvPairsValueLength;
-	NTLM_AV_PAIR* AvTimestamp;
-	NTLM_AV_PAIR* AvNbDomainName;
-	NTLM_AV_PAIR* AvNbComputerName;
-	NTLM_AV_PAIR* AvDnsDomainName;
-	NTLM_AV_PAIR* AvDnsComputerName;
-	NTLM_AV_PAIR* AvDnsTreeName;
-	NTLM_AV_PAIR* ChallengeTargetInfo;
-	NTLM_AV_PAIR* AuthenticateTargetInfo;
-	size_t cbAvTimestamp;
-	size_t cbAvNbDomainName;
-	size_t cbAvNbComputerName;
-	size_t cbAvDnsDomainName;
-	size_t cbAvDnsComputerName;
-	size_t cbAvDnsTreeName;
-	size_t cbChallengeTargetInfo;
-	size_t cbAuthenticateTargetInfo;
+	ULONG AvPairsCount = 0;
+	size_t AvPairsValueLength = 0;
+	NTLM_AV_PAIR* AvTimestamp = nullptr;
+	NTLM_AV_PAIR* AvNbDomainName = nullptr;
+	NTLM_AV_PAIR* AvNbComputerName = nullptr;
+	NTLM_AV_PAIR* AvDnsDomainName = nullptr;
+	NTLM_AV_PAIR* AvDnsComputerName = nullptr;
+	NTLM_AV_PAIR* AvDnsTreeName = nullptr;
+	NTLM_AV_PAIR* ChallengeTargetInfo = nullptr;
+	NTLM_AV_PAIR* AuthenticateTargetInfo = nullptr;
+	size_t cbAvTimestamp = 0;
+	size_t cbAvNbDomainName = 0;
+	size_t cbAvNbComputerName = 0;
+	size_t cbAvDnsDomainName = 0;
+	size_t cbAvDnsComputerName = 0;
+	size_t cbAvDnsTreeName = 0;
+	size_t cbChallengeTargetInfo = 0;
+	size_t cbAuthenticateTargetInfo = 0;
+
+	WINPR_ASSERT(context);
+
 	AvPairsCount = 1;
-	AvPairsValueLength = 0;
 	ChallengeTargetInfo = (NTLM_AV_PAIR*)context->ChallengeTargetInfo.pvBuffer;
 	cbChallengeTargetInfo = context->ChallengeTargetInfo.cbBuffer;
 	AvNbDomainName = ntlm_av_pair_get(ChallengeTargetInfo, cbChallengeTargetInfo, MsvAvNbDomainName,
@@ -565,7 +628,7 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 
 	if (AvNbDomainName)
 	{
-		size_t avLen;
+		size_t avLen = 0;
 		if (!ntlm_av_pair_get_len(AvNbDomainName, cbAvNbDomainName, &avLen))
 			goto fail;
 		AvPairsCount++; /* MsvAvNbDomainName */
@@ -574,7 +637,7 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 
 	if (AvNbComputerName)
 	{
-		size_t avLen;
+		size_t avLen = 0;
 		if (!ntlm_av_pair_get_len(AvNbComputerName, cbAvNbComputerName, &avLen))
 			goto fail;
 		AvPairsCount++; /* MsvAvNbComputerName */
@@ -583,7 +646,7 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 
 	if (AvDnsDomainName)
 	{
-		size_t avLen;
+		size_t avLen = 0;
 		if (!ntlm_av_pair_get_len(AvDnsDomainName, cbAvDnsDomainName, &avLen))
 			goto fail;
 		AvPairsCount++; /* MsvAvDnsDomainName */
@@ -592,7 +655,7 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 
 	if (AvDnsComputerName)
 	{
-		size_t avLen;
+		size_t avLen = 0;
 		if (!ntlm_av_pair_get_len(AvDnsComputerName, cbAvDnsComputerName, &avLen))
 			goto fail;
 		AvPairsCount++; /* MsvAvDnsComputerName */
@@ -601,7 +664,7 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 
 	if (AvDnsTreeName)
 	{
-		size_t avLen;
+		size_t avLen = 0;
 		if (!ntlm_av_pair_get_len(AvDnsTreeName, cbAvDnsTreeName, &avLen))
 			goto fail;
 		AvPairsCount++; /* MsvAvDnsTreeName */
@@ -635,24 +698,26 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 		 * SEC_CHANNEL_BINDINGS structure
 		 * http://msdn.microsoft.com/en-us/library/windows/desktop/dd919963/
 		 */
-		AvPairsCount++; /* MsvChannelBindings */
+		AvPairsCount++; /* MsvAvChannelBindings */
 		AvPairsValueLength += 16;
 		ntlm_compute_channel_bindings(context);
 
-		if (context->ServicePrincipalName.Length > 0)
+		if (!ntlm_is_unicode_string_empty(&context->ServicePrincipalName))
 		{
 			AvPairsCount++; /* MsvAvTargetName */
 			AvPairsValueLength += context->ServicePrincipalName.Length;
 		}
 	}
 
-	size = ntlm_av_pair_list_size(AvPairsCount, AvPairsValueLength);
+	{
+		size_t size = ntlm_av_pair_list_size(AvPairsCount, AvPairsValueLength);
+		if (context->NTLMv2)
+			size += 8; /* unknown 8-byte padding */
 
-	if (context->NTLMv2)
-		size += 8; /* unknown 8-byte padding */
-
-	if (!sspi_SecBufferAlloc(&context->AuthenticateTargetInfo, size))
-		goto fail;
+		if (!ntlm_SecBufferRealloc(&context->AuthenticateTargetInfo,
+		                           WINPR_ASSERTING_INT_CAST(uint32_t, size)))
+			goto fail;
+	}
 
 	AuthenticateTargetInfo = (NTLM_AV_PAIR*)context->AuthenticateTargetInfo.pvBuffer;
 	cbAuthenticateTargetInfo = context->AuthenticateTargetInfo.cbBuffer;
@@ -704,8 +769,8 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 
 	if (context->UseMIC)
 	{
-		UINT32 flags;
-		Data_Write_UINT32(&flags, MSV_AV_FLAGS_MESSAGE_INTEGRITY_CHECK);
+		UINT32 flags = 0;
+		winpr_Data_Write_UINT32(&flags, MSV_AV_FLAGS_MESSAGE_INTEGRITY_CHECK);
 
 		if (!ntlm_av_pair_add(AuthenticateTargetInfo, cbAuthenticateTargetInfo, MsvAvFlags,
 		                      (PBYTE)&flags, 4))
@@ -714,18 +779,20 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 
 	if (context->SendSingleHostData)
 	{
+		WINPR_ASSERT(context->SingleHostData.Size <= UINT16_MAX);
 		if (!ntlm_av_pair_add(AuthenticateTargetInfo, cbAuthenticateTargetInfo, MsvAvSingleHost,
-		                      (PBYTE)&context->SingleHostData, context->SingleHostData.Size))
+		                      (PBYTE)&context->SingleHostData,
+		                      (UINT16)context->SingleHostData.Size))
 			goto fail;
 	}
 
 	if (!context->SuppressExtendedProtection)
 	{
-		if (!ntlm_av_pair_add(AuthenticateTargetInfo, cbAuthenticateTargetInfo, MsvChannelBindings,
-		                      context->ChannelBindingsHash, 16))
+		if (!ntlm_av_pair_add(AuthenticateTargetInfo, cbAuthenticateTargetInfo,
+		                      MsvAvChannelBindings, context->ChannelBindingsHash, 16))
 			goto fail;
 
-		if (context->ServicePrincipalName.Length > 0)
+		if (!ntlm_is_unicode_string_empty(&context->ServicePrincipalName))
 		{
 			if (!ntlm_av_pair_add(AuthenticateTargetInfo, cbAuthenticateTargetInfo, MsvAvTargetName,
 			                      (PBYTE)context->ServicePrincipalName.Buffer,
@@ -736,17 +803,30 @@ int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context)
 
 	if (context->NTLMv2)
 	{
-		NTLM_AV_PAIR* AvEOL;
-		AvEOL = ntlm_av_pair_get(ChallengeTargetInfo, cbChallengeTargetInfo, MsvAvEOL, NULL);
+		size_t cbAvEOL = 0;
+		NTLM_AV_PAIR* AvEOL =
+		    ntlm_av_pair_get(ChallengeTargetInfo, cbChallengeTargetInfo, MsvAvEOL, &cbAvEOL);
 
-		if (!AvEOL)
+		size_t cbAvEntryLen = 0;
+		if (!ntlm_av_pair_get_len(AvEOL, cbAvEOL, &cbAvEntryLen))
 			goto fail;
 
-		ZeroMemory(AvEOL, sizeof(NTLM_AV_PAIR));
+		ZeroMemory(AvEOL, sizeof(struct NTLM_AV_PAIR_IMPL));
 	}
 
-	return 1;
+	return TRUE;
 fail:
 	sspi_SecBufferFree(&context->AuthenticateTargetInfo);
-	return -1;
+	return FALSE;
+}
+
+size_t ntlm_av_pair_get_length(NTLM_AV_PAIR* pAvPair)
+{
+	WINPR_ASSERT(pAvPair);
+
+	const size_t size = sizeof(struct NTLM_AV_PAIR_IMPL);
+	size_t len = 0;
+	if (!ntlm_av_pair_get_len(pAvPair, size, &len))
+		return 0;
+	return len;
 }

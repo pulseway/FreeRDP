@@ -22,8 +22,6 @@
 #ifndef WINPR_COMM_IOCTL_H_
 #define WINPR_COMM_IOCTL_H_
 
-#if defined __linux__ && !defined ANDROID
-
 #include <termios.h>
 
 #include <winpr/io.h>
@@ -55,12 +53,12 @@ extern "C"
 #define MARK_PARITY 3
 #define SPACE_PARITY 4
 
-	typedef struct _SERIAL_BAUD_RATE
+	typedef struct
 	{
 		ULONG BaudRate;
 	} SERIAL_BAUD_RATE, *PSERIAL_BAUD_RATE;
 
-	typedef struct _SERIAL_CHARS
+	typedef struct
 	{
 		UCHAR EofChar;
 		UCHAR ErrorChar;
@@ -70,19 +68,19 @@ extern "C"
 		UCHAR XoffChar;
 	} SERIAL_CHARS, *PSERIAL_CHARS;
 
-	typedef struct _SERIAL_LINE_CONTROL
+	typedef struct
 	{
 		UCHAR StopBits;
 		UCHAR Parity;
 		UCHAR WordLength;
 	} SERIAL_LINE_CONTROL, *PSERIAL_LINE_CONTROL;
 
-	typedef struct _SERIAL_HANDFLOW
+	typedef struct
 	{
 		ULONG ControlHandShake;
 		ULONG FlowReplace;
-		LONG XonLimit;
-		LONG XoffLimit;
+		ULONG XonLimit;
+		ULONG XoffLimit;
 	} SERIAL_HANDFLOW, *PSERIAL_HANDFLOW;
 
 #define SERIAL_DTR_MASK ((ULONG)0x03)
@@ -123,7 +121,7 @@ extern "C"
 #define SERIAL_SP_TELNET ((ULONG)0x00000102)
 #define SERIAL_SP_X25 ((ULONG)0x00000103)
 
-	typedef struct _SERIAL_TIMEOUTS
+	typedef struct
 	{
 		ULONG ReadIntervalTimeout;
 		ULONG ReadTotalTimeoutMultiplier;
@@ -141,7 +139,7 @@ extern "C"
 #define SERIAL_MSR_RI 0x40
 #define SERIAL_MSR_DCD 0x80
 
-	typedef struct _SERIAL_QUEUE_SIZE
+	typedef struct
 	{
 		ULONG InSize;
 		ULONG OutSize;
@@ -152,7 +150,7 @@ extern "C"
 #define SERIAL_PURGE_TXCLEAR 0x00000004
 #define SERIAL_PURGE_RXCLEAR 0x00000008
 
-	typedef struct _SERIAL_STATUS
+	typedef struct
 	{
 		ULONG Errors;
 		ULONG HoldReasons;
@@ -184,11 +182,11 @@ extern "C"
 #define SERIAL_DCD_STATE ((ULONG)0x00000080)
 
 	/**
-	 * A function might be NULL if not supported by the underlying driver.
+	 * A function might be nullptr if not supported by the underlying driver.
 	 *
 	 * FIXME: better have to use input and output buffers for all functions?
 	 */
-	typedef struct _SERIAL_DRIVER
+	typedef struct
 	{
 		SERIAL_DRIVER_ID id;
 		TCHAR* name;
@@ -225,12 +223,10 @@ extern "C"
 
 	} SERIAL_DRIVER;
 
-	int _comm_ioctl_tcsetattr(int fd, int optional_actions, const struct termios* termios_p);
+	int comm_ioctl_tcsetattr(int fd, int optional_actions, const struct termios* termios_p);
 
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* __linux__ */
 
 #endif /* WINPR_COMM_IOCTL_H_ */

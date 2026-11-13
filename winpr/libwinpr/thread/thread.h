@@ -35,44 +35,67 @@
 typedef void* (*pthread_start_routine)(void*);
 typedef struct winpr_APC_item WINPR_APC_ITEM;
 
+typedef struct
+{
+	WINPR_ALIGN64 pthread_mutex_t mux;
+	WINPR_ALIGN64 pthread_cond_t cond;
+	WINPR_ALIGN64 BOOL val;
+} mux_condition_bundle;
+
 struct winpr_thread
 {
-	WINPR_HANDLE_DEF();
+	WINPR_HANDLE common;
 
-	BOOL started;
-	WINPR_EVENT_IMPL event;
-	BOOL mainProcess;
-	BOOL detached;
-	BOOL joined;
-	BOOL exited;
-	DWORD dwExitCode;
-	pthread_t thread;
-	SIZE_T dwStackSize;
-	LPVOID lpParameter;
-	pthread_mutex_t mutex;
-	pthread_mutex_t threadIsReadyMutex;
-	pthread_cond_t threadIsReady;
-	LPTHREAD_START_ROUTINE lpStartAddress;
-	LPSECURITY_ATTRIBUTES lpThreadAttributes;
-	APC_QUEUE apc;
+	WINPR_ALIGN64 BOOL started;
+	WINPR_ALIGN64 WINPR_EVENT_IMPL event;
+	WINPR_ALIGN64 BOOL mainProcess;
+	WINPR_ALIGN64 BOOL detached;
+	WINPR_ALIGN64 BOOL joined;
+	WINPR_ALIGN64 BOOL exited;
+	WINPR_ALIGN64 DWORD dwExitCode;
+	WINPR_ALIGN64 pthread_t thread;
+	WINPR_ALIGN64 size_t dwStackSize;
+	WINPR_ALIGN64 LPVOID lpParameter;
+	WINPR_ALIGN64 pthread_mutex_t mutex;
+	mux_condition_bundle isRunning;
+	mux_condition_bundle isCreated;
+	WINPR_ALIGN64 LPTHREAD_START_ROUTINE lpStartAddress;
+	WINPR_ALIGN64 LPSECURITY_ATTRIBUTES lpThreadAttributes;
+	WINPR_ALIGN64 APC_QUEUE apc;
 #if defined(WITH_DEBUG_THREADS)
-	void* create_stack;
-	void* exit_stack;
+	WINPR_ALIGN64 void* create_stack;
+	WINPR_ALIGN64 void* exit_stack;
 #endif
 };
-typedef struct winpr_thread WINPR_THREAD;
 
 WINPR_THREAD* winpr_GetCurrentThread(VOID);
 
-struct winpr_process
+typedef struct
 {
-	WINPR_HANDLE_DEF();
+	WINPR_HANDLE common;
 
 	pid_t pid;
 	int status;
 	DWORD dwExitCode;
+	int fd;
+} WINPR_PROCESS;
+
+/* backing store for the opaque LPPROC_THREAD_ATTRIBUTE_LIST (winpr/thread.h). Shared between
+ * procthreadattr.c (which builds it) and process.c (which reads it back at CreateProcess time
+ * to resolve PROC_THREAD_ATTRIBUTE_HANDLE_LIST into fds to keep open in the child). */
+typedef struct
+{
+	DWORD_PTR Attribute;
+	PVOID lpValue;
+	SIZE_T cbSize;
+} WINPR_PROC_THREAD_ATTRIBUTE_ENTRY;
+
+struct WINPR_PROC_THREAD_ATTRIBUTE_LIST
+{
+	DWORD capacity;
+	DWORD count;
+	WINPR_PROC_THREAD_ATTRIBUTE_ENTRY entries[];
 };
-typedef struct winpr_process WINPR_PROCESS;
 
 #endif
 

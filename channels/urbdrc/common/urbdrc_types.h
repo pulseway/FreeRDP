@@ -21,9 +21,7 @@
 #ifndef FREERDP_CHANNEL_URBDRC_CLIENT_TYPES_H
 #define FREERDP_CHANNEL_URBDRC_CLIENT_TYPES_H
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <freerdp/dvc.h>
 #include <freerdp/types.h>
@@ -101,6 +99,8 @@
  * device is blocked by the server's policy. */
 #define UsbRetractReason_BlockedByPolicy 0x00000001
 
+#define IOCTL_TSUSBGD_IOCTL_USBDI_QUERY_BUS_TIME 0x00224000
+
 enum device_text_type
 {
 	DeviceTextDescription = 0,
@@ -123,6 +123,19 @@ enum device_descriptor_table
 	I_PRODUCT = 15,
 	I_SERIAL_NUMBER = 16,
 	B_NUM_CONFIGURATIONS = 17
+};
+
+/**
+ * Speed a redirected device enumerated at.
+ */
+enum device_speed WINPR_C23_ENUM_TYPE(uint32_t)
+{
+	DEVICE_SPEED_UNKNOWN = 0,
+	DEVICE_SPEED_LOW,
+	DEVICE_SPEED_FULL,
+	DEVICE_SPEED_HIGH,
+	DEVICE_SPEED_SUPER,
+	DEVICE_SPEED_SUPER_PLUS
 };
 
 #define PIPE_CANCEL 0

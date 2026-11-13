@@ -13,54 +13,123 @@ package com.freerdp.freerdpcore.services;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.net.Uri;
-import android.support.v4.util.LongSparseArray;
 import android.util.Log;
+
+import androidx.collection.LongSparseArray;
 
 import com.freerdp.freerdpcore.application.GlobalApp;
 import com.freerdp.freerdpcore.application.SessionState;
 import com.freerdp.freerdpcore.domain.BookmarkBase;
-import com.freerdp.freerdpcore.domain.ManualBookmark;
 import com.freerdp.freerdpcore.presentation.ApplicationSettingsActivity;
 
 import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class LibFreeRDP
 {
 	private static final String TAG = "LibFreeRDP";
 	private static EventListener listener;
-	private static boolean mHasH264 = true;
+	private static boolean mHasH264 = false;
+	private static boolean mHasCameraRedirection = false;
 
 	private static final LongSparseArray<Boolean> mInstanceState = new LongSparseArray<>();
 
-	static
-	{
-		final String h264 = "openh264";
-		final String[] libraries = { h264,
-			                         "freerdp-openssl",
-			                         "ssl",
-			                         "crypto",
-			                         "jpeg",
-			                         "winpr3",
-			                         "freerdp3",
-			                         "freerdp-client3",
-			                         "freerdp-android3" };
-		final String LD_PATH = System.getProperty("java.library.path");
+	// FREERDP_CLIENT_KBD_MOD in freerdp/client.h
+	public static final int KBD_MOD_LSHIFT = 0x01;
+	public static final int KBD_MOD_RSHIFT = 0x02;
+	public static final int KBD_MOD_LMENU = 0x04;
+	public static final int KBD_MOD_RMENU = 0x08;
+	public static final int KBD_MOD_LCONTROL = 0x10;
+	public static final int KBD_MOD_RCONTROL = 0x20;
+	public static final int KBD_MOD_LWIN = 0x40;
+	public static final int KBD_MOD_RWIN = 0x80;
 
+	public static final long VERIFY_CERT_FLAG_NONE = 0x00;
+	public static final long VERIFY_CERT_FLAG_LEGACY = 0x02;
+	public static final long VERIFY_CERT_FLAG_REDIRECT = 0x10;
+	public static final long VERIFY_CERT_FLAG_GATEWAY = 0x20;
+	public static final long VERIFY_CERT_FLAG_CHANGED = 0x40;
+	public static final long VERIFY_CERT_FLAG_MISMATCH = 0x80;
+	public static final long VERIFY_CERT_FLAG_MATCH_LEGACY_SHA1 = 0x100;
+	public static final long VERIFY_CERT_FLAG_FP_IS_PEM = 0x200;
+
+	// Keep in sync with android_freerdp.c.
+	public static final int EXPERIMENTAL_REMOTEAPP = 0;
+	public static final int EXPERIMENTAL_CAMERA = 1;
+
+	private static boolean tryLoad(String[] libraries)
+	{
+		boolean success = false;
+		final String LD_PATH = System.getProperty("java.library.path");
 		for (String lib : libraries)
 		{
 			try
 			{
 				Log.v(TAG, "Trying to load library " + lib + " from LD_PATH: " + LD_PATH);
 				System.loadLibrary(lib);
+				success = true;
 			}
 			catch (UnsatisfiedLinkError e)
 			{
-				Log.e(TAG, "Failed to load library " + lib + ": " + e.toString());
-				if (lib.equals(h264))
-				{
-					mHasH264 = false;
-				}
+				Log.e(TAG, "Failed to load library " + lib + ": " + e);
+				success = false;
+				break;
 			}
+		}
+
+		return success;
+	}
+
+	private static boolean tryLoad(String library)
+	{
+		return tryLoad(new String[] { library });
+	}
+
+	static
+	{
+		try
+		{
+			System.loadLibrary("freerdp-android");
+
+			/* Load dependent libraries too to trigger JNI_OnLoad calls */
+			String version = freerdp_get_jni_version();
+			String[] versions = version.split("[\\.-]");
+			if (versions.length > 0)
+			{
+				System.loadLibrary("freerdp-client" + versions[0]);
+				System.loadLibrary("freerdp" + versions[0]);
+				System.loadLibrary("winpr" + versions[0]);
+			}
+			Pattern pattern = Pattern.compile("^(\\d+)\\.(\\d+)\\.(\\d+).*");
+			Matcher matcher = pattern.matcher(version);
+			if (!matcher.matches() || (matcher.groupCount() < 3))
+				throw new RuntimeException("APK broken: native library version " + version +
+				                           " does not meet requirements!");
+			int major = Integer.parseInt(Objects.requireNonNull(matcher.group(1)));
+			int minor = Integer.parseInt(Objects.requireNonNull(matcher.group(2)));
+			int patch = Integer.parseInt(Objects.requireNonNull(matcher.group(3)));
+
+			if (major > 2)
+				mHasH264 = freerdp_has_h264();
+			else if (minor > 5)
+				mHasH264 = freerdp_has_h264();
+			else if ((minor == 5) && (patch >= 1))
+				mHasH264 = freerdp_has_h264();
+			else
+				throw new RuntimeException("APK broken: native library version " + version +
+				                           " does not meet requirements!");
+			mHasCameraRedirection = freerdp_has_camera_redirection();
+			Log.i(TAG, "Successfully loaded native library. H264 is " +
+			               (mHasH264 ? "supported" : "not available") + ", camera redirection is " +
+			               (mHasCameraRedirection ? "supported" : "not available"));
+		}
+		catch (UnsatisfiedLinkError e)
+		{
+			Log.e(TAG, "Failed to load library: " + e);
+			throw e;
 		}
 	}
 
@@ -68,6 +137,15 @@ public class LibFreeRDP
 	{
 		return mHasH264;
 	}
+
+	public static boolean hasCameraRedirectionSupport()
+	{
+		return mHasCameraRedirection;
+	}
+
+	private static native boolean freerdp_has_h264();
+
+	private static native boolean freerdp_has_camera_redirection();
 
 	private static native String freerdp_get_jni_version();
 
@@ -87,6 +165,8 @@ public class LibFreeRDP
 
 	private static native boolean freerdp_disconnect(long inst);
 
+	private static native void freerdp_set_foreground(long inst, boolean foreground);
+
 	private static native boolean freerdp_update_graphics(long inst, Bitmap bitmap, int x, int y,
 	                                                      int width, int height);
 
@@ -97,7 +177,18 @@ public class LibFreeRDP
 	private static native boolean freerdp_send_unicodekey_event(long inst, int keycode,
 	                                                            boolean down);
 
+	private static native boolean freerdp_send_key_as_unicode_event(long inst, int keycode,
+	                                                                String text, int modmask,
+	                                                                boolean down);
+
+	private static native boolean freerdp_is_unicode_input_supported(long inst);
+
 	private static native boolean freerdp_send_clipboard_data(long inst, String data);
+
+	private static native boolean freerdp_send_clipboard_image_data(long inst, byte[] data,
+	                                                                String mimeType);
+
+	private static native boolean freerdp_send_monitor_layout(long inst, int width, int height);
 
 	private static native String freerdp_get_last_error_string(long inst);
 
@@ -160,14 +251,12 @@ public class LibFreeRDP
 
 	public static boolean cancelConnection(long inst)
 	{
-		synchronized (mInstanceState)
-		{
-			if (mInstanceState.get(inst, false))
-			{
-				return freerdp_disconnect(inst);
-			}
-			return true;
-		}
+		return freerdp_disconnect(inst);
+	}
+
+	public static void setForeground(long inst, boolean foreground)
+	{
+		freerdp_set_foreground(inst, foreground);
 	}
 
 	private static String addFlag(String name, boolean enabled)
@@ -202,11 +291,39 @@ public class LibFreeRDP
 			return false;
 		}
 
-		int port = bookmark.<ManualBookmark>get().getPort();
-		String hostname = bookmark.<ManualBookmark>get().getHostname();
+		int port = bookmark.getPort();
+		String hostname = bookmark.getHostname();
 
 		args.add("/v:" + hostname);
-		args.add("/port:" + String.valueOf(port));
+		args.add("/port:" + port);
+
+		final int level = advanced.getTlsSecLevel();
+		List<String> tls = new ArrayList<>();
+
+		if (level >= 0)
+		{
+			tls.add("seclevel:" + level);
+		}
+
+		final int tlsMinLevel = advanced.getTlsMinLevel();
+		if (tlsMinLevel >= 0)
+		{
+			tls.add("enforce:" + tlsMinLevel);
+		}
+
+		if (!tls.isEmpty())
+		{
+			StringBuilder sb = new StringBuilder();
+			for (String s : tls)
+			{
+				if (sb.length() > 0)
+				{
+					sb.append(',');
+				}
+				sb.append(s);
+			}
+			args.add("/tls:" + sb);
+		}
 
 		arg = bookmark.getUsername();
 		if (!arg.isEmpty())
@@ -224,25 +341,44 @@ public class LibFreeRDP
 			args.add("/p:" + arg);
 		}
 
-		args.add(
-		    String.format("/size:%dx%d", screenSettings.getWidth(), screenSettings.getHeight()));
-		args.add("/bpp:" + String.valueOf(screenSettings.getColors()));
+		args.add(String.format(java.util.Locale.US, "/size:%dx%d", screenSettings.getWidth(),
+		                       screenSettings.getHeight()));
+		args.add("/bpp:" + screenSettings.getColors());
+
+		if (screenSettings.isCustomScale())
+		{
+			args.add("/scale-desktop:" + screenSettings.getScaleDesktop());
+			args.add("/scale-device:" + screenSettings.getScaleDevice());
+		}
+		else
+		{
+			args.add("/scale:" + screenSettings.getScalePreset());
+		}
 
 		if (advanced.getConsoleMode())
 		{
 			args.add("/admin");
 		}
 
+		if (advanced.getVmConnectMode())
+		{
+			String guid = advanced.getVmConnectGuid();
+			if (!guid.isEmpty())
+				args.add("/vmconnect:" + guid);
+			else
+				args.add("/vmconnect");
+		}
+
 		switch (advanced.getSecurity())
 		{
 			case 3: // NLA
-				args.add("/sec-nla");
+				args.add("/sec:nla");
 				break;
 			case 2: // TLS
-				args.add("/sec-tls");
+				args.add("/sec:tls");
 				break;
 			case 1: // RDP
-				args.add("/sec-rdp");
+				args.add("/sec:rdp");
 				break;
 			default:
 				break;
@@ -253,6 +389,8 @@ public class LibFreeRDP
 			args.add("/cert-name:" + certName);
 		}
 
+		args.add("/network:auto");
+
 		BookmarkBase.PerformanceFlags flags = bookmark.getActivePerformanceFlags();
 		if (flags.getRemoteFX())
 		{
@@ -261,12 +399,14 @@ public class LibFreeRDP
 
 		if (flags.getGfx())
 		{
-			args.add("/gfx");
-		}
-
-		if (flags.getH264() && mHasH264)
-		{
-			args.add("/gfx:AVC444");
+			if (flags.getH264() && mHasH264)
+			{
+				args.add("/gfx:AVC444,AVC420,RFX,progressive");
+			}
+			else
+			{
+				args.add("/gfx");
+			}
 		}
 
 		args.add(addFlag("wallpaper", flags.getWallpaper()));
@@ -275,20 +415,22 @@ public class LibFreeRDP
 		args.add(addFlag("themes", flags.getTheming()));
 		args.add(addFlag("fonts", flags.getFontSmoothing()));
 		args.add(addFlag("aero", flags.getDesktopComposition()));
-		args.add(addFlag("glyph-cache", false));
 
 		if (!advanced.getRemoteProgram().isEmpty())
 		{
-			args.add("/shell:" + advanced.getRemoteProgram());
+			args.add("/app:program:" + advanced.getRemoteProgram());
+			if (!advanced.getWorkDir().isEmpty())
+				args.add("/app:workdir:" + advanced.getWorkDir());
 		}
-
-		if (!advanced.getWorkDir().isEmpty())
+		else
 		{
-			args.add("/shell-dir:" + advanced.getWorkDir());
+			if (!advanced.getAlternateShell().isEmpty())
+				args.add("/shell:" + advanced.getAlternateShell());
+			if (!advanced.getWorkDir().isEmpty())
+				args.add("/shell-dir:" + advanced.getWorkDir());
 		}
 
 		args.add(addFlag("async-channels", debug.getAsyncChannel()));
-		args.add(addFlag("async-input", debug.getAsyncInput()));
 		args.add(addFlag("async-update", debug.getAsyncUpdate()));
 
 		if (advanced.getRedirectSDCard())
@@ -297,38 +439,48 @@ public class LibFreeRDP
 			args.add("/drive:sdcard," + path);
 		}
 
+		String info = advanced.getLoadBalanceInfo();
+		if (!info.isEmpty())
+		{
+			args.add("/load-balance-info:" + info);
+		}
 		args.add("/clipboard");
+		args.add("/disp");
+
+		if (advanced.getRedirectPrinter())
+			args.add("/printer:aFreeRDP Print,Microsoft Print to PDF,default");
 
 		// Gateway enabled?
-		if (bookmark.getType() == BookmarkBase.TYPE_MANUAL &&
-		    bookmark.<ManualBookmark>get().getEnableGatewaySettings())
+		if (bookmark.getType() == BookmarkBase.TYPE_MANUAL && bookmark.getEnableGatewaySettings())
 		{
-			ManualBookmark.GatewaySettings gateway =
-			    bookmark.<ManualBookmark>get().getGatewaySettings();
+			BookmarkBase.GatewaySettings gateway = bookmark.getGatewaySettings();
 
-			args.add(String.format("/g:%s:%d", gateway.getHostname(), gateway.getPort()));
+			StringBuilder carg = new StringBuilder();
+			carg.append(String.format(java.util.Locale.US, "/gateway:g:%s:%d",
+			                          gateway.getHostname(), gateway.getPort()));
 
 			arg = gateway.getUsername();
 			if (!arg.isEmpty())
 			{
-				args.add("/gu:" + arg);
+				carg.append(",u:" + arg);
 			}
 			arg = gateway.getDomain();
 			if (!arg.isEmpty())
 			{
-				args.add("/gd:" + arg);
+				carg.append(",d:" + arg);
 			}
 			arg = gateway.getPassword();
 			if (!arg.isEmpty())
 			{
-				args.add("/gp:" + arg);
+				carg.append(",p:" + arg);
 			}
+			args.add(carg.toString());
 		}
 
 		/* 0 ... local
 		   1 ... remote
 		   2 ... disable */
-		args.add("/audio-mode:" + String.valueOf(advanced.getRedirectSound()));
+		args.add("/audio-mode:" + advanced.getRedirectSound());
 		if (advanced.getRedirectSound() == 0)
 		{
 			args.add("/sound");
@@ -339,7 +491,18 @@ public class LibFreeRDP
 			args.add("/microphone");
 		}
 
-		args.add("/cert-ignore");
+		if (advanced.getRedirectCamera() && mHasCameraRedirection)
+		{
+			args.add("/dvc:rdpecam");
+		}
+
+		if (ApplicationSettingsActivity.getAutoReconnect(context))
+		{
+			args.add("/auto-reconnect");
+		}
+
+		args.add("/kbd:unicode:on");
+		args.add("/cert:ignore");
 		args.add("/log-level:" + debug.getDebugLevel());
 		String[] arrayArgs = args.toArray(new String[0]);
 		return freerdp_parse_arguments(inst, arrayArgs);
@@ -367,7 +530,7 @@ public class LibFreeRDP
 		int port = openUri.getPort();
 		if (hostname != null)
 		{
-			hostname = hostname + ((port == -1) ? "" : (":" + String.valueOf(port)));
+			hostname = hostname + ((port == -1) ? "" : (":" + port));
 			args.add("/v:" + hostname);
 		}
 
@@ -433,9 +596,36 @@ public class LibFreeRDP
 		return freerdp_send_unicodekey_event(inst, keycode, down);
 	}
 
+	public static boolean sendKeyAsUnicodeEvent(long inst, int keycode, int unicode, int modmask,
+	                                            boolean down)
+	{
+		// The character as UTF-16. 0, a lone surrogate or anything past U+10FFFF goes as an empty
+		// string, and the library then sends the key's scancode.
+		String text = "";
+		if (unicode > 0 && Character.isValidCodePoint(unicode) &&
+		    Character.getType(unicode) != Character.SURROGATE)
+			text = new String(Character.toChars(unicode));
+		return freerdp_send_key_as_unicode_event(inst, keycode, text, modmask, down);
+	}
+
+	public static boolean isUnicodeInputSupported(long inst)
+	{
+		return freerdp_is_unicode_input_supported(inst);
+	}
+
 	public static boolean sendClipboardData(long inst, String data)
 	{
 		return freerdp_send_clipboard_data(inst, data);
+	}
+
+	public static boolean sendClipboardImageData(long inst, byte[] data, String mimeType)
+	{
+		return freerdp_send_clipboard_image_data(inst, data, mimeType);
+	}
+
+	public static boolean sendMonitorLayout(long inst, int width, int height)
+	{
+		return freerdp_send_monitor_layout(inst, width, height);
 	}
 
 	private static void OnConnectionSuccess(long inst)
@@ -517,32 +707,46 @@ public class LibFreeRDP
 		return false;
 	}
 
-	private static int OnVerifyCertificate(long inst, String commonName, String subject,
-	                                       String issuer, String fingerprint, boolean hostMismatch)
+	private static int OnVerifyCertificateEx(long inst, String host, long port, String commonName,
+	                                       String subject, String issuer, String fingerprint,
+	                                       long flags)
 	{
 		SessionState s = GlobalApp.getSession(inst);
 		if (s == null)
 			return 0;
 		UIEventListener uiEventListener = s.getUIEventListener();
 		if (uiEventListener != null)
-			return uiEventListener.OnVerifiyCertificate(commonName, subject, issuer, fingerprint,
-			                                            hostMismatch);
+			return uiEventListener.OnVerifiyCertificateEx(host, port, commonName, subject, issuer,
+			                                              fingerprint, flags);
 		return 0;
 	}
 
-	private static int OnVerifyChangedCertificate(long inst, String commonName, String subject,
-	                                              String issuer, String fingerprint,
-	                                              String oldSubject, String oldIssuer,
-	                                              String oldFingerprint)
+	private static int OnVerifyChangedCertificateEx(long inst, String host, long port,
+	                                                String commonName, String subject,
+	                                                String issuer, String fingerprint,
+	                                                String oldSubject, String oldIssuer,
+	                                                String oldFingerprint, long flags)
 	{
 		SessionState s = GlobalApp.getSession(inst);
 		if (s == null)
 			return 0;
 		UIEventListener uiEventListener = s.getUIEventListener();
 		if (uiEventListener != null)
-			return uiEventListener.OnVerifyChangedCertificate(
-			    commonName, subject, issuer, fingerprint, oldSubject, oldIssuer, oldFingerprint);
+			return uiEventListener.OnVerifyChangedCertificateEx(host, port, commonName, subject,
+			                                                    issuer, fingerprint, oldSubject,
+			                                                    oldIssuer, oldFingerprint, flags);
 		return 0;
+	}
+
+	private static boolean OnExperimentalFeature(long inst, int feature)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return true;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener == null)
+			return true;
+		return uiEventListener.OnExperimentalFeature(feature);
 	}
 
 	private static void OnGraphicsUpdate(long inst, int x, int y, int width, int height)
@@ -575,12 +779,125 @@ public class LibFreeRDP
 			uiEventListener.OnRemoteClipboardChanged(data);
 	}
 
+	private static void OnRemoteClipboardImageChanged(long inst, byte[] data)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnRemoteClipboardImageChanged(data);
+	}
+
+	private static void OnPointerSet(long inst, int[] pixels, int width, int height, int hotX,
+	                                 int hotY)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnPointerSet(pixels, width, height, hotX, hotY);
+	}
+
+	private static void OnPointerSetNull(long inst)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnPointerSetNull();
+	}
+
+	private static void OnReconnecting(long inst)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnReconnecting();
+	}
+
+	private static void OnPointerSetDefault(long inst)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnPointerSetDefault();
+	}
+
+	private static void OnRailWindowUpdate(long inst, long windowId, int width, int height,
+	                                       int[] pixels)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnRailWindowUpdate(windowId, width, height, pixels);
+	}
+
+	private static void OnRailWindowMove(long inst, long windowId, int x, int y, int w, int h)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnRailWindowMove(windowId, x, y, w, h);
+	}
+
+	private static void OnRailWindowHide(long inst, long windowId)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnRailWindowHide(windowId);
+	}
+
+	private static void OnRailWindowDestroy(long inst, long windowId)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnRailWindowDestroy(windowId);
+	}
+
+	private static void OnRailSessionEnd(long inst)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnRailSessionEnd();
+	}
+
+	private static void OnRailMonitoredDesktop(long inst, long[] windowIds, long activeWindowId)
+	{
+		SessionState s = GlobalApp.getSession(inst);
+		if (s == null)
+			return;
+		UIEventListener uiEventListener = s.getUIEventListener();
+		if (uiEventListener != null)
+			uiEventListener.OnRailMonitoredDesktop(windowIds, activeWindowId);
+	}
+
 	public static String getVersion()
 	{
 		return freerdp_get_version();
 	}
 
-	public static interface EventListener {
+	public interface EventListener
+	{
 		void OnPreConnect(long instance);
 
 		void OnConnectionSuccess(long instance);
@@ -592,8 +909,11 @@ public class LibFreeRDP
 		void OnDisconnected(long instance);
 	}
 
-	public static interface UIEventListener {
+	public interface UIEventListener
+	{
 		void OnSettingsChanged(int width, int height, int bpp);
+
+		void OnReconnecting();
 
 		boolean OnAuthenticate(StringBuilder username, StringBuilder domain,
 		                       StringBuilder password);
@@ -601,17 +921,39 @@ public class LibFreeRDP
 		boolean OnGatewayAuthenticate(StringBuilder username, StringBuilder domain,
 		                              StringBuilder password);
 
-		int OnVerifiyCertificate(String commonName, String subject, String issuer,
-		                         String fingerprint, boolean mismatch);
+		int OnVerifiyCertificateEx(String host, long port, String commonName, String subject, String issuer,
+		                         String fingerprint, long flags);
 
-		int OnVerifyChangedCertificate(String commonName, String subject, String issuer,
+		int OnVerifyChangedCertificateEx(String host, long port, String commonName, String subject, String issuer,
 		                               String fingerprint, String oldSubject, String oldIssuer,
-		                               String oldFingerprint);
+		                               String oldFingerprint, long flags);
+
+		boolean OnExperimentalFeature(int feature);
 
 		void OnGraphicsUpdate(int x, int y, int width, int height);
 
 		void OnGraphicsResize(int width, int height, int bpp);
 
 		void OnRemoteClipboardChanged(String data);
+
+		void OnRemoteClipboardImageChanged(byte[] data);
+
+		void OnPointerSet(int[] pixels, int width, int height, int hotX, int hotY);
+
+		void OnPointerSetNull();
+
+		void OnPointerSetDefault();
+
+		void OnRailWindowUpdate(long windowId, int width, int height, int[] pixels);
+
+		void OnRailWindowMove(long windowId, int x, int y, int w, int h);
+
+		void OnRailWindowHide(long windowId);
+
+		void OnRailWindowDestroy(long windowId);
+
+		void OnRailSessionEnd();
+
+		void OnRailMonitoredDesktop(long[] windowIds, long activeWindowId);
 	}
 }

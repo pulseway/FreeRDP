@@ -22,6 +22,7 @@
 #define WINPR_SSL_H
 
 #include <winpr/wtypes.h>
+#include <winpr/winpr.h>
 
 #define WINPR_SSL_INIT_DEFAULT 0x00
 #define WINPR_SSL_INIT_ALREADY_INITIALIZED 0x01
@@ -36,9 +37,12 @@ extern "C"
 {
 #endif
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL winpr_InitializeSSL(DWORD flags);
+
 	WINPR_API BOOL winpr_CleanupSSL(DWORD flags);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL winpr_FIPSMode(void);
 
 #ifdef __cplusplus

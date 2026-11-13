@@ -17,48 +17,49 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-
-#define WITH_DEBUG_HEARTBEAT
+#include <freerdp/config.h>
 
 #include "heartbeat.h"
 
-int rdp_recv_heartbeat_packet(rdpRdp* rdp, wStream* s)
+state_run_t rdp_recv_heartbeat_packet(rdpRdp* rdp, wStream* s)
 {
-	BYTE reserved;
-	BYTE period;
-	BYTE count1;
-	BYTE count2;
-	BOOL rc;
+	BYTE period = 0;
+	BYTE count1 = 0;
+	BYTE count2 = 0;
+	BOOL rc = 0;
 
-	if (Stream_GetRemainingLength(s) < 4)
-		return -1;
+	WINPR_ASSERT(rdp);
+	WINPR_ASSERT(rdp->context);
+	WINPR_ASSERT(s);
 
-	Stream_Read_UINT8(s, reserved); /* reserved (1 byte) */
+	if (!Stream_CheckAndLogRequiredLength(AUTODETECT_TAG, s, 4))
+		return STATE_RUN_FAILED;
+
+	Stream_Seek_UINT8(s);           /* reserved (1 byte) */
 	Stream_Read_UINT8(s, period);   /* period (1 byte) */
 	Stream_Read_UINT8(s, count1);   /* count1 (1 byte) */
 	Stream_Read_UINT8(s, count2);   /* count2 (1 byte) */
 
-	WLog_DBG(HEARTBEAT_TAG,
+	WLog_VRB(HEARTBEAT_TAG,
 	         "received Heartbeat PDU -> period=%" PRIu8 ", count1=%" PRIu8 ", count2=%" PRIu8 "",
 	         period, count1, count2);
 
-	rc = IFCALLRESULT(TRUE, rdp->heartbeat->ServerHeartbeat, rdp->instance, period, count1, count2);
+	rc = IFCALLRESULT(TRUE, rdp->heartbeat->ServerHeartbeat, rdp->context->instance, period, count1,
+	                  count2);
 	if (!rc)
 	{
 		WLog_ERR(HEARTBEAT_TAG, "heartbeat->ServerHeartbeat callback failed!");
-		return -1;
+		return STATE_RUN_FAILED;
 	}
 
-	return 0;
+	return STATE_RUN_SUCCESS;
 }
 
 BOOL freerdp_heartbeat_send_heartbeat_pdu(freerdp_peer* peer, BYTE period, BYTE count1, BYTE count2)
 {
 	rdpRdp* rdp = peer->context->rdp;
-	wStream* s = rdp_message_channel_pdu_init(rdp);
+	UINT16 sec_flags = 0;
+	wStream* s = rdp_message_channel_pdu_init(rdp, &sec_flags);
 
 	if (!s)
 		return FALSE;
@@ -72,10 +73,7 @@ BOOL freerdp_heartbeat_send_heartbeat_pdu(freerdp_peer* peer, BYTE period, BYTE 
 	         "sending Heartbeat PDU -> period=%" PRIu8 ", count1=%" PRIu8 ", count2=%" PRIu8 "",
 	         period, count1, count2);
 
-	if (!rdp_send_message_channel_pdu(rdp, s, SEC_HEARTBEAT))
-		return FALSE;
-
-	return TRUE;
+	return (rdp_send_message_channel_pdu(rdp, s, sec_flags | SEC_HEARTBEAT));
 }
 
 rdpHeartbeat* heartbeat_new(void)

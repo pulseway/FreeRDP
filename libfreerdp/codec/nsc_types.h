@@ -21,10 +21,10 @@
 #ifndef FREERDP_LIB_CODEC_NSC_TYPES_H
 #define FREERDP_LIB_CODEC_NSC_TYPES_H
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
+#include <winpr/assert.h>
+#include <winpr/cast.h>
 #include <winpr/crt.h>
 #include <winpr/wlog.h>
 #include <winpr/collections.h>
@@ -33,9 +33,12 @@
 #include <freerdp/codec/nsc.h>
 
 #define ROUND_UP_TO(_b, _n) (_b + ((~(_b & (_n - 1)) + 0x1) & (_n - 1)))
-#define MINMAX(_v, _l, _h) ((_v) < (_l) ? (_l) : ((_v) > (_h) ? (_h) : (_v)))
+#define MINMAX(_v, _l, _h)                                             \
+	((_v) < (_l) ? WINPR_ASSERTING_INT_CAST(BYTE, (_l))                \
+	             : ((_v) > (_h) ? WINPR_ASSERTING_INT_CAST(BYTE, (_h)) \
+	                            : WINPR_ASSERTING_INT_CAST(BYTE, (_v))))
 
-struct _NSC_CONTEXT_PRIV
+typedef struct
 {
 	wLog* log;
 
@@ -47,20 +50,19 @@ struct _NSC_CONTEXT_PRIV
 	PROFILER_DEFINE(prof_nsc_decode)
 	PROFILER_DEFINE(prof_nsc_rle_compress_data)
 	PROFILER_DEFINE(prof_nsc_encode)
-};
+} NSC_CONTEXT_PRIV;
 
-typedef struct _NSC_CONTEXT_PRIV NSC_CONTEXT_PRIV;
-
-struct _NSC_CONTEXT
+struct S_NSC_CONTEXT
 {
 	UINT32 OrgByteCount[4];
 	UINT32 format;
 	UINT16 width;
 	UINT16 height;
 	BYTE* BitmapData;
-	UINT32 BitmapDataLength;
+	size_t BitmapDataLength;
 
 	BYTE* Planes;
+	size_t PlanesSize;
 	UINT32 PlaneByteCount[4];
 	UINT32 ColorLossLevel;
 	UINT32 ChromaSubsamplingLevel;
@@ -69,8 +71,9 @@ struct _NSC_CONTEXT
 	/* color palette allocated by the application */
 	const BYTE* palette;
 
-	BOOL (*decode)(NSC_CONTEXT* context);
-	BOOL (*encode)(NSC_CONTEXT* context, const BYTE* BitmapData, UINT32 rowstride);
+	WINPR_ATTR_NODISCARD BOOL (*decode)(NSC_CONTEXT* WINPR_RESTRICT context);
+	WINPR_ATTR_NODISCARD BOOL (*encode)(NSC_CONTEXT* WINPR_RESTRICT context,
+	                                    const BYTE* WINPR_RESTRICT BitmapData, UINT32 rowstride);
 
 	NSC_CONTEXT_PRIV* priv;
 };

@@ -27,15 +27,19 @@
  * Functions have been renamed just to prevent name clashes.
  */
 
-#define _GNU_SOURCE
-
-#if defined(__FreeBSD__) || defined(__DragonFly__)
-#define USE_SHM
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreserved-id-macro"
 #endif
 
-/* uClibc and uClibc-ng don't provide O_TMPFILE */
-#if !defined(O_TMPFILE) && !defined(__FreeBSD__)
-#define O_TMPFILE (020000000 | O_DIRECTORY)
+#define _GNU_SOURCE // NOLINT(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+
+#ifdef __FreeBSD__
+#define USE_SHM
 #endif
 
 #include <sys/types.h>
@@ -50,14 +54,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/epoll.h>
+#include <sys/stat.h>
 
-#include "../config.h"
+#include <winpr/wtypes.h>
+#include <uwac/config.h>
+
 #include "uwac-os.h"
 #include "uwac-utils.h"
 
 static int set_cloexec_or_close(int fd)
 {
-	long flags;
+	long flags = 0;
 
 	if (fd == -1)
 		return -1;
@@ -78,7 +85,7 @@ err:
 
 int uwac_os_socket_cloexec(int domain, int type, int protocol)
 {
-	int fd;
+	int fd = 0;
 	fd = socket(domain, type | SOCK_CLOEXEC, protocol);
 
 	if (fd >= 0)
@@ -93,7 +100,7 @@ int uwac_os_socket_cloexec(int domain, int type, int protocol)
 
 int uwac_os_dupfd_cloexec(int fd, long minfd)
 {
-	int newfd;
+	int newfd = 0;
 	newfd = fcntl(fd, F_DUPFD_CLOEXEC, minfd);
 
 	if (newfd >= 0)
@@ -108,11 +115,10 @@ int uwac_os_dupfd_cloexec(int fd, long minfd)
 
 static ssize_t recvmsg_cloexec_fallback(int sockfd, struct msghdr* msg, int flags)
 {
-	ssize_t len;
-	struct cmsghdr* cmsg;
-	unsigned char* data;
-	int* fd;
-	int* end;
+	ssize_t len = 0;
+	struct cmsghdr* cmsg = nullptr;
+	unsigned char* data = nullptr;
+	int* end = nullptr;
 	len = recvmsg(sockfd, msg, flags);
 
 	if (len == -1)
@@ -123,7 +129,7 @@ static ssize_t recvmsg_cloexec_fallback(int sockfd, struct msghdr* msg, int flag
 
 	cmsg = CMSG_FIRSTHDR(msg);
 
-	for (; cmsg != NULL; cmsg = CMSG_NXTHDR(msg, cmsg))
+	for (; cmsg != nullptr; cmsg = CMSG_NXTHDR(msg, cmsg))
 	{
 		if (cmsg->cmsg_level != SOL_SOCKET || cmsg->cmsg_type != SCM_RIGHTS)
 			continue;
@@ -131,7 +137,7 @@ static ssize_t recvmsg_cloexec_fallback(int sockfd, struct msghdr* msg, int flag
 		data = CMSG_DATA(cmsg);
 		end = (int*)(data + cmsg->cmsg_len - CMSG_LEN(0));
 
-		for (fd = (int*)data; fd < end; ++fd)
+		for (int* fd = (int*)data; fd < end; ++fd)
 			*fd = set_cloexec_or_close(*fd);
 	}
 
@@ -140,7 +146,7 @@ static ssize_t recvmsg_cloexec_fallback(int sockfd, struct msghdr* msg, int flag
 
 ssize_t uwac_os_recvmsg_cloexec(int sockfd, struct msghdr* msg, int flags)
 {
-	ssize_t len;
+	ssize_t len = 0;
 	len = recvmsg(sockfd, msg, flags | MSG_CMSG_CLOEXEC);
 
 	if (len >= 0)
@@ -154,7 +160,7 @@ ssize_t uwac_os_recvmsg_cloexec(int sockfd, struct msghdr* msg, int flags)
 
 int uwac_os_epoll_create_cloexec(void)
 {
-	int fd;
+	int fd = 0;
 #ifdef EPOLL_CLOEXEC
 	fd = epoll_create1(EPOLL_CLOEXEC);
 
@@ -169,19 +175,27 @@ int uwac_os_epoll_create_cloexec(void)
 	return set_cloexec_or_close(fd);
 }
 
+static int secure_mkstemp(char* tmpname)
+{
+	const mode_t mask = umask(S_IRWXU);
+	int fd = mkstemp(tmpname);
+	(void)umask(mask);
+	return fd;
+}
+
 static int create_tmpfile_cloexec(char* tmpname)
 {
-	int fd;
+	int fd = 0;
 #ifdef USE_SHM
 	fd = shm_open(SHM_ANON, O_CREAT | O_RDWR, 0600);
-#elif defined(HAVE_MKOSTEMP)
+#elif defined(UWAC_HAVE_MKOSTEMP)
 	fd = mkostemp(tmpname, O_CLOEXEC);
 
 	if (fd >= 0)
 		unlink(tmpname);
 
 #else
-	fd = mkstemp(tmpname);
+	fd = secure_mkstemp(tmpname);
 
 	if (fd >= 0)
 	{
@@ -217,12 +231,12 @@ static int create_tmpfile_cloexec(char* tmpname)
 int uwac_create_anonymous_file(off_t size)
 {
 	static const char template[] = "/weston-shared-XXXXXX";
-	size_t length;
-	char* name;
-	const char* path;
-	int fd;
-	int ret;
-	path = getenv("XDG_RUNTIME_DIR");
+	size_t length = 0;
+	char* name = nullptr;
+	int fd = 0;
+	int ret = 0;
+	// NOLINTNEXTLINE(concurrency-mt-unsafe)
+	const char* path = getenv("XDG_RUNTIME_DIR");
 
 	if (!path)
 	{
@@ -234,9 +248,9 @@ int uwac_create_anonymous_file(off_t size)
 	fd = open(path, O_TMPFILE | O_RDWR | O_EXCL, 0600);
 #else
 	/*
-	 * Some platforms (e.g. FreeBSD) won't support O_TMPFILE and can't
-	 * reasonably emulate it at first blush.  Opt to make them rely on
-	 * the create_tmpfile_cloexec() path instead.
+	 * Some platforms will not support O_TMPFILE and cannot
+	 * reasonably emulate it at first blush. Opt to make them
+	 * rely on the create_tmpfile_cloexec() path instead.
 	 */
 	fd = -1;
 #endif
@@ -249,7 +263,7 @@ int uwac_create_anonymous_file(off_t size)
 		if (!name)
 			return -1;
 
-		snprintf(name, length, "%s%s", path, template);
+		(void)snprintf(name, length, "%s%s", path, template);
 		fd = create_tmpfile_cloexec(name);
 		free(name);
 	}
@@ -257,7 +271,7 @@ int uwac_create_anonymous_file(off_t size)
 	if (fd < 0)
 		return -1;
 
-#ifdef HAVE_POSIX_FALLOCATE
+#ifdef UWAC_HAVE_POSIX_FALLOCATE
 	ret = posix_fallocate(fd, 0, size);
 
 	if (ret != 0)

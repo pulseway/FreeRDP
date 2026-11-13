@@ -25,7 +25,34 @@
 #include <freerdp/api.h>
 #include <freerdp/codec/audio.h>
 
-FREERDP_API size_t server_audin_get_formats(AUDIO_FORMAT** dst_formats);
-FREERDP_API size_t server_rdpsnd_get_formats(AUDIO_FORMAT** dst_formats);
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+	/**
+	 * Initialize the server-common and dependent FreeRDP translation domains.
+	 *
+	 * @param locale Locale name, or NULL/empty to use the environment locale.
+	 * @param searchPath Optional gettext catalog directory for this module.
+	 * @return TRUE on success, otherwise FALSE.
+	 * @since version 3.33.0
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL freerdp_server_enable_translation(const char* locale, const char* searchPath);
+
+	WINPR_ATTR_NODISCARD
+	FREERDP_API size_t server_audin_get_formats(AUDIO_FORMAT** dst_formats);
+
+	WINPR_ATTR_NODISCARD
+	FREERDP_API size_t server_rdpsnd_get_formats(AUDIO_FORMAT** dst_formats);
+
+	FREERDP_API void freerdp_server_warn_unmaintained(int argc, char* argv[]);
+	FREERDP_API void freerdp_server_warn_experimental(int argc, char* argv[]);
+	FREERDP_API void freerdp_server_warn_deprecated(int argc, char* argv[]);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_SERVER_COMMON_SERVER_H */

@@ -22,28 +22,37 @@
 
 #include <freerdp/codec/rfx.h>
 #include <freerdp/api.h>
+#include "rfx_types.h"
 
-static INLINE void rfx_differential_decode(INT16* buffer, int size)
+WINPR_ATTR_NODISCARD
+static inline BOOL rfx_differential_decode(INT16* WINPR_RESTRICT buffer, size_t size)
 {
 	INT16* ptr = buffer;
 	INT16* end = &buffer[size - 1];
 
 	while (ptr != end)
 	{
-		ptr[1] += ptr[0];
+		const int tmp = ptr[0] + ptr[1];
+		if ((tmp > INT16_MAX) || (tmp < INT16_MIN))
+		{
+			WLog_ERR(RFX_TAG, "differental: %d <= %d <= %d\n", INT16_MIN, tmp, INT16_MAX);
+			return FALSE;
+		}
+		ptr[1] = WINPR_ASSERTING_INT_CAST(INT16, tmp);
 		ptr++;
 	}
+	return TRUE;
 }
 
-static INLINE void rfx_differential_encode(INT16* buffer, int size)
+static inline void rfx_differential_encode(INT16* WINPR_RESTRICT buffer, size_t size)
 {
-	INT16 n1, n2;
-	INT16* dst;
-
-	for (n1 = *buffer, dst = buffer + 1; size > 1; dst++, size--)
+	INT16 n1 = buffer[0];
+	for (size_t x = 0; x < size - 1; x++)
 	{
-		n2 = *dst;
-		*dst -= n1;
+		INT16* dst = &buffer[x + 1];
+		const INT16 n2 = *dst;
+		const int tmp = n2 - n1;
+		*dst = WINPR_ASSERTING_INT_CAST(INT16, tmp);
 		n1 = n2;
 	}
 }

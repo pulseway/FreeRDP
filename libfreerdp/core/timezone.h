@@ -22,9 +22,7 @@
 
 #include "rdp.h"
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <freerdp/log.h>
 #include <freerdp/freerdp.h>
@@ -32,7 +30,10 @@
 
 #include <winpr/stream.h>
 
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL BOOL rdp_read_client_time_zone(wStream* s, rdpSettings* settings);
+
+WINPR_ATTR_NODISCARD
 FREERDP_LOCAL BOOL rdp_write_client_time_zone(wStream* s, rdpSettings* settings);
 
 #define TIMEZONE_TAG FREERDP_TAG("core.timezone")

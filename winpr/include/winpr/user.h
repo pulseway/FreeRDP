@@ -27,7 +27,9 @@
  * Standard Clipboard Formats
  */
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <winuser.h>
+#else
 
 #define MB_OK 0x00000000L
 #define MB_OKCANCEL 0x00000001L
@@ -180,13 +182,13 @@ typedef struct tagBITMAPINFOHEADER
 	DWORD biClrImportant;
 } BITMAPINFOHEADER, FAR *LPBITMAPINFOHEADER, *PBITMAPINFOHEADER;
 
-typedef struct tagBITMAPINFO
+typedef struct
 {
 	BITMAPINFOHEADER bmiHeader;
 	RGBQUAD bmiColors[1];
 } BITMAPINFO, FAR *LPBITMAPINFO, *PBITMAPINFO;
 
-typedef enum _ORIENTATION_PREFERENCE
+typedef enum
 {
 	ORIENTATION_PREFERENCE_NONE = 0x0,
 	ORIENTATION_PREFERENCE_LANDSCAPE = 0x1,

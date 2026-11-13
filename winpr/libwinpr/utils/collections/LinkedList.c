@@ -17,24 +17,23 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/collections.h>
+#include <winpr/assert.h>
 
-typedef struct _wLinkedListItem wLinkedListNode;
+typedef struct s_wLinkedListItem wLinkedListNode;
 
-struct _wLinkedListItem
+struct s_wLinkedListItem
 {
 	void* value;
 	wLinkedListNode* prev;
 	wLinkedListNode* next;
 };
 
-struct _wLinkedList
+struct s_wLinkedList
 {
-	int count;
+	size_t count;
 	int initial;
 	wLinkedListNode* head;
 	wLinkedListNode* tail;
@@ -57,8 +56,9 @@ struct _wLinkedList
  * Gets the number of nodes actually contained in the LinkedList.
  */
 
-int LinkedList_Count(wLinkedList* list)
+size_t LinkedList_Count(wLinkedList* list)
 {
+	WINPR_ASSERT(list);
 	return list->count;
 }
 
@@ -68,10 +68,11 @@ int LinkedList_Count(wLinkedList* list)
 
 void* LinkedList_First(wLinkedList* list)
 {
+	WINPR_ASSERT(list);
 	if (list->head)
 		return list->head->value;
 	else
-		return NULL;
+		return nullptr;
 }
 
 /**
@@ -80,10 +81,11 @@ void* LinkedList_First(wLinkedList* list)
 
 void* LinkedList_Last(wLinkedList* list)
 {
+	WINPR_ASSERT(list);
 	if (list->tail)
 		return list->tail->value;
 	else
-		return NULL;
+		return nullptr;
 }
 
 /**
@@ -94,11 +96,12 @@ void* LinkedList_Last(wLinkedList* list)
  * Determines whether the LinkedList contains a specific value.
  */
 
-BOOL LinkedList_Contains(wLinkedList* list, void* value)
+BOOL LinkedList_Contains(wLinkedList* list, const void* value)
 {
-	wLinkedListNode* item;
-	OBJECT_EQUALS_FN keyEquals;
+	wLinkedListNode* item = nullptr;
+	OBJECT_EQUALS_FN keyEquals = nullptr;
 
+	WINPR_ASSERT(list);
 	if (!list->head)
 		return FALSE;
 
@@ -113,14 +116,19 @@ BOOL LinkedList_Contains(wLinkedList* list, void* value)
 		item = item->next;
 	}
 
-	return (item) ? TRUE : FALSE;
+	return (item != nullptr);
 }
 
 static wLinkedListNode* LinkedList_FreeNode(wLinkedList* list, wLinkedListNode* node)
 {
-	wLinkedListNode* next = node->next;
-	wLinkedListNode* prev = node->prev;
+	wLinkedListNode* next = nullptr;
+	wLinkedListNode* prev = nullptr;
 
+	WINPR_ASSERT(list);
+	WINPR_ASSERT(node);
+
+	next = node->next;
+	prev = node->prev;
 	if (prev)
 		prev->next = next;
 
@@ -132,6 +140,15 @@ static wLinkedListNode* LinkedList_FreeNode(wLinkedList* list, wLinkedListNode* 
 
 	if (node == list->tail)
 		list->tail = node->prev;
+
+	if (node == list->current)
+	{
+		/* Never leave the enumerator on a freed node: the next MoveNext continues after the removed
+		 * node. */
+		list->current = prev;
+		if (!prev)
+			list->initial = 1;
+	}
 
 	if (list->object.fnObjectUninit)
 		list->object.fnObjectUninit(node);
@@ -150,8 +167,8 @@ static wLinkedListNode* LinkedList_FreeNode(wLinkedList* list, wLinkedListNode* 
 
 void LinkedList_Clear(wLinkedList* list)
 {
-	wLinkedListNode* node;
-
+	wLinkedListNode* node = nullptr;
+	WINPR_ASSERT(list);
 	if (!list->head)
 		return;
 
@@ -160,21 +177,32 @@ void LinkedList_Clear(wLinkedList* list)
 	while (node)
 		node = LinkedList_FreeNode(list, node);
 
-	list->head = list->tail = NULL;
+	list->head = list->tail = nullptr;
 	list->count = 0;
 }
 
-static wLinkedListNode* LinkedList_Create(wLinkedList* list, void* value)
+static wLinkedListNode* LinkedList_Create(wLinkedList* list, const void* value)
 {
-	wLinkedListNode* node = (wLinkedListNode*)calloc(1, sizeof(wLinkedListNode));
+	wLinkedListNode* node = nullptr;
+
+	WINPR_ASSERT(list);
+	node = (wLinkedListNode*)calloc(1, sizeof(wLinkedListNode));
 
 	if (!node)
-		return NULL;
+		return nullptr;
 
 	if (list->object.fnObjectNew)
 		node->value = list->object.fnObjectNew(value);
 	else
-		node->value = value;
+	{
+		union
+		{
+			const void* cpv;
+			void* pv;
+		} cnv;
+		cnv.cpv = value;
+		node->value = cnv.pv;
+	}
 
 	if (list->object.fnObjectInit)
 		list->object.fnObjectInit(node);
@@ -185,7 +213,7 @@ static wLinkedListNode* LinkedList_Create(wLinkedList* list, void* value)
  * Adds a new node containing the specified value at the start of the LinkedList.
  */
 
-BOOL LinkedList_AddFirst(wLinkedList* list, void* value)
+BOOL LinkedList_AddFirst(wLinkedList* list, const void* value)
 {
 	wLinkedListNode* node = LinkedList_Create(list, value);
 
@@ -211,7 +239,7 @@ BOOL LinkedList_AddFirst(wLinkedList* list, void* value)
  * Adds a new node containing the specified value at the end of the LinkedList.
  */
 
-BOOL LinkedList_AddLast(wLinkedList* list, void* value)
+BOOL LinkedList_AddLast(wLinkedList* list, const void* value)
 {
 	wLinkedListNode* node = LinkedList_Create(list, value);
 
@@ -237,10 +265,12 @@ BOOL LinkedList_AddLast(wLinkedList* list, void* value)
  * Removes the first occurrence of the specified value from the LinkedList.
  */
 
-BOOL LinkedList_Remove(wLinkedList* list, void* value)
+BOOL LinkedList_Remove(wLinkedList* list, const void* value)
 {
-	wLinkedListNode* node;
-	OBJECT_EQUALS_FN keyEquals;
+	wLinkedListNode* node = nullptr;
+	OBJECT_EQUALS_FN keyEquals = nullptr;
+	WINPR_ASSERT(list);
+
 	keyEquals = list->object.fnObjectEquals;
 	node = list->head;
 
@@ -264,6 +294,7 @@ BOOL LinkedList_Remove(wLinkedList* list, void* value)
 
 void LinkedList_RemoveFirst(wLinkedList* list)
 {
+	WINPR_ASSERT(list);
 	if (list->head)
 		LinkedList_FreeNode(list, list->head);
 }
@@ -274,6 +305,7 @@ void LinkedList_RemoveFirst(wLinkedList* list)
 
 void LinkedList_RemoveLast(wLinkedList* list)
 {
+	WINPR_ASSERT(list);
 	if (list->tail)
 		LinkedList_FreeNode(list, list->tail);
 }
@@ -284,8 +316,9 @@ void LinkedList_RemoveLast(wLinkedList* list)
 
 void LinkedList_Enumerator_Reset(wLinkedList* list)
 {
+	WINPR_ASSERT(list);
 	list->initial = 1;
-	list->current = list->head;
+	list->current = nullptr;
 }
 
 /*
@@ -294,13 +327,14 @@ void LinkedList_Enumerator_Reset(wLinkedList* list)
 
 void* LinkedList_Enumerator_Current(wLinkedList* list)
 {
+	WINPR_ASSERT(list);
 	if (list->initial)
-		return NULL;
+		return nullptr;
 
 	if (list->current)
 		return list->current->value;
 	else
-		return NULL;
+		return nullptr;
 }
 
 /*
@@ -309,8 +343,12 @@ void* LinkedList_Enumerator_Current(wLinkedList* list)
 
 BOOL LinkedList_Enumerator_MoveNext(wLinkedList* list)
 {
+	WINPR_ASSERT(list);
 	if (list->initial)
+	{
 		list->initial = 0;
+		list->current = list->head;
+	}
 	else if (list->current)
 		list->current = list->current->next;
 
@@ -331,7 +369,7 @@ static BOOL default_equal_function(const void* objA, const void* objB)
 
 wLinkedList* LinkedList_New(void)
 {
-	wLinkedList* list = NULL;
+	wLinkedList* list = nullptr;
 	list = (wLinkedList*)calloc(1, sizeof(wLinkedList));
 
 	if (list)
@@ -353,8 +391,7 @@ void LinkedList_Free(wLinkedList* list)
 
 wObject* LinkedList_Object(wLinkedList* list)
 {
-	if (!list)
-		return NULL;
+	WINPR_ASSERT(list);
 
 	return &list->object;
 }

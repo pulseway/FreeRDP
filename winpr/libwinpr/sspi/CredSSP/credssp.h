@@ -24,13 +24,19 @@
 
 #include "../sspi.h"
 
-struct _CREDSSP_CONTEXT
+typedef struct
 {
 	BOOL server;
-};
-typedef struct _CREDSSP_CONTEXT CREDSSP_CONTEXT;
+} CREDSSP_CONTEXT;
 
 CREDSSP_CONTEXT* credssp_ContextNew(void);
 void credssp_ContextFree(CREDSSP_CONTEXT* context);
+
+extern const SecPkgInfoA CREDSSP_SecPkgInfoA;
+extern const SecPkgInfoW CREDSSP_SecPkgInfoW;
+extern const SecurityFunctionTableA CREDSSP_SecurityFunctionTableA;
+extern const SecurityFunctionTableW CREDSSP_SecurityFunctionTableW;
+
+BOOL CREDSSP_init(void);
 
 #endif /* WINPR_SSPI_CREDSSP_PRIVATE_H */

@@ -21,9 +21,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +31,7 @@
 #include <mmsystem.h>
 
 #include <winpr/crt.h>
+#include <winpr/wtsapi.h>
 #include <winpr/cmdline.h>
 #include <winpr/sysinfo.h>
 
@@ -41,9 +40,12 @@
 
 #include "rdpsnd_main.h"
 
-typedef struct rdpsnd_winmm_plugin rdpsndWinmmPlugin;
+/* Silence queued in front of the audio whenever playback starts from an
+ * empty device, so audio arriving a little late does not leave the device
+ * without data (an audible gap). /sound:latency:<ms> overrides it. */
+#define WINMM_DEFAULT_PREBUFFER_MS 100
 
-struct rdpsnd_winmm_plugin
+typedef struct
 {
 	rdpsndDevicePlugin device;
 
@@ -55,7 +57,8 @@ struct rdpsnd_winmm_plugin
 	HANDLE hThread;
 	DWORD threadId;
 	CRITICAL_SECTION cs;
-};
+	size_t pending; /* buffers written and not played yet, guarded by cs */
+} rdpsndWinmmPlugin;
 
 static BOOL rdpsnd_winmm_convert_format(const AUDIO_FORMAT* in, WAVEFORMATEX* out)
 {
@@ -98,7 +101,7 @@ static DWORD WINAPI waveOutProc(LPVOID lpParameter)
 {
 	MSG msg;
 	rdpsndWinmmPlugin* winmm = (rdpsndWinmmPlugin*)lpParameter;
-	while (GetMessage(&msg, NULL, 0, 0))
+	while (GetMessage(&msg, nullptr, 0, 0))
 	{
 		if (msg.message == MM_WOM_CLOSE)
 		{
@@ -111,6 +114,8 @@ static DWORD WINAPI waveOutProc(LPVOID lpParameter)
 			LPWAVEHDR waveHdr = (LPWAVEHDR)msg.lParam;
 			EnterCriticalSection(&winmm->cs);
 			waveOutUnprepareHeader((HWAVEOUT)msg.wParam, waveHdr, sizeof(WAVEHDR));
+			if (winmm->pending > 0)
+				winmm->pending--;
 			LeaveCriticalSection(&winmm->cs);
 			free(waveHdr->lpData);
 			free(waveHdr);
@@ -132,7 +137,8 @@ static BOOL rdpsnd_winmm_open(rdpsndDevicePlugin* device, const AUDIO_FORMAT* fo
 	if (!rdpsnd_winmm_set_format(device, format, latency))
 		return FALSE;
 
-	winmm->hThread = CreateThread(NULL, 0, waveOutProc, winmm, 0, &winmm->threadId);
+	winmm->pending = 0;
+	winmm->hThread = CreateThread(nullptr, 0, waveOutProc, winmm, 0, &winmm->threadId);
 	if (!winmm->hThread)
 	{
 		WLog_Print(winmm->log, WLOG_ERROR, "CreateThread failed: %" PRIu32 "", GetLastError());
@@ -178,14 +184,14 @@ static void rdpsnd_winmm_close(rdpsndDevicePlugin* device)
 
 		LeaveCriticalSection(&winmm->cs);
 
-		winmm->hWaveOut = NULL;
+		winmm->hWaveOut = nullptr;
 	}
 
 	if (winmm->hThread)
 	{
-		WaitForSingleObject(winmm->hThread, INFINITE);
-		CloseHandle(winmm->hThread);
-		winmm->hThread = NULL;
+		(void)WaitForSingleObject(winmm->hThread, INFINITE);
+		(void)CloseHandle(winmm->hThread);
+		winmm->hThread = nullptr;
 	}
 }
 
@@ -209,7 +215,7 @@ static BOOL rdpsnd_winmm_format_supported(rdpsndDevicePlugin* device, const AUDI
 	WINPR_UNUSED(device);
 	if (rdpsnd_winmm_convert_format(format, &out))
 	{
-		result = waveOutOpen(NULL, WAVE_MAPPER, &out, 0, 0, WAVE_FORMAT_QUERY);
+		result = waveOutOpen(nullptr, WAVE_MAPPER, &out, 0, 0, WAVE_FORMAT_QUERY);
 
 		if (result == MMSYSERR_NOERROR)
 			return TRUE;
@@ -254,10 +260,48 @@ static BOOL rdpsnd_winmm_set_volume(rdpsndDevicePlugin* device, UINT32 value)
 	return TRUE;
 }
 
-static UINT rdpsnd_winmm_play(rdpsndDevicePlugin* device, const BYTE* data, size_t size)
+/* queue size bytes of data, or of silence if data is nullptr; called with cs held */
+static BOOL rdpsnd_winmm_write(rdpsndWinmmPlugin* winmm, const BYTE* data, size_t size)
 {
 	MMRESULT mmResult;
-	LPWAVEHDR lpWaveHdr;
+	LPWAVEHDR lpWaveHdr = (LPWAVEHDR)calloc(1, sizeof(WAVEHDR));
+	if (!lpWaveHdr)
+		return FALSE;
+
+	lpWaveHdr->lpData = malloc(size);
+	if (!lpWaveHdr->lpData)
+		goto fail;
+	if (data)
+		memcpy(lpWaveHdr->lpData, data, size);
+	else
+		memset(lpWaveHdr->lpData, (winmm->format.wBitsPerSample == 8) ? 0x80 : 0, size);
+	lpWaveHdr->dwBufferLength = (DWORD)size;
+
+	mmResult = waveOutPrepareHeader(winmm->hWaveOut, lpWaveHdr, sizeof(WAVEHDR));
+	if (mmResult != MMSYSERR_NOERROR)
+	{
+		WLog_Print(winmm->log, WLOG_ERROR, "waveOutPrepareHeader failure: %" PRIu32 "", mmResult);
+		goto fail;
+	}
+
+	mmResult = waveOutWrite(winmm->hWaveOut, lpWaveHdr, sizeof(WAVEHDR));
+	if (mmResult != MMSYSERR_NOERROR)
+	{
+		WLog_Print(winmm->log, WLOG_ERROR, "waveOutWrite failure: %" PRIu32 "", mmResult);
+		waveOutUnprepareHeader(winmm->hWaveOut, lpWaveHdr, sizeof(WAVEHDR));
+		goto fail;
+	}
+
+	winmm->pending++;
+	return TRUE;
+fail:
+	free(lpWaveHdr->lpData);
+	free(lpWaveHdr);
+	return FALSE;
+}
+
+static UINT rdpsnd_winmm_play(rdpsndDevicePlugin* device, const BYTE* data, size_t size)
+{
 	rdpsndWinmmPlugin* winmm = (rdpsndWinmmPlugin*)device;
 
 	if (!winmm->hWaveOut)
@@ -266,66 +310,41 @@ static UINT rdpsnd_winmm_play(rdpsndDevicePlugin* device, const BYTE* data, size
 	if (size > UINT32_MAX)
 		return 0;
 
-	lpWaveHdr = (LPWAVEHDR)calloc(1, sizeof(WAVEHDR));
-	if (!lpWaveHdr)
-		return 0;
-
-	lpWaveHdr->dwFlags = 0;
-	lpWaveHdr->dwLoops = 0;
-	lpWaveHdr->lpData = malloc(size);
-	if (!lpWaveHdr->lpData)
-		goto fail;
-	memcpy(lpWaveHdr->lpData, data, size);
-	lpWaveHdr->dwBufferLength = (DWORD)size;
-
 	EnterCriticalSection(&winmm->cs);
 
-	mmResult = waveOutPrepareHeader(winmm->hWaveOut, lpWaveHdr, sizeof(WAVEHDR));
-	if (mmResult != MMSYSERR_NOERROR)
+	/* The device plays whatever it has queued and nothing more: when it ran
+	 * out (or has not started), put some silence in front of this audio so
+	 * that the next packets have time to arrive before it is played out. */
+	if (winmm->pending == 0)
 	{
-		WLog_Print(winmm->log, WLOG_ERROR, "waveOutPrepareHeader failure: %" PRIu32 "", mmResult);
-		goto failCS;
+		const UINT32 ms = (winmm->latency > 0) ? winmm->latency : WINMM_DEFAULT_PREBUFFER_MS;
+		const size_t align = MAX(winmm->format.nBlockAlign, 1);
+		const size_t silence = (1ull * winmm->format.nAvgBytesPerSec * ms / 1000) / align * align;
+
+		if ((silence > 0) && !rdpsnd_winmm_write(winmm, nullptr, silence))
+			WLog_Print(winmm->log, WLOG_WARN, "could not queue %" PRIu32 " ms of silence", ms);
 	}
 
-	mmResult = waveOutWrite(winmm->hWaveOut, lpWaveHdr, sizeof(WAVEHDR));
-	if (mmResult != MMSYSERR_NOERROR)
-	{
-		WLog_Print(winmm->log, WLOG_ERROR, "waveOutWrite failure: %" PRIu32 "", mmResult);
-		waveOutUnprepareHeader(winmm->hWaveOut, lpWaveHdr, sizeof(WAVEHDR));
-		goto failCS;
-	}
-
+	const BOOL rc = rdpsnd_winmm_write(winmm, data, size);
 	LeaveCriticalSection(&winmm->cs);
-	return winmm->latency;
-failCS:
-	LeaveCriticalSection(&winmm->cs);
-fail:
-	if (lpWaveHdr)
-		free(lpWaveHdr->lpData);
-	free(lpWaveHdr);
-	return 0;
+	return rc ? winmm->latency : 0;
 }
 
-static void rdpsnd_winmm_parse_addin_args(rdpsndDevicePlugin* device, ADDIN_ARGV* args)
+static void rdpsnd_winmm_parse_addin_args(rdpsndDevicePlugin* device, const ADDIN_ARGV* args)
 {
 	WINPR_UNUSED(device);
 	WINPR_UNUSED(args);
 }
-
-#ifdef BUILTIN_CHANNELS
-#define freerdp_rdpsnd_client_subsystem_entry winmm_freerdp_rdpsnd_client_subsystem_entry
-#else
-#define freerdp_rdpsnd_client_subsystem_entry FREERDP_API freerdp_rdpsnd_client_subsystem_entry
-#endif
 
 /**
  * Function description
  *
  * @return 0 on success, otherwise a Win32 error code
  */
-UINT freerdp_rdpsnd_client_subsystem_entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints)
+FREERDP_ENTRY_POINT(UINT VCAPITYPE winmm_freerdp_rdpsnd_client_subsystem_entry(
+    PFREERDP_RDPSND_DEVICE_ENTRY_POINTS pEntryPoints))
 {
-	ADDIN_ARGV* args;
+	const ADDIN_ARGV* args;
 	rdpsndWinmmPlugin* winmm;
 
 	if (waveOutGetNumDevs() == 0)
@@ -349,7 +368,7 @@ UINT freerdp_rdpsnd_client_subsystem_entry(PFREERDP_RDPSND_DEVICE_ENTRY_POINTS p
 	InitializeCriticalSection(&winmm->cs);
 
 	args = pEntryPoints->args;
-	rdpsnd_winmm_parse_addin_args((rdpsndDevicePlugin*)winmm, args);
+	rdpsnd_winmm_parse_addin_args(&winmm->device, args);
 	winmm->volume = 0xFFFFFFFF;
 	pEntryPoints->pRegisterRdpsndDevice(pEntryPoints->rdpsnd, (rdpsndDevicePlugin*)winmm);
 	return CHANNEL_RC_OK;

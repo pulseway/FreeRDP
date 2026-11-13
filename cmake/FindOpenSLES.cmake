@@ -1,36 +1,29 @@
 # - Find OpenSLES
 # Find the OpenSLES includes and libraries
 #
-#  OPENSLES_INCLUDE_DIR - where to find dsound.h
-#  OPENSLES_LIBRARIES   - List of libraries when using dsound.
-#  OPENSLES_FOUND       - True if dsound found.
+#  OpenSLES_INCLUDE_DIR - where to find dsound.h
+#  OpenSLES_LIBRARIES   - List of libraries when using dsound.
+#  OpenSLES_FOUND       - True if dsound found.
 
-if(OPENSLES_INCLUDE_DIR)
-	# Already in cache, be silent
-	set(OPENSLES_FIND_QUIETLY TRUE)
-else()
-	find_package(PkgConfig)
-	pkg_check_modules(PC_OPENSLES QUIET OpenSLES)
-endif(OPENSLES_INCLUDE_DIR)
-				
-find_path(OPENSLES_INCLUDE_DIR SLES/OpenSLES.h
-	HINTS ${PC_OPENSLES_INCLUDE_DIR})
+get_property(_FIND_LIBRARY_USE_LIB64_PATHS GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS)
+set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS 1)
 
-find_library(OPENSLES_LIBRARY NAMES OpenSLES
-	HINTS ${PC_OPENSLES_LIBDIR} ${PC_OPENSLES_LIBRARY_DIRS})
+find_path(OpenSLES_INCLUDE_DIR SLES/OpenSLES.h)
 
-# Handle the QUIETLY and REQUIRED arguments and set OPENSL_FOUND to TRUE if
-# all listed variables are TRUE.
+find_library(OpenSLES_LIBRARY NAMES OpenSLES)
+
 include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(OPENSLES DEFAULT_MSG
-	OPENSLES_INCLUDE_DIR OPENSLES_LIBRARY)
-						
-if(OPENSLES_FOUND)
-	set(OPENSLES_LIBRARIES ${OPENSLES_LIBRARY})
-else(OPENSLES_FOUND)
-	if (OpenSLES_FIND_REQUIRED)
-		message(FATAL_ERROR "Could NOT find OPENSLES")
-	endif()
-endif(OPENSLES_FOUND)
+find_package_handle_standard_args(OpenSLES DEFAULT_MSG OpenSLES_INCLUDE_DIR OpenSLES_LIBRARY)
 
-mark_as_advanced(OPENSLES_INCLUDE_DIR OPENSLES_LIBRARY)
+if(OpenSLES_FOUND)
+  set(OpenSLES_INCLUDE_DIRS ${OpenSLES_INCLUDE_DIR})
+  set(OpenSLES_LIBRARIES ${OpenSLES_LIBRARY})
+else(OpenSLES_FOUND)
+  if(OpenSLES_FIND_REQUIRED)
+    message(FATAL_ERROR "Could NOT find OpenSLES")
+  endif()
+endif(OpenSLES_FOUND)
+
+mark_as_advanced(OpenSLES_INCLUDE_DIR OpenSLES_LIBRARY)
+
+set_property(GLOBAL PROPERTY FIND_LIBRARY_USE_LIB64_PATHS ${_FIND_LIBRARY_USE_LIB64_PATHS})

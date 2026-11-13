@@ -2,221 +2,233 @@
 #include <stdlib.h>
 
 #include <winpr/crt.h>
+#include <winpr/crypto.h>
 #include <winpr/synch.h>
 #include <winpr/thread.h>
 
-#define THREADS 24
+#define THREADS 8
+
+static UINT32 prand(UINT32 max)
+{
+	UINT32 tmp = 0;
+	if (max <= 1)
+		return 1;
+	winpr_RAND(&tmp, sizeof(tmp));
+	return tmp % (max - 1) + 1;
+}
 
 static DWORD WINAPI test_thread(LPVOID arg)
 {
-	long timeout = 100 + (rand() % 1000);
+	UINT32 timeout = 50 + prand(100);
 	WINPR_UNUSED(arg);
 	Sleep(timeout);
 	ExitThread(0);
 	return 0;
 }
 
-static int start_threads(DWORD count, HANDLE* threads)
+static int start_threads(size_t count, HANDLE* threads)
 {
-	DWORD i;
-
-	for (i = 0; i < count; i++)
+	for (size_t i = 0; i < count; i++)
 	{
-		threads[i] = CreateThread(NULL, 0, test_thread, NULL, 0, NULL);
+		threads[i] = CreateThread(nullptr, 0, test_thread, nullptr, CREATE_SUSPENDED, nullptr);
 
 		if (!threads[i])
 		{
-			fprintf(stderr, "%s: CreateThread [%" PRIu32 "] failure\n", __FUNCTION__, i);
+			(void)fprintf(stderr, "%s: CreateThread [%" PRIuz "] failure\n", __func__, i);
 			return -1;
 		}
 	}
 
+	for (size_t i = 0; i < count; i++)
+		ResumeThread(threads[i]);
 	return 0;
 }
 
 static int close_threads(DWORD count, HANDLE* threads)
 {
-	DWORD i;
+	int rc = 0;
 
-	for (i = 0; i < count; i++)
+	for (DWORD i = 0; i < count; i++)
 	{
+		if (!threads[i])
+			continue;
+
 		if (!CloseHandle(threads[i]))
 		{
-			fprintf(stderr, "%s: CloseHandle [%" PRIu32 "] failure\n", __FUNCTION__, i);
-			return -1;
+			(void)fprintf(stderr, "%s: CloseHandle [%" PRIu32 "] failure\n", __func__, i);
+			rc = -1;
 		}
+		threads[i] = nullptr;
 	}
 
-	return 0;
+	return rc;
 }
 
 static BOOL TestWaitForAll(void)
 {
 	BOOL rc = FALSE;
-	DWORD ret;
-	HANDLE threads[THREADS];
+	HANDLE threads[THREADS] = WINPR_C_ARRAY_INIT;
 	/* WaitForAll, timeout */
-	if (start_threads(THREADS, threads))
+	if (start_threads(ARRAYSIZE(threads), threads))
 	{
-		fprintf(stderr, "%s: start_threads failed\n", __FUNCTION__);
-		return FALSE;
+		(void)fprintf(stderr, "%s: start_threads failed\n", __func__);
+		goto fail;
 	}
 
-	ret = WaitForMultipleObjects(THREADS, threads, TRUE, 50);
+	const DWORD ret = WaitForMultipleObjects(ARRAYSIZE(threads), threads, TRUE, 10);
 	if (ret != WAIT_TIMEOUT)
 	{
-		fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, timeout 50 failed, ret=%d\n",
-		        __FUNCTION__, ret);
+		(void)fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, timeout 10 failed, ret=%d\n",
+		              __func__, ret);
 		goto fail;
 	}
 
-	if (WaitForMultipleObjects(THREADS, threads, TRUE, INFINITE) != WAIT_OBJECT_0)
+	if (WaitForMultipleObjects(ARRAYSIZE(threads), threads, TRUE, INFINITE) != WAIT_OBJECT_0)
 	{
-		fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, INFINITE failed\n", __FUNCTION__);
+		(void)fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, INFINITE failed\n", __func__);
 		goto fail;
-	}
-
-	if (close_threads(THREADS, threads))
-	{
-		fprintf(stderr, "%s: close_threads failed\n", __FUNCTION__);
-		return FALSE;
 	}
 
 	rc = TRUE;
 fail:
+	if (close_threads(ARRAYSIZE(threads), threads))
+	{
+		(void)fprintf(stderr, "%s: close_threads failed\n", __func__);
+		return FALSE;
+	}
+
 	return rc;
 }
 
 static BOOL TestWaitOne(void)
 {
 	BOOL rc = FALSE;
-	DWORD ret;
-	HANDLE threads[THREADS];
+	HANDLE threads[THREADS] = WINPR_C_ARRAY_INIT;
 	/* WaitForAll, timeout */
-	if (start_threads(THREADS, threads))
+	if (start_threads(ARRAYSIZE(threads), threads))
 	{
-		fprintf(stderr, "%s: start_threads failed\n", __FUNCTION__);
-		return FALSE;
-	}
-
-	ret = WaitForMultipleObjects(THREADS, threads, FALSE, INFINITE);
-	if (ret > (WAIT_OBJECT_0 + THREADS))
-	{
-		fprintf(stderr, "%s: WaitForMultipleObjects INFINITE failed\n", __FUNCTION__);
+		(void)fprintf(stderr, "%s: start_threads failed\n", __func__);
 		goto fail;
 	}
 
-	if (WaitForMultipleObjects(THREADS, threads, TRUE, INFINITE) != WAIT_OBJECT_0)
+	const DWORD ret = WaitForMultipleObjects(ARRAYSIZE(threads), threads, FALSE, INFINITE);
+	if (ret > (WAIT_OBJECT_0 + ARRAYSIZE(threads)))
 	{
-		fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, INFINITE failed\n", __FUNCTION__);
+		(void)fprintf(stderr, "%s: WaitForMultipleObjects INFINITE failed\n", __func__);
 		goto fail;
 	}
 
-	if (close_threads(THREADS, threads))
+	if (WaitForMultipleObjects(ARRAYSIZE(threads), threads, TRUE, INFINITE) != WAIT_OBJECT_0)
 	{
-		fprintf(stderr, "%s: close_threads failed\n", __FUNCTION__);
-		return FALSE;
+		(void)fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, INFINITE failed\n", __func__);
+		goto fail;
 	}
 
 	rc = TRUE;
 fail:
+	if (close_threads(ARRAYSIZE(threads), threads))
+	{
+		(void)fprintf(stderr, "%s: close_threads failed\n", __func__);
+		return FALSE;
+	}
+
 	return rc;
 }
 
 static BOOL TestWaitOneTimeout(void)
 {
 	BOOL rc = FALSE;
-	DWORD ret;
-	HANDLE threads[THREADS];
+	HANDLE threads[THREADS] = WINPR_C_ARRAY_INIT;
 	/* WaitForAll, timeout */
-	if (start_threads(THREADS, threads))
+	if (start_threads(ARRAYSIZE(threads), threads))
 	{
-		fprintf(stderr, "%s: start_threads failed\n", __FUNCTION__);
-		return FALSE;
+		(void)fprintf(stderr, "%s: start_threads failed\n", __func__);
+		goto fail;
 	}
 
-	ret = WaitForMultipleObjects(THREADS, threads, FALSE, 50);
+	const DWORD ret = WaitForMultipleObjects(ARRAYSIZE(threads), threads, FALSE, 1);
 	if (ret != WAIT_TIMEOUT)
 	{
-		fprintf(stderr, "%s: WaitForMultipleObjects timeout 50 failed, ret=%d\n", __FUNCTION__,
-		        ret);
+		(void)fprintf(stderr, "%s: WaitForMultipleObjects timeout 50 failed, ret=%d\n", __func__,
+		              ret);
 		goto fail;
 	}
 
-	if (WaitForMultipleObjects(THREADS, threads, TRUE, INFINITE) != WAIT_OBJECT_0)
+	if (WaitForMultipleObjects(ARRAYSIZE(threads), threads, TRUE, INFINITE) != WAIT_OBJECT_0)
 	{
-		fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, INFINITE failed\n", __FUNCTION__);
+		(void)fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, INFINITE failed\n", __func__);
 		goto fail;
 	}
-
-	if (close_threads(THREADS, threads))
+	rc = TRUE;
+fail:
+	if (close_threads(ARRAYSIZE(threads), threads))
 	{
-		fprintf(stderr, "%s: close_threads failed\n", __FUNCTION__);
+		(void)fprintf(stderr, "%s: close_threads failed\n", __func__);
 		return FALSE;
 	}
 
-	rc = TRUE;
-fail:
 	return rc;
 }
 
 static BOOL TestWaitOneTimeoutMultijoin(void)
 {
 	BOOL rc = FALSE;
-	DWORD ret, i;
-	HANDLE threads[THREADS];
+	HANDLE threads[THREADS] = WINPR_C_ARRAY_INIT;
 	/* WaitForAll, timeout */
-	if (start_threads(THREADS, threads))
+	if (start_threads(ARRAYSIZE(threads), threads))
 	{
-		fprintf(stderr, "%s: start_threads failed\n", __FUNCTION__);
-		return FALSE;
+		(void)fprintf(stderr, "%s: start_threads failed\n", __func__);
+		goto fail;
 	}
 
-	for (i = 0; i < THREADS; i++)
+	for (size_t i = 0; i < ARRAYSIZE(threads); i++)
 	{
-		ret = WaitForMultipleObjects(THREADS, threads, FALSE, 0);
+		const DWORD ret = WaitForMultipleObjects(ARRAYSIZE(threads), threads, FALSE, 0);
 		if (ret != WAIT_TIMEOUT)
 		{
-			fprintf(stderr, "%s: WaitForMultipleObjects timeout 50 failed, ret=%d\n", __FUNCTION__,
-			        ret);
+			(void)fprintf(stderr, "%s: WaitForMultipleObjects timeout 0 failed, ret=%d\n", __func__,
+			              ret);
 			goto fail;
 		}
 	}
 
-	if (WaitForMultipleObjects(THREADS, threads, TRUE, INFINITE) != WAIT_OBJECT_0)
+	if (WaitForMultipleObjects(ARRAYSIZE(threads), threads, TRUE, INFINITE) != WAIT_OBJECT_0)
 	{
-		fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, INFINITE failed\n", __FUNCTION__);
+		(void)fprintf(stderr, "%s: WaitForMultipleObjects bWaitAll, INFINITE failed\n", __func__);
 		goto fail;
-	}
-
-	if (close_threads(THREADS, threads))
-	{
-		fprintf(stderr, "%s: close_threads failed\n", __FUNCTION__);
-		return FALSE;
 	}
 
 	rc = TRUE;
 fail:
+	if (close_threads(ARRAYSIZE(threads), threads))
+	{
+		(void)fprintf(stderr, "%s: close_threads failed\n", __func__);
+		return FALSE;
+	}
+
 	return rc;
 }
 
 static BOOL TestDetach(void)
 {
-	HANDLE threads[THREADS];
+	BOOL rc = FALSE;
+	HANDLE threads[THREADS] = WINPR_C_ARRAY_INIT;
 	/* WaitForAll, timeout */
-	if (start_threads(THREADS, threads))
+	if (start_threads(ARRAYSIZE(threads), threads))
 	{
-		fprintf(stderr, "%s: start_threads failed\n", __FUNCTION__);
+		(void)fprintf(stderr, "%s: start_threads failed\n", __func__);
+		goto fail;
+	}
+
+	rc = TRUE;
+fail:
+	if (close_threads(ARRAYSIZE(threads), threads))
+	{
+		(void)fprintf(stderr, "%s: close_threads failed\n", __func__);
 		return FALSE;
 	}
 
-	if (close_threads(THREADS, threads))
-	{
-		fprintf(stderr, "%s: close_threads failed\n", __FUNCTION__);
-		return FALSE;
-	}
-
-	return TRUE;
+	return rc;
 }
 
 int TestSynchMultipleThreads(int argc, char* argv[])

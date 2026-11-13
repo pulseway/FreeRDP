@@ -11,6 +11,7 @@
 #import <Foundation/Foundation.h>
 
 #import <freerdp/gdi/gdi.h>
+#import <freerdp/client.h>
 #import "ios_freerdp_ui.h"
 
 #import "RDPSession.h"
@@ -19,9 +20,34 @@
 #pragma mark Certificate authentication
 
 static void ios_resize_display_buffer(mfInfo *mfi);
-static BOOL ios_ui_authenticate_raw(freerdp *instance, char **username, char **password,
-                                    char **domain, const char *title)
+
+BOOL ios_ui_authenticate_ex(freerdp *instance, char **username, char **password, char **domain,
+                            rdp_auth_reason reason)
 {
+	const char *target = freerdp_settings_get_server_name(instance->context->settings);
+	switch (reason)
+	{
+		case AUTH_RDSTLS:
+		case AUTH_NLA:
+			break;
+
+		case AUTH_TLS:
+		case AUTH_RDP:
+		case AUTH_SMARTCARD_PIN: /* in this case password is pin code */
+		case AUTH_FIDO_PIN:
+			if ((*username) && (*password))
+				return TRUE;
+			break;
+		case GW_AUTH_HTTP:
+		case GW_AUTH_RDG:
+		case GW_AUTH_RPC:
+			target =
+			    freerdp_settings_get_string(instance->context->settings, FreeRDP_GatewayHostname);
+			break;
+		default:
+			break;
+	}
+
 	mfInfo *mfi = MFI_FROM_INSTANCE(instance);
 	NSMutableDictionary *params = [NSMutableDictionary
 	    dictionaryWithObjectsAndKeys:(*username) ? [NSString stringWithUTF8String:*username] : @"",
@@ -29,9 +55,7 @@ static BOOL ios_ui_authenticate_raw(freerdp *instance, char **username, char **p
 	                                 (*password) ? [NSString stringWithUTF8String:*password] : @"",
 	                                 @"password",
 	                                 (*domain) ? [NSString stringWithUTF8String:*domain] : @"",
-	                                 @"domain",
-	                                 [NSString
-	                                     stringWithUTF8String:instance->settings->ServerHostname],
+	                                 @"domain", [NSString stringWithUTF8String:target],
 	                                 @"hostname", // used for the auth prompt message; not changed
 	                                 nil];
 	// request auth UI
@@ -54,9 +78,9 @@ static BOOL ios_ui_authenticate_raw(freerdp *instance, char **username, char **p
 	free(*password);
 	free(*domain);
 	// set values back
-	*username = strdup([[params objectForKey:@"username"] UTF8String]);
-	*password = strdup([[params objectForKey:@"password"] UTF8String]);
-	*domain = strdup([[params objectForKey:@"domain"] UTF8String]);
+	*username = _strdup([[params objectForKey:@"username"] UTF8String]);
+	*password = _strdup([[params objectForKey:@"password"] UTF8String]);
+	*domain = _strdup([[params objectForKey:@"domain"] UTF8String]);
 
 	if (!(*username) || !(*password) || !(*domain))
 	{
@@ -69,18 +93,9 @@ static BOOL ios_ui_authenticate_raw(freerdp *instance, char **username, char **p
 	return TRUE;
 }
 
-BOOL ios_ui_authenticate(freerdp *instance, char **username, char **password, char **domain)
-{
-	return ios_ui_authenticate_raw(instance, username, password, domain, "");
-}
-
-BOOL ios_ui_gw_authenticate(freerdp *instance, char **username, char **password, char **domain)
-{
-	return ios_ui_authenticate_raw(instance, username, password, domain, "gateway");
-}
-
-DWORD ios_ui_verify_certificate(freerdp *instance, const char *common_name, const char *subject,
-                                const char *issuer, const char *fingerprint, BOOL host_mismatch)
+DWORD ios_ui_verify_certificate_ex(freerdp *instance, const char *host, UINT16 port,
+                                   const char *common_name, const char *subject, const char *issuer,
+                                   const char *fingerprint, DWORD flags)
 {
 	// check whether we accept all certificates
 	if ([[NSUserDefaults standardUserDefaults] boolForKey:@"security.accept_certificates"] == YES)
@@ -112,13 +127,39 @@ DWORD ios_ui_verify_certificate(freerdp *instance, const char *common_name, cons
 	return 1;
 }
 
-DWORD ios_ui_verify_changed_certificate(freerdp *instance, const char *common_name,
-                                        const char *subject, const char *issuer,
-                                        const char *new_fingerprint, const char *old_subject,
-                                        const char *old_issuer, const char *old_fingerprint)
+DWORD ios_ui_verify_changed_certificate_ex(freerdp *instance, const char *host, UINT16 port,
+                                           const char *common_name, const char *subject,
+                                           const char *issuer, const char *fingerprint,
+                                           const char *old_subject, const char *old_issuer,
+                                           const char *old_fingerprint, DWORD flags)
 {
-	return ios_ui_verify_certificate(instance, common_name, subject, issuer, new_fingerprint,
-	                                 FALSE);
+	return ios_ui_verify_certificate_ex(instance, host, port, common_name, subject, issuer,
+	                                    fingerprint, flags);
+}
+
+SSIZE_T ios_ui_retry_dialog(freerdp *instance, const char *what, size_t current, void *userarg)
+{
+	WINPR_ASSERT(instance);
+	WINPR_ASSERT(what);
+
+	// waiting for an Azure VM to start ("arm-transport")
+	if (strcmp(what, "connection") != 0)
+		return client_common_retry_dialog(instance, what, current, userarg);
+
+	mfInfo *mfi = MFI_FROM_INSTANCE(instance);
+	WINPR_ASSERT(mfi);
+
+	// cancel button of the connecting view
+	if (mfi->unwanted)
+		return -1;
+
+	if (current == 0)
+		[mfi->session performSelectorOnMainThread:@selector(sessionWillReconnect)
+		                               withObject:nil
+		                            waitUntilDone:NO];
+
+	// delay before the next attempt, in ms
+	return 5000;
 }
 
 #pragma mark -
@@ -126,20 +167,50 @@ DWORD ios_ui_verify_changed_certificate(freerdp *instance, const char *common_na
 
 BOOL ios_ui_begin_paint(rdpContext *context)
 {
+	WINPR_ASSERT(context);
+
 	rdpGdi *gdi = context->gdi;
-	gdi->primary->hdc->hwnd->invalid->null = TRUE;
+	WINPR_ASSERT(gdi);
+	WINPR_ASSERT(gdi->primary);
+
+	HGDI_DC hdc = gdi->primary->hdc;
+	WINPR_ASSERT(hdc);
+	if (!hdc->hwnd)
+		return TRUE;
+
+	HGDI_WND hwnd = hdc->hwnd;
+	if (!hwnd->invalid)
+		return TRUE;
+	hwnd->invalid->null = TRUE;
 	return TRUE;
 }
 
 BOOL ios_ui_end_paint(rdpContext *context)
 {
-	mfInfo *mfi = MFI_FROM_INSTANCE(context->instance);
-	rdpGdi *gdi = context->gdi;
-	CGRect dirty_rect =
-	    CGRectMake(gdi->primary->hdc->hwnd->invalid->x, gdi->primary->hdc->hwnd->invalid->y,
-	               gdi->primary->hdc->hwnd->invalid->w, gdi->primary->hdc->hwnd->invalid->h);
+	WINPR_ASSERT(context);
 
-	if (!gdi->primary->hdc->hwnd->invalid->null)
+	mfInfo *mfi = MFI_FROM_INSTANCE(context->instance);
+	WINPR_ASSERT(mfi);
+
+	rdpGdi *gdi = context->gdi;
+	WINPR_ASSERT(gdi);
+	WINPR_ASSERT(gdi->primary);
+
+	HGDI_DC hdc = gdi->primary->hdc;
+	WINPR_ASSERT(hdc);
+	if (!hdc->hwnd)
+		return TRUE;
+
+	HGDI_WND hwnd = hdc->hwnd;
+	WINPR_ASSERT(hwnd->invalid || (hwnd->ninvalid == 0));
+
+	if (hwnd->invalid->null)
+		return TRUE;
+
+	CGRect dirty_rect =
+	    CGRectMake(hwnd->invalid->x, hwnd->invalid->y, hwnd->invalid->w, hwnd->invalid->h);
+
+	if (!hwnd->invalid->null)
 		[mfi->session performSelectorOnMainThread:@selector(setNeedsDisplayInRectAsValue:)
 		                               withObject:[NSValue valueWithCGRect:dirty_rect]
 		                            waitUntilDone:NO];
@@ -158,11 +229,52 @@ BOOL ios_ui_resize_window(rdpContext *context)
 	settings = context->settings;
 	gdi = context->gdi;
 
-	if (!gdi_resize(gdi, settings->DesktopWidth, settings->DesktopHeight))
+	if (!gdi_resize(gdi, freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
+	                freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight)))
 		return FALSE;
 
 	ios_resize_display_buffer(MFI_FROM_INSTANCE(context->instance));
 	return TRUE;
+}
+
+#pragma mark -
+#pragma mark Clipboard
+
+void ios_ui_set_clipboard_text(rdpContext *context, const char *text, UINT32 size)
+{
+	WINPR_ASSERT(context);
+
+	mfInfo *mfi = MFI_FROM_INSTANCE(context->instance);
+	WINPR_ASSERT(mfi);
+
+	NSString *string = [[NSString alloc] initWithBytes:text
+	                                            length:size
+	                                          encoding:NSUTF8StringEncoding];
+	if (string)
+		[mfi->session performSelectorOnMainThread:@selector(setRemoteClipboardText:)
+		                               withObject:string
+		                            waitUntilDone:NO];
+	[string release];
+}
+
+char *ios_ui_get_clipboard_text(rdpContext *context)
+{
+	WINPR_ASSERT(context);
+
+	mfInfo *mfi = MFI_FROM_INSTANCE(context->instance);
+	WINPR_ASSERT(mfi);
+
+	// called on the cliprdr channel thread, which has no autorelease pool
+	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+	NSMutableDictionary *params = [NSMutableDictionary dictionary];
+	[mfi->session performSelectorOnMainThread:@selector(sessionRequestsClipboardTextWithParams:)
+	                               withObject:params
+	                            waitUntilDone:YES];
+
+	NSString *text = [params objectForKey:@"text"];
+	char *result = text ? _strdup([text UTF8String]) : nullptr;
+	[pool release];
+	return result;
 }
 
 #pragma mark -
@@ -176,7 +288,7 @@ static void ios_create_bitmap_context(mfInfo *mfi)
 	rdpGdi *gdi = mfi->instance->context->gdi;
 	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
 
-	if (GetBytesPerPixel(gdi->dstFormat) == 2)
+	if (FreeRDPGetBytesPerPixel(gdi->dstFormat) == 2)
 		mfi->bitmap_context = CGBitmapContextCreate(
 		    gdi->primary_buffer, gdi->width, gdi->height, 5, gdi->stride, colorSpace,
 		    kCGBitmapByteOrder16Little | kCGImageAlphaNoneSkipFirst);
@@ -200,7 +312,7 @@ void ios_resize_display_buffer(mfInfo *mfi)
 {
 	// Release the old context in a thread-safe manner
 	CGContextRef old_context = mfi->bitmap_context;
-	mfi->bitmap_context = NULL;
+	mfi->bitmap_context = nullptr;
 	CGContextRelease(old_context);
 	// Create the new context
 	ios_create_bitmap_context(mfi);

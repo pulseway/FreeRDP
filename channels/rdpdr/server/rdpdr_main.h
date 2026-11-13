@@ -31,61 +31,25 @@
 #include <freerdp/settings.h>
 #include <freerdp/server/rdpdr.h>
 
-struct _rdpdr_server_private
+typedef struct S_RDPDR_IRP RDPDR_IRP;
+typedef UINT (*RDPDR_IRP_Callback)(RdpdrServerContext* context, wStream* s, struct S_RDPDR_IRP* irp,
+                                   UINT32 deviceId, UINT32 completionId, UINT32 ioStatus);
+
+/** IRP request structure */
+struct S_RDPDR_IRP
 {
-	HANDLE Thread;
-	HANDLE StopEvent;
-	void* ChannelHandle;
-
-	UINT32 ClientId;
-	UINT16 VersionMajor;
-	UINT16 VersionMinor;
-	char* ClientComputerName;
-
-	BOOL UserLoggedOnPdu;
-
-	wListDictionary* IrpList;
-	UINT32 NextCompletionId;
+	UINT32 CompletionId;         /**< IRP completion identifier */
+	UINT32 DeviceId;             /**< Target device identifier */
+	UINT32 FileId;               /**< File handle identifier */
+	UINT32 IoControlCode;        /**< I/O control code */
+	char* PathName;              /**< File path name */
+	char* ExtraBuffer;           /**< Data buffer */
+	void* CallbackData;          /**< User callback data */
+	RDPDR_IRP_Callback Callback; /**< Completion callback function */
+	BOOL ReplaceIfExists;        /**< Rename: replace an existing target @since version 3.33.0 */
+	UINT32 InfoClass;            /**< Set information: FsInformationClass @since version 3.33.0 */
+	UINT32 InfoLength;   /**< Set information: bytes used in InfoBuffer @since version 3.33.0 */
+	BYTE InfoBuffer[64]; /**< Set information: the information to set @since version 3.33.0 */
 };
-
-#define RDPDR_HEADER_LENGTH 4
-
-struct _RDPDR_HEADER
-{
-	UINT16 Component;
-	UINT16 PacketId;
-};
-typedef struct _RDPDR_HEADER RDPDR_HEADER;
-
-#define RDPDR_VERSION_MAJOR 0x0001
-
-#define RDPDR_VERSION_MINOR_RDP50 0x0002
-#define RDPDR_VERSION_MINOR_RDP51 0x0005
-#define RDPDR_VERSION_MINOR_RDP52 0x000A
-#define RDPDR_VERSION_MINOR_RDP6X 0x000C
-
-#define RDPDR_CAPABILITY_HEADER_LENGTH 8
-
-struct _RDPDR_CAPABILITY_HEADER
-{
-	UINT16 CapabilityType;
-	UINT16 CapabilityLength;
-	UINT32 Version;
-};
-typedef struct _RDPDR_CAPABILITY_HEADER RDPDR_CAPABILITY_HEADER;
-
-struct _RDPDR_IRP
-{
-	UINT32 CompletionId;
-	UINT32 DeviceId;
-	UINT32 FileId;
-	char PathName[256];
-	char ExtraBuffer[256];
-	void* CallbackData;
-	UINT(*Callback)
-	(RdpdrServerContext* context, wStream* s, struct _RDPDR_IRP* irp, UINT32 deviceId,
-	 UINT32 completionId, UINT32 ioStatus);
-};
-typedef struct _RDPDR_IRP RDPDR_IRP;
 
 #endif /* FREERDP_CHANNEL_RDPDR_SERVER_MAIN_H */

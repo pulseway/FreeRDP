@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,7 +27,7 @@
 
 #define TAG FREERDP_TAG("utils")
 
-struct _PROFILER
+struct S_PROFILER
 {
 	char* name;
 	STOPWATCH* stopwatch;
@@ -40,7 +38,7 @@ PROFILER* profiler_create(const char* name)
 	PROFILER* profiler = (PROFILER*)calloc(1, sizeof(PROFILER));
 
 	if (!profiler)
-		return NULL;
+		return nullptr;
 
 	profiler->name = _strdup(name);
 	profiler->stopwatch = stopwatch_create();
@@ -51,7 +49,7 @@ PROFILER* profiler_create(const char* name)
 	return profiler;
 fail:
 	profiler_free(profiler);
-	return NULL;
+	return nullptr;
 }
 
 void profiler_free(PROFILER* profiler)

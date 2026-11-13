@@ -20,17 +20,33 @@
 #ifndef WINPR_SSPI_NTLM_AV_PAIRS_H
 #define WINPR_SSPI_NTLM_AV_PAIRS_H
 
+#include <winpr/config.h>
+
 #include "ntlm.h"
 
 #include <winpr/stream.h>
 
+WINPR_ATTR_NODISCARD
 ULONG ntlm_av_pair_list_length(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList);
+
+#ifdef WITH_DEBUG_NTLM
 void ntlm_print_av_pair_list(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList);
-PBYTE ntlm_av_pair_get_value_pointer(NTLM_AV_PAIR* pAvPair);
+#endif
+
+WINPR_ATTR_NODISCARD
+PBYTE ntlm_av_pair_get_value_pointer(NTLM_AV_PAIR* pAvPair, size_t cbAvPairLen);
+
+WINPR_ATTR_NODISCARD
+size_t ntlm_av_pair_get_length(NTLM_AV_PAIR* pAvPair);
+
+WINPR_ATTR_NODISCARD
 NTLM_AV_PAIR* ntlm_av_pair_get(NTLM_AV_PAIR* pAvPairList, size_t cbAvPairList, NTLM_AV_ID AvId,
                                size_t* pcbAvPairListRemaining);
 
-int ntlm_construct_challenge_target_info(NTLM_CONTEXT* context);
-int ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context);
+WINPR_ATTR_NODISCARD
+BOOL ntlm_construct_challenge_target_info(NTLM_CONTEXT* context);
+
+WINPR_ATTR_NODISCARD
+BOOL ntlm_construct_authenticate_target_info(NTLM_CONTEXT* context);
 
 #endif /* WINPR_SSPI_NTLM_AV_PAIRS_H */

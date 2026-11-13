@@ -16,9 +16,11 @@ int TestPathShell(int argc, char* argv[])
 		                    "KNOWN_PATH_XDG_CACHE_HOME", "KNOWN_PATH_XDG_RUNTIME_DIR",
 		                    "KNOWN_PATH_XDG_CONFIG_HOME" };
 	int rc = 0;
-	size_t x;
 
-	for (x = 0; x < sizeof(paths) / sizeof(paths[0]); x++)
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
+
+	for (size_t x = 0; x < sizeof(paths) / sizeof(paths[0]); x++)
 	{
 		const int id = paths[x];
 		const char* name = names[x];
@@ -27,6 +29,7 @@ int TestPathShell(int argc, char* argv[])
 
 			if (!path)
 			{
+				(void)fprintf(stderr, "GetKnownPath(%d) failed\n", id);
 				rc = -1;
 			}
 			else
@@ -40,6 +43,7 @@ int TestPathShell(int argc, char* argv[])
 
 			if (!path)
 			{
+				(void)fprintf(stderr, "GetKnownSubPath(%d) failed\n", id);
 				rc = -1;
 			}
 			else

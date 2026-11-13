@@ -21,8 +21,6 @@
 
 #include <winpr/spec.h>
 
-/* Don't do any export */
-#if 0
 #if defined _WIN32 || defined __CYGWIN__
 #ifdef RDTK_EXPORTS
 #ifdef __GNUC__
@@ -39,12 +37,16 @@
 #endif
 #else
 #if __GNUC__ >= 4
+#if defined(__cplusplus) && (__cplusplus >= 201703L)
+#define RDTK_EXPORT [[gnu::visibility("default")]]
+#elif defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 202311L)
+#define RDTK_EXPORT [[gnu::visibility("default")]]
+#else
 #define RDTK_EXPORT __attribute__((visibility("default")))
+#endif
 #else
 #define RDTK_EXPORT
 #endif
 #endif
-#endif
-#define RDTK_EXPORT
 
 #endif /* RDTK_API_H */

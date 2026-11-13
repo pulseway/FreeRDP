@@ -27,21 +27,25 @@
 
 #include <freerdp/server/shadow.h>
 
+/* GFX frames a client may have unacknowledged before it gets no new one, like xrdp's
+ * XRDP_GFX_FRAMES_IN_FLIGHT=8; FREERDP_SHADOW_GFX_FRAMES_IN_FLIGHT overrides it */
+#define SHADOW_GFX_FRAMES_IN_FLIGHT 8
+
 struct rdp_shadow_encoder
 {
 	rdpShadowClient* client;
 	rdpShadowServer* server;
 
-	int width;
-	int height;
+	UINT32 width;
+	UINT32 height;
 	UINT32 codecs;
 
 	BYTE** grid;
-	int gridWidth;
-	int gridHeight;
+	UINT32 gridWidth;
+	UINT32 gridHeight;
 	BYTE* gridBuffer;
-	int maxTileWidth;
-	int maxTileHeight;
+	UINT32 maxTileWidth;
+	UINT32 maxTileHeight;
 
 	wStream* bs;
 
@@ -50,13 +54,44 @@ struct rdp_shadow_encoder
 	BITMAP_PLANAR_CONTEXT* planar;
 	BITMAP_INTERLEAVED_CONTEXT* interleaved;
 	H264_CONTEXT* h264;
-
-	int fps;
-	int maxFps;
+	PROGRESSIVE_CONTEXT* progressive;
+#if defined(WITH_GFX_AV1)
+	FREERDP_AV1_CONTEXT* av1;
+#endif
+#if defined(WITH_GFX_AV2)
+	FREERDP_AV2_CONTEXT* av2;
+#endif
+#if defined(WITH_GFX_AZURE)
+	FREERDP_HEVC_CONTEXT* hevc;
+#endif
+	UINT32 fps;
+	UINT32 maxFps;
 	BOOL frameAck;
 	UINT32 frameId;
 	UINT32 lastAckframeId;
 	UINT32 queueDepth;
+
+	/* GFX flow control (shadow_client.c): no new frame while maxInFlight frames are not
+	 * acknowledged (0: no limit). gfxHeld: a round's damage waits in the client's region. */
+	UINT32 maxInFlight;
+	UINT64 lastAckTick;
+	BOOL gfxHeld;
+	BOOL everAcked; /* the client acknowledged a frame at least once */
+	BOOL warnedNoAck;
+	UINT32 statsMaxInFlight;
+	UINT64 statsHeld;
+	UINT64 statsLogged;
+
+	/* GFX RFX dirty tile skipping (shadow_rfx_dirty.c): snapshot of the last
+	 * encoded content (BGRX copy sharing the surface geometry) plus per tile
+	 * encoded flags. Only used by the GFX RFX path; a missing or mismatching
+	 * snapshot encodes the frame in full. */
+	BYTE* gfxSnapshot;
+	BOOL* gfxTileEncoded;
+	UINT32 gfxSnapshotWidth;
+	UINT32 gfxSnapshotHeight;
+	UINT32 gfxSnapshotStep;
+	BOOL gfxSnapshotValid;
 };
 
 #ifdef __cplusplus
@@ -64,12 +99,14 @@ extern "C"
 {
 #endif
 
-	int shadow_encoder_reset(rdpShadowEncoder* encoder);
-	int shadow_encoder_prepare(rdpShadowEncoder* encoder, UINT32 codecs);
-	UINT32 shadow_encoder_create_frame_id(rdpShadowEncoder* encoder);
+	WINPR_ATTR_NODISCARD int shadow_encoder_reset(rdpShadowEncoder* encoder);
+	WINPR_ATTR_NODISCARD int shadow_encoder_prepare(rdpShadowEncoder* encoder, UINT32 codecs);
+	WINPR_ATTR_NODISCARD UINT32 shadow_encoder_create_frame_id(rdpShadowEncoder* encoder);
 
-	rdpShadowEncoder* shadow_encoder_new(rdpShadowClient* client);
 	void shadow_encoder_free(rdpShadowEncoder* encoder);
+
+	WINPR_ATTR_MALLOC(shadow_encoder_free, 1)
+	rdpShadowEncoder* shadow_encoder_new(rdpShadowClient* client);
 
 #ifdef __cplusplus
 }

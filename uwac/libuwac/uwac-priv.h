@@ -23,7 +23,7 @@
 #ifndef UWAC_PRIV_H_
 #define UWAC_PRIV_H_
 
-#include "config.h"
+#include <uwac/config.h>
 
 #include <stdbool.h>
 #include <wayland-client.h>
@@ -31,6 +31,8 @@
 #include "keyboard-shortcuts-inhibit-unstable-v1-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "server-decoration-client-protocol.h"
+#include "viewporter-client-protocol.h"
+#include "linux-dmabuf-v1-client-protocol.h"
 
 #ifdef BUILD_IVI
 #include "ivi-application-client-protocol.h"
@@ -39,7 +41,7 @@
 #include "fullscreen-shell-unstable-v1-client-protocol.h"
 #endif
 
-#ifdef HAVE_PIXMAN_REGION
+#ifdef UWAC_HAVE_PIXMAN_REGION
 #include <pixman-1/pixman.h>
 #else
 #include <freerdp/codec/region.h>
@@ -53,14 +55,16 @@ extern UwacErrorHandler uwacErrorHandler;
 
 typedef struct uwac_task UwacTask;
 
-/** @brief */
+/** @brief task struct
+ */
 struct uwac_task
 {
 	void (*run)(UwacTask* task, uint32_t events);
 	struct wl_list link;
 };
 
-/** @brief a global registry object */
+/** @brief a global registry object
+ */
 struct uwac_global
 {
 	uint32_t name;
@@ -73,14 +77,16 @@ typedef struct uwac_global UwacGlobal;
 struct uwac_event_list_item;
 typedef struct uwac_event_list_item UwacEventListItem;
 
-/** @brief */
+/** @brief double linked list element
+ */
 struct uwac_event_list_item
 {
 	UwacEvent event;
 	UwacEventListItem *tail, *head;
 };
 
-/** @brief main connection object to a wayland display */
+/** @brief main connection object to a wayland display
+ */
 struct uwac_display
 {
 	struct wl_list globals;
@@ -88,6 +94,7 @@ struct uwac_display
 	struct wl_display* display;
 	struct wl_registry* registry;
 	struct wl_compositor* compositor;
+	struct wp_viewporter* viewporter;
 	struct wl_subcompositor* subcompositor;
 	struct wl_shell* shell;
 	struct xdg_toplevel* xdg_toplevel;
@@ -104,6 +111,7 @@ struct uwac_display
 #endif
 
 	struct wl_shm* shm;
+	struct zwp_linux_dmabuf_v1* linux_dmabuf;
 	enum wl_shm_format* shm_formats;
 	uint32_t shm_formats_nb;
 	bool has_rgb565;
@@ -121,6 +129,8 @@ struct uwac_display
 	bool running;
 	UwacTask dispatch_fd_task;
 	uint32_t serial;
+	uint32_t pointer_focus_serial;
+	int actual_scale;
 
 	struct wl_list windows;
 
@@ -147,6 +157,8 @@ struct uwac_output
 	struct wl_output* output;
 
 	struct wl_list link;
+	char* name;
+	char* description;
 };
 
 /** @brief a seat attached to a wayland display */
@@ -199,7 +211,7 @@ struct uwac_seat
 
 	int repeat_timer_fd;
 	UwacTask repeat_task;
-	float sx, sy;
+	double sx, sy;
 	struct wl_list link;
 
 	void* data_context;
@@ -213,7 +225,7 @@ struct uwac_buffer
 {
 	bool used;
 	bool dirty;
-#ifdef HAVE_PIXMAN_REGION
+#ifdef UWAC_HAVE_PIXMAN_REGION
 	pixman_region32_t damage;
 #else
 	REGION16 damage;
@@ -232,14 +244,15 @@ struct uwac_window
 	int surfaceStates;
 	enum wl_shm_format format;
 
-	int nbuffers;
+	size_t nbuffers;
 	UwacBuffer* buffers;
 
 	struct wl_region* opaque_region;
 	struct wl_region* input_region;
-	SSIZE_T drawingBufferIdx;
-	SSIZE_T pendingBufferIdx;
+	ssize_t drawingBufferIdx;
+	ssize_t pendingBufferIdx;
 	struct wl_surface* surface;
+	struct wp_viewport* viewport;
 	struct wl_shell_surface* shell_surface;
 	struct xdg_surface* xdg_surface;
 	struct xdg_toplevel* xdg_toplevel;
@@ -254,6 +267,14 @@ struct uwac_window
 	uint32_t pointer_cursor_serial;
 	int pointer_current_cursor;
 };
+
+/**@brief data to pass to wl_buffer release listener */
+struct uwac_buffer_release_data
+{
+	UwacWindow* window;
+	size_t bufferIdx;
+};
+typedef struct uwac_buffer_release_data UwacBufferReleaseData;
 
 /* in uwa-display.c */
 UwacEvent* UwacDisplayNewEvent(UwacDisplay* d, int type);

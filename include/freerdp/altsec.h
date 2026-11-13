@@ -36,195 +36,175 @@
 #define STREAM_BITMAP_COMPRESSED 0x02
 #define STREAM_BITMAP_V2 0x04
 
-struct _OFFSCREEN_DELETE_LIST
+#ifdef __cplusplus
+extern "C"
 {
-	UINT32 sIndices;
-	UINT32 cIndices;
-	UINT16* indices;
-};
-typedef struct _OFFSCREEN_DELETE_LIST OFFSCREEN_DELETE_LIST;
+#endif
 
-struct _CREATE_OFFSCREEN_BITMAP_ORDER
-{
-	UINT32 id;
-	UINT32 cx;
-	UINT32 cy;
-	OFFSCREEN_DELETE_LIST deleteList;
-};
-typedef struct _CREATE_OFFSCREEN_BITMAP_ORDER CREATE_OFFSCREEN_BITMAP_ORDER;
+	typedef struct
+	{
+		UINT32 sIndices;
+		UINT32 cIndices;
+		UINT16* indices;
+	} OFFSCREEN_DELETE_LIST;
 
-struct _SWITCH_SURFACE_ORDER
-{
-	UINT32 bitmapId;
-};
-typedef struct _SWITCH_SURFACE_ORDER SWITCH_SURFACE_ORDER;
+	typedef struct
+	{
+		UINT32 id;
+		UINT32 cx;
+		UINT32 cy;
+		OFFSCREEN_DELETE_LIST deleteList;
+	} CREATE_OFFSCREEN_BITMAP_ORDER;
 
-struct _NINE_GRID_BITMAP_INFO
-{
-	UINT32 flFlags;
-	UINT32 ulLeftWidth;
-	UINT32 ulRightWidth;
-	UINT32 ulTopHeight;
-	UINT32 ulBottomHeight;
-	UINT32 crTransparent;
-};
-typedef struct _NINE_GRID_BITMAP_INFO NINE_GRID_BITMAP_INFO;
+	typedef struct
+	{
+		UINT32 bitmapId;
+	} SWITCH_SURFACE_ORDER;
 
-struct _CREATE_NINE_GRID_BITMAP_ORDER
-{
-	UINT32 bitmapBpp;
-	UINT32 bitmapId;
-	UINT32 cx;
-	UINT32 cy;
-	NINE_GRID_BITMAP_INFO nineGridInfo;
-};
-typedef struct _CREATE_NINE_GRID_BITMAP_ORDER CREATE_NINE_GRID_BITMAP_ORDER;
+	typedef struct
+	{
+		UINT32 flFlags;
+		UINT32 ulLeftWidth;
+		UINT32 ulRightWidth;
+		UINT32 ulTopHeight;
+		UINT32 ulBottomHeight;
+		UINT32 crTransparent;
+	} NINE_GRID_BITMAP_INFO;
 
-struct _FRAME_MARKER_ORDER
-{
-	UINT32 action;
-};
-typedef struct _FRAME_MARKER_ORDER FRAME_MARKER_ORDER;
+	typedef struct
+	{
+		UINT32 bitmapBpp;
+		UINT32 bitmapId;
+		UINT32 cx;
+		UINT32 cy;
+		NINE_GRID_BITMAP_INFO nineGridInfo;
+	} CREATE_NINE_GRID_BITMAP_ORDER;
 
-struct _STREAM_BITMAP_FIRST_ORDER
-{
-	UINT32 bitmapFlags;
-	UINT32 bitmapBpp;
-	UINT32 bitmapType;
-	UINT32 bitmapWidth;
-	UINT32 bitmapHeight;
-	UINT32 bitmapSize;
-	UINT32 bitmapBlockSize;
-	BYTE* bitmapBlock;
-};
-typedef struct _STREAM_BITMAP_FIRST_ORDER STREAM_BITMAP_FIRST_ORDER;
+	typedef struct
+	{
+		UINT32 action;
+	} FRAME_MARKER_ORDER;
 
-struct _STREAM_BITMAP_NEXT_ORDER
-{
-	UINT32 bitmapFlags;
-	UINT32 bitmapType;
-	UINT32 bitmapBlockSize;
-	BYTE* bitmapBlock;
-};
-typedef struct _STREAM_BITMAP_NEXT_ORDER STREAM_BITMAP_NEXT_ORDER;
+	typedef struct
+	{
+		UINT32 bitmapFlags;
+		UINT32 bitmapBpp;
+		UINT32 bitmapType;
+		UINT32 bitmapWidth;
+		UINT32 bitmapHeight;
+		UINT32 bitmapSize;
+		UINT32 bitmapBlockSize;
+		BYTE* bitmapBlock;
+	} STREAM_BITMAP_FIRST_ORDER;
 
-struct _DRAW_GDIPLUS_FIRST_ORDER
-{
-	UINT32 cbSize;
-	UINT32 cbTotalSize;
-	UINT32 cbTotalEmfSize;
-	BYTE* emfRecords;
-};
-typedef struct _DRAW_GDIPLUS_FIRST_ORDER DRAW_GDIPLUS_FIRST_ORDER;
+	typedef struct
+	{
+		UINT32 bitmapFlags;
+		UINT32 bitmapType;
+		UINT32 bitmapBlockSize;
+		BYTE* bitmapBlock;
+	} STREAM_BITMAP_NEXT_ORDER;
 
-struct _DRAW_GDIPLUS_NEXT_ORDER
-{
-	UINT32 cbSize;
-	BYTE* emfRecords;
-};
-typedef struct _DRAW_GDIPLUS_NEXT_ORDER DRAW_GDIPLUS_NEXT_ORDER;
+	typedef struct
+	{
+		UINT32 cbSize;
+		UINT32 cbTotalSize;
+		UINT32 cbTotalEmfSize;
+		BYTE* emfRecords;
+	} DRAW_GDIPLUS_FIRST_ORDER;
 
-struct _DRAW_GDIPLUS_END_ORDER
-{
-	UINT32 cbSize;
-	UINT32 cbTotalSize;
-	UINT32 cbTotalEmfSize;
-	BYTE* emfRecords;
-};
-typedef struct _DRAW_GDIPLUS_END_ORDER DRAW_GDIPLUS_END_ORDER;
+	typedef struct
+	{
+		UINT32 cbSize;
+		BYTE* emfRecords;
+	} DRAW_GDIPLUS_NEXT_ORDER;
 
-struct _DRAW_GDIPLUS_CACHE_FIRST_ORDER
-{
-	UINT32 flags;
-	UINT32 cacheType;
-	UINT32 cacheIndex;
-	UINT32 cbSize;
-	UINT32 cbTotalSize;
-	BYTE* emfRecords;
-};
-typedef struct _DRAW_GDIPLUS_CACHE_FIRST_ORDER DRAW_GDIPLUS_CACHE_FIRST_ORDER;
+	typedef struct
+	{
+		UINT32 cbSize;
+		UINT32 cbTotalSize;
+		UINT32 cbTotalEmfSize;
+		BYTE* emfRecords;
+	} DRAW_GDIPLUS_END_ORDER;
 
-struct _DRAW_GDIPLUS_CACHE_NEXT_ORDER
-{
-	UINT32 flags;
-	UINT32 cacheType;
-	UINT32 cacheIndex;
-	UINT32 cbSize;
-	BYTE* emfRecords;
-};
-typedef struct _DRAW_GDIPLUS_CACHE_NEXT_ORDER DRAW_GDIPLUS_CACHE_NEXT_ORDER;
+	typedef struct
+	{
+		UINT32 flags;
+		UINT32 cacheType;
+		UINT32 cacheIndex;
+		UINT32 cbSize;
+		UINT32 cbTotalSize;
+		BYTE* emfRecords;
+	} DRAW_GDIPLUS_CACHE_FIRST_ORDER;
 
-struct _DRAW_GDIPLUS_CACHE_END_ORDER
-{
-	UINT32 flags;
-	UINT32 cacheType;
-	UINT32 cacheIndex;
-	UINT32 cbSize;
-	UINT32 cbTotalSize;
-	BYTE* emfRecords;
-};
-typedef struct _DRAW_GDIPLUS_CACHE_END_ORDER DRAW_GDIPLUS_CACHE_END_ORDER;
+	typedef struct
+	{
+		UINT32 flags;
+		UINT32 cacheType;
+		UINT32 cacheIndex;
+		UINT32 cbSize;
+		BYTE* emfRecords;
+	} DRAW_GDIPLUS_CACHE_NEXT_ORDER;
 
-typedef BOOL (*pCreateOffscreenBitmap)(
-    rdpContext* context, const CREATE_OFFSCREEN_BITMAP_ORDER* create_offscreen_bitmap);
-typedef BOOL (*pSwitchSurface)(rdpContext* context, const SWITCH_SURFACE_ORDER* switch_surface);
-typedef BOOL (*pCreateNineGridBitmap)(rdpContext* context,
-                                      const CREATE_NINE_GRID_BITMAP_ORDER* create_nine_grid_bitmap);
-typedef BOOL (*pFrameMarker)(rdpContext* context, const FRAME_MARKER_ORDER* frame_marker);
-typedef BOOL (*pStreamBitmapFirst)(rdpContext* context,
-                                   const STREAM_BITMAP_FIRST_ORDER* stream_bitmap_first);
-typedef BOOL (*pStreamBitmapNext)(rdpContext* context,
-                                  const STREAM_BITMAP_NEXT_ORDER* stream_bitmap_next);
-typedef BOOL (*pDrawGdiPlusFirst)(rdpContext* context,
-                                  const DRAW_GDIPLUS_FIRST_ORDER* draw_gdiplus_first);
-typedef BOOL (*pDrawGdiPlusNext)(rdpContext* context,
-                                 const DRAW_GDIPLUS_NEXT_ORDER* draw_gdiplus_next);
-typedef BOOL (*pDrawGdiPlusEnd)(rdpContext* context,
-                                const DRAW_GDIPLUS_END_ORDER* draw_gdiplus_end);
-typedef BOOL (*pDrawGdiPlusCacheFirst)(
-    rdpContext* context, const DRAW_GDIPLUS_CACHE_FIRST_ORDER* draw_gdiplus_cache_first);
-typedef BOOL (*pDrawGdiPlusCacheNext)(rdpContext* context,
-                                      const DRAW_GDIPLUS_CACHE_NEXT_ORDER* draw_gdiplus_cache_next);
-typedef BOOL (*pDrawGdiPlusCacheEnd)(rdpContext* context,
-                                     const DRAW_GDIPLUS_CACHE_END_ORDER* draw_gdiplus_cache_end);
-typedef BOOL (*pDrawOrderInfo)(rdpContext* context, UINT8 orderType, const char* orderName);
+	typedef struct
+	{
+		UINT32 flags;
+		UINT32 cacheType;
+		UINT32 cacheIndex;
+		UINT32 cbSize;
+		UINT32 cbTotalSize;
+		BYTE* emfRecords;
+	} DRAW_GDIPLUS_CACHE_END_ORDER;
 
-struct rdp_altsec_update
-{
-	rdpContext* context;     /* 0 */
-	UINT32 paddingA[16 - 1]; /* 1 */
+	typedef BOOL (*pCreateOffscreenBitmap)(
+	    rdpContext* context, const CREATE_OFFSCREEN_BITMAP_ORDER* create_offscreen_bitmap);
+	typedef BOOL (*pSwitchSurface)(rdpContext* context, const SWITCH_SURFACE_ORDER* switch_surface);
+	typedef BOOL (*pCreateNineGridBitmap)(
+	    rdpContext* context, const CREATE_NINE_GRID_BITMAP_ORDER* create_nine_grid_bitmap);
+	typedef BOOL (*pFrameMarker)(rdpContext* context, const FRAME_MARKER_ORDER* frame_marker);
+	typedef BOOL (*pStreamBitmapFirst)(rdpContext* context,
+	                                   const STREAM_BITMAP_FIRST_ORDER* stream_bitmap_first);
+	typedef BOOL (*pStreamBitmapNext)(rdpContext* context,
+	                                  const STREAM_BITMAP_NEXT_ORDER* stream_bitmap_next);
+	typedef BOOL (*pDrawGdiPlusFirst)(rdpContext* context,
+	                                  const DRAW_GDIPLUS_FIRST_ORDER* draw_gdiplus_first);
+	typedef BOOL (*pDrawGdiPlusNext)(rdpContext* context,
+	                                 const DRAW_GDIPLUS_NEXT_ORDER* draw_gdiplus_next);
+	typedef BOOL (*pDrawGdiPlusEnd)(rdpContext* context,
+	                                const DRAW_GDIPLUS_END_ORDER* draw_gdiplus_end);
+	typedef BOOL (*pDrawGdiPlusCacheFirst)(
+	    rdpContext* context, const DRAW_GDIPLUS_CACHE_FIRST_ORDER* draw_gdiplus_cache_first);
+	typedef BOOL (*pDrawGdiPlusCacheNext)(
+	    rdpContext* context, const DRAW_GDIPLUS_CACHE_NEXT_ORDER* draw_gdiplus_cache_next);
+	typedef BOOL (*pDrawGdiPlusCacheEnd)(
+	    rdpContext* context, const DRAW_GDIPLUS_CACHE_END_ORDER* draw_gdiplus_cache_end);
+	typedef BOOL (*pDrawOrderInfo)(rdpContext* context, UINT8 orderType, const char* orderName);
 
-	pCreateOffscreenBitmap CreateOffscreenBitmap; /* 16 */
-	pSwitchSurface SwitchSurface;                 /* 17 */
-	pCreateNineGridBitmap CreateNineGridBitmap;   /* 18 */
-	pFrameMarker FrameMarker;                     /* 19 */
-	pStreamBitmapFirst StreamBitmapFirst;         /* 20 */
-	pStreamBitmapNext StreamBitmapNext;           /* 21 */
-	pDrawGdiPlusFirst DrawGdiPlusFirst;           /* 22 */
-	pDrawGdiPlusNext DrawGdiPlusNext;             /* 23 */
-	pDrawGdiPlusEnd DrawGdiPlusEnd;               /* 24 */
-	pDrawGdiPlusCacheFirst DrawGdiPlusCacheFirst; /* 25 */
-	pDrawGdiPlusCacheNext DrawGdiPlusCacheNext;   /* 26 */
-	pDrawGdiPlusCacheEnd DrawGdiPlusCacheEnd;     /* 27 */
-	/* Statistics callback */
-	pDrawOrderInfo DrawOrderInfo; /* 28 */
-	UINT32 paddingB[32 - 29];     /* 29 */
+	struct rdp_altsec_update
+	{
+		rdpContext* context;     /* 0 */
+		UINT32 paddingA[16 - 1]; /* 1 */
 
-	/* internal */
+		WINPR_ATTR_NODISCARD pCreateOffscreenBitmap CreateOffscreenBitmap; /* 16 */
+		WINPR_ATTR_NODISCARD pSwitchSurface SwitchSurface;                 /* 17 */
+		WINPR_ATTR_NODISCARD pCreateNineGridBitmap CreateNineGridBitmap;   /* 18 */
+		WINPR_ATTR_NODISCARD pFrameMarker FrameMarker;                     /* 19 */
+		WINPR_ATTR_NODISCARD pStreamBitmapFirst StreamBitmapFirst;         /* 20 */
+		WINPR_ATTR_NODISCARD pStreamBitmapNext StreamBitmapNext;           /* 21 */
+		WINPR_ATTR_NODISCARD pDrawGdiPlusFirst DrawGdiPlusFirst;           /* 22 */
+		WINPR_ATTR_NODISCARD pDrawGdiPlusNext DrawGdiPlusNext;             /* 23 */
+		WINPR_ATTR_NODISCARD pDrawGdiPlusEnd DrawGdiPlusEnd;               /* 24 */
+		WINPR_ATTR_NODISCARD pDrawGdiPlusCacheFirst DrawGdiPlusCacheFirst; /* 25 */
+		WINPR_ATTR_NODISCARD pDrawGdiPlusCacheNext DrawGdiPlusCacheNext;   /* 26 */
+		WINPR_ATTR_NODISCARD pDrawGdiPlusCacheEnd DrawGdiPlusCacheEnd;     /* 27 */
+		                                                                   /* Statistics callback */
+		WINPR_ATTR_NODISCARD pDrawOrderInfo DrawOrderInfo;                 /* 28 */
+		UINT32 paddingB[32 - 29];     /* 29 */
+	};
+	typedef struct rdp_altsec_update rdpAltSecUpdate;
 
-	CREATE_OFFSCREEN_BITMAP_ORDER create_offscreen_bitmap;
-	SWITCH_SURFACE_ORDER switch_surface;
-	CREATE_NINE_GRID_BITMAP_ORDER create_nine_grid_bitmap;
-	FRAME_MARKER_ORDER frame_marker;
-	STREAM_BITMAP_FIRST_ORDER stream_bitmap_first;
-	STREAM_BITMAP_NEXT_ORDER stream_bitmap_next;
-	DRAW_GDIPLUS_CACHE_FIRST_ORDER draw_gdiplus_cache_first;
-	DRAW_GDIPLUS_CACHE_NEXT_ORDER draw_gdiplus_cache_next;
-	DRAW_GDIPLUS_CACHE_END_ORDER draw_gdiplus_cache_end;
-	DRAW_GDIPLUS_FIRST_ORDER draw_gdiplus_first;
-	DRAW_GDIPLUS_NEXT_ORDER draw_gdiplus_next;
-	DRAW_GDIPLUS_END_ORDER draw_gdiplus_end;
-};
-typedef struct rdp_altsec_update rdpAltSecUpdate;
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_UPDATE_ALTSEC_H */

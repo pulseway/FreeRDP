@@ -18,15 +18,13 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
-#ifdef HAVE_UNISTD_H
+#ifdef WINPR_HAVE_UNISTD_H
 #include <unistd.h>
 #endif
 
-#include <assert.h>
+#include <winpr/assert.h>
 #include <errno.h>
 
 #include <winpr/crt.h>
@@ -61,63 +59,21 @@
 
 #include "../pipe/pipe.h"
 
-/* clock_gettime is not implemented on OSX prior to 10.12 */
-#ifdef __MACH__
-
-#include <mach/mach_time.h>
-
-#ifndef CLOCK_REALTIME
-#define CLOCK_REALTIME 0
-#endif
-
-#ifndef CLOCK_MONOTONIC
-#define CLOCK_MONOTONIC 0
-#endif
-
-/* clock_gettime is not implemented on OSX prior to 10.12 */
-int _mach_clock_gettime(int clk_id, struct timespec* t);
-
-int _mach_clock_gettime(int clk_id, struct timespec* t)
+static struct timespec ts_from_ns(void)
 {
-	UINT64 time;
-	double seconds;
-	double nseconds;
-	mach_timebase_info_data_t timebase;
-	mach_timebase_info(&timebase);
-	time = mach_absolute_time();
-	nseconds = ((double)time * (double)timebase.numer) / ((double)timebase.denom);
-	seconds = ((double)time * (double)timebase.numer) / ((double)timebase.denom * 1e9);
-	t->tv_sec = seconds;
-	t->tv_nsec = nseconds;
-	return 0;
+	const UINT64 ns = winpr_GetUnixTimeNS();
+	struct timespec timeout = WINPR_C_ARRAY_INIT;
+	timeout.tv_sec = WINPR_TIME_NS_TO_S(ns);
+	timeout.tv_nsec = WINPR_TIME_NS_REM_NS(ns);
+	return timeout;
 }
 
-/* if clock_gettime is declared, then __CLOCK_AVAILABILITY will be defined */
-#ifdef __CLOCK_AVAILABILITY
-/* If we compiled with Mac OSX 10.12 or later, then clock_gettime will be declared
- * * but it may be NULL at runtime. So we need to check before using it. */
-int _mach_safe_clock_gettime(int clk_id, struct timespec* t);
-
-int _mach_safe_clock_gettime(int clk_id, struct timespec* t)
-{
-	if (clock_gettime)
-	{
-		return clock_gettime(clk_id, t);
-	}
-
-	return _mach_clock_gettime(clk_id, t);
-}
-
-#define clock_gettime _mach_safe_clock_gettime
-#else
-#define clock_gettime _mach_clock_gettime
-#endif
-
-#endif
-
-/* Drop in replacement for pthread_mutex_timedlock
+/**
+ * Drop in replacement for pthread_mutex_timedlock
+ * http://code.google.com/p/android/issues/detail?id=7807
+ * http://aleksmaus.blogspot.ca/2011/12/missing-pthreadmutextimedlock-on.html
  */
-#if !defined(HAVE_PTHREAD_MUTEX_TIMEDLOCK)
+#if !defined(WINPR_HAVE_PTHREAD_MUTEX_TIMEDLOCK)
 #include <pthread.h>
 
 static long long ts_difftime(const struct timespec* o, const struct timespec* n)
@@ -127,28 +83,41 @@ static long long ts_difftime(const struct timespec* o, const struct timespec* n)
 	return newValue - oldValue;
 }
 
-static int pthread_mutex_timedlock(pthread_mutex_t* mutex, const struct timespec* timeout)
+#ifdef ANDROID
+#if (__ANDROID_API__ >= 21)
+#define CONST_NEEDED const
+#else
+#define CONST_NEEDED
+#endif
+#define STATIC_NEEDED
+#else /* ANDROID */
+#define CONST_NEEDED const
+#define STATIC_NEEDED static
+#endif
+
+STATIC_NEEDED int pthread_mutex_timedlock(pthread_mutex_t* mutex,
+                                          CONST_NEEDED struct timespec* timeout)
 {
-	struct timespec timenow;
-	struct timespec sleepytime;
-	unsigned long long diff;
-	int retcode;
+	struct timespec timenow = WINPR_C_ARRAY_INIT;
+	struct timespec sleepytime = WINPR_C_ARRAY_INIT;
+	unsigned long long diff = 0;
+	int retcode = -1;
 	/* This is just to avoid a completely busy wait */
-	clock_gettime(CLOCK_MONOTONIC, &timenow);
+	timenow = ts_from_ns();
 	diff = ts_difftime(&timenow, timeout);
 	sleepytime.tv_sec = diff / 1000000000LL;
 	sleepytime.tv_nsec = diff % 1000000000LL;
 
 	while ((retcode = pthread_mutex_trylock(mutex)) == EBUSY)
 	{
-		clock_gettime(CLOCK_MONOTONIC, &timenow);
+		timenow = ts_from_ns();
 
 		if (ts_difftime(timeout, &timenow) >= 0)
 		{
 			return ETIMEDOUT;
 		}
 
-		nanosleep(&sleepytime, NULL);
+		nanosleep(&sleepytime, nullptr);
 	}
 
 	return retcode;
@@ -165,9 +134,9 @@ static void ts_add_ms(struct timespec* ts, DWORD dwMilliseconds)
 
 DWORD WaitForSingleObjectEx(HANDLE hHandle, DWORD dwMilliseconds, BOOL bAlertable)
 {
-	ULONG Type;
-	WINPR_HANDLE* Object;
-	WINPR_POLL_SET pollset;
+	ULONG Type = 0;
+	WINPR_HANDLE* Object = nullptr;
+	WINPR_POLL_SET pollset = WINPR_C_ARRAY_INIT;
 
 	if (!winpr_Handle_GetInfo(hHandle, &Type, &Object))
 	{
@@ -176,31 +145,62 @@ DWORD WaitForSingleObjectEx(HANDLE hHandle, DWORD dwMilliseconds, BOOL bAlertabl
 		return WAIT_FAILED;
 	}
 
-	if (Type == HANDLE_TYPE_PROCESS)
+	if (Type == HANDLE_TYPE_PROCESS && winpr_Handle_getFd(hHandle) == -1)
 	{
+		/* note: if we have pidfd support (under linux and we have managed to associate a
+		 * 		pidfd with our process), we use the regular method with pollset below.
+		 * 		If not (on other platforms) we do a waitpid */
 		WINPR_PROCESS* process = (WINPR_PROCESS*)Object;
 
-		if (process->pid != waitpid(process->pid, &(process->status), 0))
+		while (TRUE)
 		{
-			WLog_ERR(TAG, "waitpid failure [%d] %s", errno, strerror(errno));
-			SetLastError(ERROR_INTERNAL_ERROR);
-			return WAIT_FAILED;
-		}
+			int ret = waitpid(process->pid, &(process->status), WNOHANG);
+			if (ret == process->pid)
+			{
+				if (WIFEXITED(process->status))
+					process->dwExitCode = (DWORD)WEXITSTATUS(process->status);
+				else if (WIFSIGNALED(process->status))
+					process->dwExitCode = (DWORD)(128 + WTERMSIG(process->status));
+				else
+					process->dwExitCode = (DWORD)process->status;
+				return WAIT_OBJECT_0;
+			}
+			else if (ret < 0)
+			{
+				char ebuffer[256] = WINPR_C_ARRAY_INIT;
+				WLog_ERR(TAG, "waitpid failure [%d] %s", errno,
+				         winpr_strerror(errno, ebuffer, sizeof(ebuffer)));
+				SetLastError(ERROR_INTERNAL_ERROR);
+				return WAIT_FAILED;
+			}
 
-		process->dwExitCode = (DWORD)process->status;
-		return WAIT_OBJECT_0;
+			if (dwMilliseconds == 0)
+				return WAIT_TIMEOUT;
+
+			/* sleep by slices of 50ms */
+			DWORD waitDelay = 50;
+			if (dwMilliseconds != INFINITE)
+			{
+				if (dwMilliseconds < 50)
+					waitDelay = dwMilliseconds;
+				dwMilliseconds -= waitDelay;
+			}
+
+			DWORD status = SleepEx(waitDelay, bAlertable);
+			if (status != 0)
+				return status;
+		}
 	}
 
 	if (Type == HANDLE_TYPE_MUTEX)
 	{
-		WINPR_MUTEX* mutex;
-		mutex = (WINPR_MUTEX*)Object;
+		WINPR_MUTEX* mutex = (WINPR_MUTEX*)Object;
 
 		if (dwMilliseconds != INFINITE)
 		{
-			int status;
-			struct timespec timeout;
-			clock_gettime(CLOCK_MONOTONIC, &timeout);
+			int status = 0;
+			struct timespec timeout = ts_from_ns();
+
 			ts_add_ms(&timeout, dwMilliseconds);
 			status = pthread_mutex_timedlock(&mutex->mutex, &timeout);
 
@@ -216,28 +216,30 @@ DWORD WaitForSingleObjectEx(HANDLE hHandle, DWORD dwMilliseconds, BOOL bAlertabl
 	}
 	else
 	{
-		int status;
-		WINPR_THREAD* thread;
+		int status = -1;
+		WINPR_THREAD* thread = nullptr;
 		BOOL isSet = FALSE;
 		size_t extraFds = 0;
-		DWORD ret;
+		DWORD ret = 0;
 		BOOL autoSignaled = FALSE;
 
 		if (bAlertable)
 		{
 			thread = (WINPR_THREAD*)_GetCurrentThread();
-			if (!thread)
+			if (thread)
 			{
-				WLog_ERR(TAG, "failed to retrieve currentThread");
-				return WAIT_FAILED;
+				/* treat reentrancy, we can't switch to alertable state when we're already
+				   treating completions */
+				if (thread->apc.treatingCompletions)
+					bAlertable = FALSE;
+				else
+					extraFds = thread->apc.length;
 			}
-
-			/* treat reentrancy, we can't switch to alertable state when we're already
-			   treating completions */
-			if (thread->apc.treatingCompletions)
-				bAlertable = FALSE;
 			else
-				extraFds = thread->apc.length;
+			{
+				/* called from a non WinPR thread */
+				bAlertable = FALSE;
+			}
 		}
 
 		int fd = winpr_Handle_getFd(Object);
@@ -272,7 +274,9 @@ DWORD WaitForSingleObjectEx(HANDLE hHandle, DWORD dwMilliseconds, BOOL bAlertabl
 			status = pollset_poll(&pollset, dwMilliseconds);
 			if (status < 0)
 			{
-				WLog_ERR(TAG, "waitOnFd() failure [%d] %s", errno, strerror(errno));
+				char ebuffer[256] = WINPR_C_ARRAY_INIT;
+				WLog_ERR(TAG, "pollset_poll() failure [%d] %s", errno,
+				         winpr_strerror(errno, ebuffer, sizeof(ebuffer)));
 				goto out;
 			}
 		}
@@ -304,20 +308,20 @@ DWORD WaitForSingleObject(HANDLE hHandle, DWORD dwMilliseconds)
 DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWaitAll,
                                DWORD dwMilliseconds, BOOL bAlertable)
 {
-	DWORD signalled;
-	DWORD polled;
-	DWORD* poll_map = NULL;
-	BOOL* signalled_handles = NULL;
+	DWORD signalled = 0;
+	DWORD polled = 0;
+	DWORD poll_map[MAXIMUM_WAIT_OBJECTS] = WINPR_C_ARRAY_INIT;
+	BOOL signalled_handles[MAXIMUM_WAIT_OBJECTS] = { FALSE };
 	int fd = -1;
-	DWORD index;
-	int status;
-	ULONG Type;
-	WINPR_HANDLE* Object;
-	WINPR_THREAD* thread;
-	WINPR_POLL_SET pollset;
+	int status = -1;
+	ULONG Type = 0;
+	WINPR_HANDLE* Object = nullptr;
+	WINPR_THREAD* thread = nullptr;
+	WINPR_POLL_SET pollset = WINPR_C_ARRAY_INIT;
 	DWORD ret = WAIT_FAILED;
 	size_t extraFds = 0;
-	UINT64 now, dueTime;
+	UINT64 now = 0;
+	UINT64 dueTime = 0;
 
 	if (!nCount || (nCount > MAXIMUM_WAIT_OBJECTS))
 	{
@@ -328,31 +332,27 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWait
 	if (bAlertable)
 	{
 		thread = winpr_GetCurrentThread();
-		if (!thread)
-			return WAIT_FAILED;
-
-		/* treat reentrancy, we can't switch to alertable state when we're already
-		   treating completions */
-		if (thread->apc.treatingCompletions)
-			bAlertable = FALSE;
+		if (thread)
+		{
+			/* treat reentrancy, we can't switch to alertable state when we're already
+			   treating completions */
+			if (thread->apc.treatingCompletions)
+				bAlertable = FALSE;
+			else
+				extraFds = thread->apc.length;
+		}
 		else
-			extraFds = thread->apc.length;
+		{
+			/* most probably we're not called from WinPR thread, so we can't have any APC */
+			bAlertable = FALSE;
+		}
 	}
 
 	if (!pollset_init(&pollset, nCount + extraFds))
 	{
-		WLog_ERR(TAG, "unable to initialize pollset for nCount=%" PRIu32 " extraCount=%" PRIu32 "",
+		WLog_ERR(TAG, "unable to initialize pollset for nCount=%" PRIu32 " extraCount=%" PRIuz "",
 		         nCount, extraFds);
 		return WAIT_FAILED;
-	}
-
-	if (bWaitAll)
-	{
-		signalled_handles = alloca(nCount * sizeof(BOOL));
-		memset(signalled_handles, FALSE, nCount * sizeof(BOOL));
-
-		poll_map = alloca(nCount * sizeof(DWORD));
-		memset(poll_map, 0, nCount * sizeof(DWORD));
 	}
 
 	signalled = 0;
@@ -369,19 +369,21 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWait
 		polled = 0;
 
 		/* first collect file descriptors to poll */
-		for (index = 0; index < nCount; index++)
+		DWORD idx = 0;
+		for (; idx < nCount; idx++)
 		{
 			if (bWaitAll)
 			{
-				if (signalled_handles[index])
+				if (signalled_handles[idx])
 					continue;
 
-				poll_map[polled] = index;
+				poll_map[polled] = idx;
 			}
 
-			if (!winpr_Handle_GetInfo(lpHandles[index], &Type, &Object))
+			if (!winpr_Handle_GetInfo(lpHandles[idx], &Type, &Object))
 			{
-				WLog_ERR(TAG, "invalid event file descriptor");
+				WLog_ERR(TAG, "invalid event file descriptor at %" PRIu32, idx);
+				winpr_log_backtrace(TAG, WLOG_ERROR, 20);
 				SetLastError(ERROR_INVALID_HANDLE);
 				goto out;
 			}
@@ -389,14 +391,16 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWait
 			fd = winpr_Handle_getFd(Object);
 			if (fd == -1)
 			{
-				WLog_ERR(TAG, "invalid file descriptor");
+				WLog_ERR(TAG, "invalid file descriptor at %" PRIu32, idx);
+				winpr_log_backtrace(TAG, WLOG_ERROR, 20);
 				SetLastError(ERROR_INVALID_HANDLE);
 				goto out;
 			}
 
 			if (!pollset_add(&pollset, fd, Object->Mode))
 			{
-				WLog_ERR(TAG, "unable to register fd in pollset");
+				WLog_ERR(TAG, "unable to register fd in pollset at %" PRIu32, idx);
+				winpr_log_backtrace(TAG, WLOG_ERROR, 20);
 				SetLastError(ERROR_INVALID_HANDLE);
 				goto out;
 			}
@@ -408,6 +412,7 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWait
 		if (bAlertable && !apc_collectFds(thread, &pollset, &autoSignaled))
 		{
 			WLog_ERR(TAG, "unable to register APC fds");
+			winpr_log_backtrace(TAG, WLOG_ERROR, 20);
 			SetLastError(ERROR_INTERNAL_ERROR);
 			goto out;
 		}
@@ -416,7 +421,7 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWait
 		status = 0;
 		if (!autoSignaled)
 		{
-			DWORD waitTime;
+			DWORD waitTime = 0;
 
 			if (dwMilliseconds == INFINITE)
 				waitTime = INFINITE;
@@ -426,12 +431,13 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWait
 			status = pollset_poll(&pollset, waitTime);
 			if (status < 0)
 			{
-#ifdef HAVE_POLL_H
-				WLog_ERR(TAG, "poll() handle %d (%" PRIu32 ") failure [%d] %s", index, nCount,
-				         errno, strerror(errno));
+				char ebuffer[256] = WINPR_C_ARRAY_INIT;
+#ifdef WINPR_HAVE_POLL_H
+				WLog_ERR(TAG, "poll() handle %" PRIu32 " (%" PRIu32 ") failure [%d] %s", idx,
+				         nCount, errno, winpr_strerror(errno, ebuffer, sizeof(ebuffer)));
 #else
-				WLog_ERR(TAG, "select() handle %d (%" PRIu32 ") failure [%d] %s", index, nCount,
-				         errno, strerror(errno));
+				WLog_ERR(TAG, "select() handle %" PRIu32 " (%" PRIu32 ") failure [%d] %s", idx,
+				         nCount, errno, winpr_strerror(errno, ebuffer, sizeof(ebuffer)));
 #endif
 				winpr_log_backtrace(TAG, WLOG_ERROR, 20);
 				SetLastError(ERROR_INTERNAL_ERROR);
@@ -449,9 +455,9 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWait
 		/* then treat pollset */
 		if (status)
 		{
-			for (index = 0; index < polled; index++)
+			for (DWORD index = 0; index < polled; index++)
 			{
-				DWORD handlesIndex;
+				DWORD handlesIndex = 0;
 				BOOL signal_set = FALSE;
 
 				if (bWaitAll)
@@ -465,7 +471,7 @@ DWORD WaitForMultipleObjectsEx(DWORD nCount, const HANDLE* lpHandles, BOOL bWait
 					DWORD rc = winpr_Handle_cleanup(lpHandles[handlesIndex]);
 					if (rc != WAIT_OBJECT_0)
 					{
-						WLog_ERR(TAG, "error in cleanup function for handle at index=%d",
+						WLog_ERR(TAG, "error in cleanup function for handle at index=%" PRIu32,
 						         handlesIndex);
 						ret = rc;
 						goto out;

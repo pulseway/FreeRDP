@@ -19,9 +19,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/ini.h>
@@ -44,17 +42,21 @@
  * http://msdn.microsoft.com/en-us/library/windows/desktop/aa383464/
  */
 
-static HMODULE g_WtsApiModule = NULL;
+static HMODULE g_WtsApiModule = nullptr;
 
-static PWtsApiFunctionTable g_WtsApi = NULL;
+static const WtsApiFunctionTable* g_WtsApi = nullptr;
 
 #if defined(_WIN32)
-static HMODULE g_WtsApi32Module = NULL;
-static WtsApiFunctionTable WtsApi32_WtsApiFunctionTable = { 0 };
+static HMODULE g_WtsApi32Module = nullptr;
+static WtsApiFunctionTable WtsApi32_WtsApiFunctionTable = WINPR_C_ARRAY_INIT;
 
-#define WTSAPI32_LOAD_PROC(_name, _type)                                                   \
-	WtsApi32_WtsApiFunctionTable.p##_name = (##_type)GetProcAddress(g_WtsApi32Module, "WT" \
-	                                                                                  "S" #_name);
+#if defined(__MINGW32__) || defined(_MSC_VER)
+#define WTSAPI32_LOAD_PROC(NAME, TYPE) \
+	WtsApi32_WtsApiFunctionTable.p##NAME = GetProcAddressAs(g_WtsApi32Module, "WTS" #NAME, TYPE);
+#else
+#define WTSAPI32_LOAD_PROC(NAME, TYPE) \
+	WtsApi32_WtsApiFunctionTable.p##NAME = GetProcAddressAs(g_WtsApi32Module, "WTS" #NAME, ##TYPE);
+#endif
 
 static BOOL WtsApi32_InitializeWtsApi(void)
 {
@@ -140,22 +142,25 @@ static BOOL WtsApi32_InitializeWtsApi(void)
 static BOOL CALLBACK InitializeWtsApiStubs(PINIT_ONCE once, PVOID param, PVOID* context);
 static INIT_ONCE wtsapiInitOnce = INIT_ONCE_STATIC_INIT;
 
-#define WTSAPI_STUB_CALL_VOID(_name, ...)                                    \
-	InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, NULL, NULL); \
-	if (!g_WtsApi || !g_WtsApi->p##_name)                                    \
-		return;                                                              \
+#define WTSAPI_STUB_CALL_VOID(_name, ...)                                               \
+	if (!InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, nullptr, nullptr)) \
+		return;                                                                         \
+	if (!g_WtsApi || !g_WtsApi->p##_name)                                               \
+		return;                                                                         \
 	g_WtsApi->p##_name(__VA_ARGS__)
 
-#define WTSAPI_STUB_CALL_BOOL(_name, ...)                                    \
-	InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, NULL, NULL); \
-	if (!g_WtsApi || !g_WtsApi->p##_name)                                    \
-		return FALSE;                                                        \
+#define WTSAPI_STUB_CALL_BOOL(_name, ...)                                               \
+	if (!InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, nullptr, nullptr)) \
+		return FALSE;                                                                   \
+	if (!g_WtsApi || !g_WtsApi->p##_name)                                               \
+		return FALSE;                                                                   \
 	return g_WtsApi->p##_name(__VA_ARGS__)
 
-#define WTSAPI_STUB_CALL_HANDLE(_name, ...)                                  \
-	InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, NULL, NULL); \
-	if (!g_WtsApi || !g_WtsApi->p##_name)                                    \
-		return NULL;                                                         \
+#define WTSAPI_STUB_CALL_HANDLE(_name, ...)                                             \
+	if (!InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, nullptr, nullptr)) \
+		return nullptr;                                                                 \
+	if (!g_WtsApi || !g_WtsApi->p##_name)                                               \
+		return nullptr;                                                                 \
 	return g_WtsApi->p##_name(__VA_ARGS__)
 
 BOOL WINAPI WTSStartRemoteControlSessionW(LPWSTR pTargetServerName, ULONG TargetLogonId,
@@ -564,10 +569,11 @@ BOOL CDECL WTSLogoffUser(HANDLE hServer)
 
 DWORD WINAPI WTSGetActiveConsoleSessionId(void)
 {
-	InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, NULL, NULL);
+	if (!InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, nullptr, nullptr))
+		return UINT32_MAX;
 
 	if (!g_WtsApi || !g_WtsApi->pGetActiveConsoleSessionId)
-		return 0xFFFFFFFF;
+		return UINT32_MAX;
 
 	return g_WtsApi->pGetActiveConsoleSessionId();
 }
@@ -670,50 +676,54 @@ const CHAR* WTSSessionStateToString(WTS_CONNECTSTATE_CLASS state)
 			return "WTSDown";
 		case WTSInit:
 			return "WTSInit";
+		default:
+			break;
 	}
 	return "INVALID_STATE";
 }
 
-BOOL WTSRegisterWtsApiFunctionTable(PWtsApiFunctionTable table)
+BOOL WTSRegisterWtsApiFunctionTable(const WtsApiFunctionTable* table)
 {
 	/* Use InitOnceExecuteOnce here as well - otherwise a table set with this
-	   function is overriden on the first use of a WTS* API call (due to
+	   function is overridden on the first use of a WTS* API call (due to
 	   wtsapiInitOnce not being set). */
-	InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, (PVOID)table, NULL);
-	if (!g_WtsApi)
+	union
+	{
+		const void* cpv;
+		void* pv;
+	} cnv;
+	cnv.cpv = table;
+	if (!InitOnceExecuteOnce(&wtsapiInitOnce, InitializeWtsApiStubs, cnv.pv, nullptr))
 		return FALSE;
-	return TRUE;
+	return g_WtsApi != nullptr;
 }
 
 static BOOL LoadAndInitialize(char* library)
 {
-	INIT_WTSAPI_FN pInitWtsApi;
-	g_WtsApiModule = LoadLibraryA(library);
+	g_WtsApiModule = LoadLibraryX(library);
 
 	if (!g_WtsApiModule)
 		return FALSE;
 
-	pInitWtsApi = (INIT_WTSAPI_FN)GetProcAddress(g_WtsApiModule, "InitWtsApi");
+	INIT_WTSAPI_FN pInitWtsApi = GetProcAddressAs(g_WtsApiModule, "InitWtsApi", INIT_WTSAPI_FN);
 
 	if (!pInitWtsApi)
-	{
 		return FALSE;
-	}
 
 	g_WtsApi = pInitWtsApi();
 	return TRUE;
 }
 
-static void InitializeWtsApiStubs_Env()
+static void InitializeWtsApiStubs_Env(void)
 {
-	DWORD nSize;
-	char* env = NULL;
+	DWORD nSize = 0;
+	char* env = nullptr;
 	LPCSTR wts = "WTSAPI_LIBRARY";
 
 	if (g_WtsApi)
 		return;
 
-	nSize = GetEnvironmentVariableA(wts, NULL, 0);
+	nSize = GetEnvironmentVariableA(wts, nullptr, 0);
 
 	if (!nSize)
 		return;
@@ -729,11 +739,11 @@ static void InitializeWtsApiStubs_Env()
 
 #define FREERDS_LIBRARY_NAME "libfreerds-fdsapi.so"
 
-static void InitializeWtsApiStubs_FreeRDS()
+static void InitializeWtsApiStubs_FreeRDS(void)
 {
-	wIniFile* ini;
-	const char* prefix;
-	const char* libdir;
+	wIniFile* ini = nullptr;
+	const char* prefix = nullptr;
+	const char* libdir = nullptr;
 
 	if (g_WtsApi)
 		return;
@@ -754,8 +764,8 @@ static void InitializeWtsApiStubs_FreeRDS()
 
 	if (prefix && libdir)
 	{
-		char* prefix_libdir;
-		char* wtsapi_library;
+		char* prefix_libdir = nullptr;
+		char* wtsapi_library = nullptr;
 		prefix_libdir = GetCombinedPath(prefix, libdir);
 		wtsapi_library = GetCombinedPath(prefix_libdir, FREERDS_LIBRARY_NAME);
 
@@ -777,7 +787,7 @@ static BOOL CALLBACK InitializeWtsApiStubs(PINIT_ONCE once, PVOID param, PVOID* 
 	WINPR_UNUSED(context);
 	if (param)
 	{
-		g_WtsApi = (PWtsApiFunctionTable)param;
+		g_WtsApi = (const WtsApiFunctionTable*)param;
 		return TRUE;
 	}
 

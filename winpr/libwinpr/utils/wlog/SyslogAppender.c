@@ -18,18 +18,15 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include "SyslogAppender.h"
 #include <syslog.h>
 
-struct _wLogSyslogAppender
+typedef struct
 {
-	WLOG_APPENDER_COMMON();
-};
-typedef struct _wLogSyslogAppender wLogSyslogAppender;
+	wLogAppender common;
+} wLogSyslogAppender;
 
 static int getSyslogLevel(DWORD level)
 {
@@ -54,24 +51,18 @@ static int getSyslogLevel(DWORD level)
 
 static BOOL WLog_SyslogAppender_Open(wLog* log, wLogAppender* appender)
 {
-	if (!log || !appender)
-		return FALSE;
-
-	return TRUE;
+	return !(!log || !appender);
 }
 
 static BOOL WLog_SyslogAppender_Close(wLog* log, wLogAppender* appender)
 {
-	if (!log || !appender)
-		return FALSE;
-
-	return TRUE;
+	return !(!log || !appender);
 }
 
 static BOOL WLog_SyslogAppender_WriteMessage(wLog* log, wLogAppender* appender,
-                                             wLogMessage* message)
+                                             const wLogMessage* message)
 {
-	int syslogLevel;
+	int syslogLevel = 0;
 
 	if (!log || !appender || !message)
 		return FALSE;
@@ -84,32 +75,32 @@ static BOOL WLog_SyslogAppender_WriteMessage(wLog* log, wLogAppender* appender,
 }
 
 static BOOL WLog_SyslogAppender_WriteDataMessage(wLog* log, wLogAppender* appender,
-                                                 wLogMessage* message)
+                                                 const wLogMessage* message)
 {
-	int syslogLevel;
+	int syslogLevel = 0;
 
 	if (!log || !appender || !message)
 		return FALSE;
 
 	syslogLevel = getSyslogLevel(message->Level);
 	if (syslogLevel >= 0)
-		syslog(syslogLevel, "skipped data message of %d bytes", message->Length);
+		syslog(syslogLevel, "skipped data message of %" PRIuz " bytes", message->Length);
 
 	return TRUE;
 }
 
 static BOOL WLog_SyslogAppender_WriteImageMessage(wLog* log, wLogAppender* appender,
-                                                  wLogMessage* message)
+                                                  const wLogMessage* message)
 {
-	int syslogLevel;
+	int syslogLevel = 0;
 
 	if (!log || !appender || !message)
 		return FALSE;
 
 	syslogLevel = getSyslogLevel(message->Level);
 	if (syslogLevel >= 0)
-		syslog(syslogLevel, "skipped image (%dx%dx%d)", message->ImageWidth, message->ImageHeight,
-		       message->ImageBpp);
+		syslog(syslogLevel, "skipped image (%" PRIuz "x%" PRIuz "x%" PRIuz ")", message->ImageWidth,
+		       message->ImageHeight, message->ImageBpp);
 
 	return TRUE;
 }
@@ -119,22 +110,20 @@ static void WLog_SyslogAppender_Free(wLogAppender* appender)
 	free(appender);
 }
 
-wLogAppender* WLog_SyslogAppender_New(wLog* log)
+wLogAppender* WLog_SyslogAppender_New(WINPR_ATTR_UNUSED wLog* log)
 {
-	wLogSyslogAppender* appender;
-
-	appender = (wLogSyslogAppender*)calloc(1, sizeof(wLogSyslogAppender));
+	wLogSyslogAppender* appender = (wLogSyslogAppender*)calloc(1, sizeof(wLogSyslogAppender));
 	if (!appender)
-		return NULL;
+		return nullptr;
 
-	appender->Type = WLOG_APPENDER_SYSLOG;
+	appender->common.Type = WLOG_APPENDER_SYSLOG;
 
-	appender->Open = WLog_SyslogAppender_Open;
-	appender->Close = WLog_SyslogAppender_Close;
-	appender->WriteMessage = WLog_SyslogAppender_WriteMessage;
-	appender->WriteDataMessage = WLog_SyslogAppender_WriteDataMessage;
-	appender->WriteImageMessage = WLog_SyslogAppender_WriteImageMessage;
-	appender->Free = WLog_SyslogAppender_Free;
+	appender->common.Open = WLog_SyslogAppender_Open;
+	appender->common.Close = WLog_SyslogAppender_Close;
+	appender->common.WriteMessage = WLog_SyslogAppender_WriteMessage;
+	appender->common.WriteDataMessage = WLog_SyslogAppender_WriteDataMessage;
+	appender->common.WriteImageMessage = WLog_SyslogAppender_WriteImageMessage;
+	appender->common.Free = WLog_SyslogAppender_Free;
 
-	return (wLogAppender*)appender;
+	return &appender->common;
 }

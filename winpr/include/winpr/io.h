@@ -22,6 +22,10 @@
 
 #include <winpr/winpr.h>
 #include <winpr/wtypes.h>
+#include <winpr/handle.h>
+
+WINPR_PRAGMA_DIAG_PUSH
+WINPR_PRAGMA_DIAG_IGNORED_RESERVED_IDENTIFIER
 
 #ifdef _WIN32
 
@@ -31,22 +35,23 @@
 
 #include <winpr/nt.h>
 
-typedef struct _OVERLAPPED
+typedef struct
 {
 	ULONG_PTR Internal;
 	ULONG_PTR InternalHigh;
-	union {
+	union
+	{
 		struct
 		{
 			DWORD Offset;
 			DWORD OffsetHigh;
-		};
+		} DUMMYSTRUCTNAME;
 		PVOID Pointer;
-	};
+	} DUMMYUNIONNAME;
 	HANDLE hEvent;
 } OVERLAPPED, *LPOVERLAPPED;
 
-typedef struct _OVERLAPPED_ENTRY
+typedef struct
 {
 	ULONG_PTR lpCompletionKey;
 	LPOVERLAPPED lpOverlapped;
@@ -59,39 +64,49 @@ extern "C"
 {
 #endif
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetOverlappedResult(HANDLE hFile, LPOVERLAPPED lpOverlapped,
 	                                   LPDWORD lpNumberOfBytesTransferred, BOOL bWait);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetOverlappedResultEx(HANDLE hFile, LPOVERLAPPED lpOverlapped,
 	                                     LPDWORD lpNumberOfBytesTransferred, DWORD dwMilliseconds,
 	                                     BOOL bAlertable);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL DeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, LPVOID lpInBuffer,
 	                               DWORD nInBufferSize, LPVOID lpOutBuffer, DWORD nOutBufferSize,
 	                               LPDWORD lpBytesReturned, LPOVERLAPPED lpOverlapped);
 
+	WINPR_ATTR_MALLOC(CloseHandle, 1)
 	WINPR_API HANDLE CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
 	                                        ULONG_PTR CompletionKey,
 	                                        DWORD NumberOfConcurrentThreads);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetQueuedCompletionStatus(HANDLE CompletionPort,
 	                                         LPDWORD lpNumberOfBytesTransferred,
 	                                         PULONG_PTR lpCompletionKey, LPOVERLAPPED* lpOverlapped,
 	                                         DWORD dwMilliseconds);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetQueuedCompletionStatusEx(HANDLE CompletionPort,
 	                                           LPOVERLAPPED_ENTRY lpCompletionPortEntries,
 	                                           ULONG ulCount, PULONG ulNumEntriesRemoved,
 	                                           DWORD dwMilliseconds, BOOL fAlertable);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL PostQueuedCompletionStatus(HANDLE CompletionPort,
 	                                          DWORD dwNumberOfBytesTransferred,
 	                                          ULONG_PTR dwCompletionKey, LPOVERLAPPED lpOverlapped);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CancelIo(HANDLE hFile);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CancelIoEx(HANDLE hFile, LPOVERLAPPED lpOverlapped);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CancelSynchronousIo(HANDLE hThread);
 
 #ifdef __cplusplus
@@ -192,11 +207,14 @@ extern "C"
 typedef HANDLE PDRIVER_OBJECT_EX;
 typedef HANDLE PDEVICE_OBJECT_EX;
 
+// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
+WINPR_ATTR_NODISCARD
 WINPR_API NTSTATUS _IoCreateDeviceEx(PDRIVER_OBJECT_EX DriverObject, ULONG DeviceExtensionSize,
                                      PUNICODE_STRING DeviceName, DEVICE_TYPE DeviceType,
                                      ULONG DeviceCharacteristics, BOOLEAN Exclusive,
                                      PDEVICE_OBJECT_EX* DeviceObject);
 
+// NOLINTNEXTLINE(bugprone-reserved-identifier,cert-dcl37-c,cert-dcl51-cpp)
 WINPR_API VOID _IoDeleteDeviceEx(PDEVICE_OBJECT_EX DeviceObject);
 
 #endif
@@ -208,33 +226,41 @@ extern "C"
 {
 #endif
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetOverlappedResult(HANDLE hFile, LPOVERLAPPED lpOverlapped,
 	                                   LPDWORD lpNumberOfBytesTransferred, BOOL bWait);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL DeviceIoControl(HANDLE hDevice, DWORD dwIoControlCode, LPVOID lpInBuffer,
 	                               DWORD nInBufferSize, LPVOID lpOutBuffer, DWORD nOutBufferSize,
 	                               LPDWORD lpBytesReturned, LPOVERLAPPED lpOverlapped);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API HANDLE CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
 	                                        ULONG_PTR CompletionKey,
 	                                        DWORD NumberOfConcurrentThreads);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetQueuedCompletionStatus(HANDLE CompletionPort,
 	                                         LPDWORD lpNumberOfBytesTransferred,
 	                                         PULONG_PTR lpCompletionKey, LPOVERLAPPED* lpOverlapped,
 	                                         DWORD dwMilliseconds);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL GetQueuedCompletionStatusEx(HANDLE CompletionPort,
 	                                           LPOVERLAPPED_ENTRY lpCompletionPortEntries,
 	                                           ULONG ulCount, PULONG ulNumEntriesRemoved,
 	                                           DWORD dwMilliseconds, BOOL fAlertable);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL PostQueuedCompletionStatus(HANDLE CompletionPort,
 	                                          DWORD dwNumberOfBytesTransferred,
 	                                          ULONG_PTR dwCompletionKey, LPOVERLAPPED lpOverlapped);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CancelIo(HANDLE hFile);
 
+	WINPR_ATTR_NODISCARD
 	WINPR_API BOOL CancelSynchronousIo(HANDLE hThread);
 
 #ifdef __cplusplus
@@ -249,5 +275,7 @@ extern "C"
 
 #define ACCESS_FROM_CTL_CODE(ctrlCode) ((DWORD)((ctrlCode >> 14) & 0x3))
 #define FUNCTION_FROM_CTL_CODE(ctrlCode) ((DWORD)((ctrlCode >> 2) & 0xFFF))
+
+WINPR_PRAGMA_DIAG_POP
 
 #endif /* WINPR_IO_H */

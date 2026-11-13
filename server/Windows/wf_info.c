@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <stdlib.h>
 
@@ -38,7 +36,7 @@
 
 #define SERVER_KEY "Software\\" FREERDP_VENDOR_STRING "\\" FREERDP_PRODUCT_STRING "\\Server"
 
-static wfInfo* wfInfoInstance = NULL;
+static wfInfo* wfInfoInstance = nullptr;
 static int _IDcount = 0;
 
 BOOL wf_info_lock(wfInfo* wfi)
@@ -101,41 +99,42 @@ wfInfo* wf_info_init()
 	wfInfo* wfi;
 	wfi = (wfInfo*)calloc(1, sizeof(wfInfo));
 
-	if (wfi != NULL)
+	if (wfi != nullptr)
 	{
 		HKEY hKey;
 		LONG status;
 		DWORD dwType;
 		DWORD dwSize;
 		DWORD dwValue;
-		wfi->mutex = CreateMutex(NULL, FALSE, NULL);
+		wfi->mutex = CreateMutex(nullptr, FALSE, nullptr);
 
-		if (wfi->mutex == NULL)
+		if (wfi->mutex == nullptr)
 		{
 			WLog_ERR(TAG, "CreateMutex error: %lu", GetLastError());
 			free(wfi);
-			return NULL;
+			return nullptr;
 		}
 
-		wfi->updateSemaphore = CreateSemaphore(NULL, 0, 32, NULL);
+		wfi->updateSemaphore = CreateSemaphore(nullptr, 0, 32, nullptr);
 
 		if (!wfi->updateSemaphore)
 		{
 			WLog_ERR(TAG, "CreateSemaphore error: %lu", GetLastError());
-			CloseHandle(wfi->mutex);
+			(void)CloseHandle(wfi->mutex);
 			free(wfi);
-			return NULL;
+			return nullptr;
 		}
 
-		wfi->updateThread = CreateThread(NULL, 0, wf_update_thread, wfi, CREATE_SUSPENDED, NULL);
+		wfi->updateThread =
+		    CreateThread(nullptr, 0, wf_update_thread, wfi, CREATE_SUSPENDED, nullptr);
 
 		if (!wfi->updateThread)
 		{
 			WLog_ERR(TAG, "Failed to create update thread");
-			CloseHandle(wfi->mutex);
-			CloseHandle(wfi->updateSemaphore);
+			(void)CloseHandle(wfi->mutex);
+			(void)CloseHandle(wfi->updateSemaphore);
 			free(wfi);
-			return NULL;
+			return nullptr;
 		}
 
 		wfi->peers =
@@ -144,11 +143,11 @@ wfInfo* wf_info_init()
 		if (!wfi->peers)
 		{
 			WLog_ERR(TAG, "Failed to allocate memory for peer");
-			CloseHandle(wfi->mutex);
-			CloseHandle(wfi->updateSemaphore);
-			CloseHandle(wfi->updateThread);
+			(void)CloseHandle(wfi->mutex);
+			(void)CloseHandle(wfi->updateSemaphore);
+			(void)CloseHandle(wfi->updateThread);
 			free(wfi);
-			return NULL;
+			return nullptr;
 		}
 
 		// Set FPS
@@ -158,7 +157,7 @@ wfInfo* wf_info_init()
 
 		if (status == ERROR_SUCCESS)
 		{
-			if (RegQueryValueEx(hKey, _T("FramesPerSecond"), NULL, &dwType, (BYTE*)&dwValue,
+			if (RegQueryValueEx(hKey, _T("FramesPerSecond"), nullptr, &dwType, (BYTE*)&dwValue,
 			                    &dwSize) == ERROR_SUCCESS)
 				wfi->framesPerSecond = dwValue;
 		}
@@ -171,7 +170,7 @@ wfInfo* wf_info_init()
 
 		if (status == ERROR_SUCCESS)
 		{
-			if (RegQueryValueEx(hKey, _T("DisableInput"), NULL, &dwType, (BYTE*)&dwValue,
+			if (RegQueryValueEx(hKey, _T("DisableInput"), nullptr, &dwType, (BYTE*)&dwValue,
 			                    &dwSize) == ERROR_SUCCESS)
 			{
 				if (dwValue != 0)
@@ -187,7 +186,7 @@ wfInfo* wf_info_init()
 
 wfInfo* wf_info_get_instance()
 {
-	if (wfInfoInstance == NULL)
+	if (wfInfoInstance == nullptr)
 		wfInfoInstance = wf_info_init();
 
 	return wfInfoInstance;
@@ -195,8 +194,7 @@ wfInfo* wf_info_get_instance()
 
 BOOL wf_info_peer_register(wfInfo* wfi, wfPeerContext* context)
 {
-	int i;
-	int peerId;
+	int peerId = 0;
 
 	if (!wfi || !context)
 		return FALSE;
@@ -209,11 +207,11 @@ BOOL wf_info_peer_register(wfInfo* wfi, wfPeerContext* context)
 
 	context->info = wfi;
 
-	if (!(context->updateEvent = CreateEvent(NULL, TRUE, FALSE, NULL)))
+	if (!(context->updateEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr)))
 		goto fail_update_event;
 
 	// get the offset of the top left corner of selected screen
-	EnumDisplayMonitors(NULL, NULL, wf_info_monEnumCB, 0);
+	EnumDisplayMonitors(nullptr, nullptr, wf_info_monEnumCB, 0);
 	_IDcount = 0;
 #ifdef WITH_DXGI_1_2
 
@@ -229,10 +227,10 @@ BOOL wf_info_peer_register(wfInfo* wfi, wfPeerContext* context)
 #endif
 
 	// look through the array of peers until an empty slot
-	for (i = 0; i < FREERDP_SERVER_WIN_INFO_MAXPEERS; ++i)
+	for (int i = 0; i < FREERDP_SERVER_WIN_INFO_MAXPEERS; ++i)
 	{
 		// empty index will be our peer id
-		if (wfi->peers[i] == NULL)
+		if (wfi->peers[i] == nullptr)
 		{
 			peerId = i;
 			break;
@@ -247,8 +245,8 @@ BOOL wf_info_peer_register(wfInfo* wfi, wfPeerContext* context)
 	wfreerdp_server_peer_callback_event(peerId, FREERDP_SERVER_WIN_SRV_CALLBACK_EVENT_CONNECT);
 	return TRUE;
 fail_driver_init:
-	CloseHandle(context->updateEvent);
-	context->updateEvent = NULL;
+	(void)CloseHandle(context->updateEvent);
+	context->updateEvent = nullptr;
 fail_update_event:
 fail_peer_count:
 	context->socketClose = TRUE;
@@ -262,9 +260,9 @@ void wf_info_peer_unregister(wfInfo* wfi, wfPeerContext* context)
 	{
 		int peerId;
 		peerId = ((rdpContext*)context)->peer->pId;
-		wfi->peers[peerId] = NULL;
+		wfi->peers[peerId] = nullptr;
 		wfi->peerCount--;
-		CloseHandle(context->updateEvent);
+		(void)CloseHandle(context->updateEvent);
 		WLog_INFO(TAG, "Unregistering Peer: id=%d, #=%d", peerId, wfi->peerCount);
 #ifdef WITH_DXGI_1_2
 
@@ -310,11 +308,10 @@ void wf_info_find_invalid_region(wfInfo* wfi)
 #ifdef WITH_DXGI_1_2
 	wf_dxgi_getInvalidRegion(&wfi->invalid);
 #else
-	int i;
 	GETCHANGESBUF* buf;
 	buf = (GETCHANGESBUF*)wfi->changeBuffer;
 
-	for (i = wfi->lastUpdate; i != wfi->nextUpdate; i = (i + 1) % MAXCHANGES_BUF)
+	for (ULONG i = wfi->lastUpdate; i != wfi->nextUpdate; i = (i + 1) % MAXCHANGES_BUF)
 	{
 		LPRECT lpR = &buf->buffer->pointrect[i].rect;
 

@@ -23,36 +23,53 @@
 #include <freerdp/client/geometry.h>
 #include <freerdp/channels/video.h>
 
-typedef struct _VideoClientContext VideoClientContext;
-typedef struct _VideoClientContextPriv VideoClientContextPriv;
-typedef struct _VideoSurface VideoSurface;
-
-/** @brief an implementation of surface used by the video channel */
-struct _VideoSurface
+#ifdef __cplusplus
+extern "C"
 {
-	UINT32 x, y, w, h;
-	BYTE* data;
-};
+#endif
 
-typedef void (*pcVideoTimer)(VideoClientContext* video, UINT64 now);
-typedef void (*pcVideoSetGeometry)(VideoClientContext* video, GeometryClientContext* geometry);
-typedef VideoSurface* (*pcVideoCreateSurface)(VideoClientContext* video, BYTE* data, UINT32 x,
-                                              UINT32 y, UINT32 width, UINT32 height);
-typedef BOOL (*pcVideoShowSurface)(VideoClientContext* video, VideoSurface* surface);
-typedef BOOL (*pcVideoDeleteSurface)(VideoClientContext* video, VideoSurface* surface);
+	typedef struct s_VideoClientContext VideoClientContext;
+	typedef struct s_VideoClientContextPriv VideoClientContextPriv;
 
-/** @brief context for the video (MS-RDPEVOR) channel */
-struct _VideoClientContext
-{
-	void* handle;
-	void* custom;
-	VideoClientContextPriv* priv;
+	/** @brief an implementation of surface used by the video channel */
+	typedef struct
+	{
+		UINT32 x, y, w, h;
+		UINT32 alignedWidth, alignedHeight;
+		BYTE* data;
+		DWORD format;
+		UINT32 scanline;
+	} VideoSurface;
 
-	pcVideoSetGeometry setGeometry;
-	pcVideoTimer timer;
-	pcVideoCreateSurface createSurface;
-	pcVideoShowSurface showSurface;
-	pcVideoDeleteSurface deleteSurface;
-};
+	typedef void (*pcVideoTimer)(VideoClientContext* video, UINT64 now);
+	typedef void (*pcVideoSetGeometry)(VideoClientContext* video, GeometryClientContext* geometry);
+	typedef VideoSurface* (*pcVideoCreateSurface)(VideoClientContext* video, UINT32 x, UINT32 y,
+	                                              UINT32 width, UINT32 height);
+	typedef BOOL (*pcVideoShowSurface)(VideoClientContext* video, const VideoSurface* surface,
+	                                   UINT32 destinationWidth, UINT32 destinationHeight);
+	typedef BOOL (*pcVideoDeleteSurface)(VideoClientContext* video, VideoSurface* surface);
+
+	/** @brief context for the video (MS-RDPEVOR) channel */
+	struct s_VideoClientContext
+	{
+		void* handle;
+		void* custom;
+		VideoClientContextPriv* priv;
+
+		pcVideoSetGeometry setGeometry;
+		pcVideoTimer timer;
+		WINPR_ATTR_NODISCARD pcVideoCreateSurface createSurface;
+		WINPR_ATTR_NODISCARD pcVideoShowSurface showSurface;
+		pcVideoDeleteSurface deleteSurface;
+	};
+
+	WINPR_ATTR_NODISCARD
+	FREERDP_API VideoSurface* VideoClient_CreateCommonContext(size_t size, UINT32 x, UINT32 y,
+	                                                          UINT32 w, UINT32 h);
+	FREERDP_API void VideoClient_DestroyCommonContext(VideoSurface* surface);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* FREERDP_CHANNELS_CLIENT_VIDEO_H */

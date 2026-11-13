@@ -16,15 +16,20 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
-#include <assert.h>
+#include <winpr/assert.h>
 #include <freerdp/log.h>
 #include "shadow.h"
 
 #define TAG SERVER_TAG("shadow.mcevent")
+
+/* Maximum time the publisher waits for all subscribers to consume a frame.
+ * Without this bound a single subscriber that stops consuming (e.g. a client
+ * stuck before its TLS handshake, or one stalled mid-send) blocks the
+ * subsystem/capture thread forever and, on the Windows subsystem, the
+ * listener thread with it (the clients list lock is held across the wait). */
+#define SHADOW_SUBSCRIBER_WAIT_TIMEOUT 1000ul
 
 struct rdp_shadow_multiclient_event
 {
@@ -48,48 +53,39 @@ struct rdp_shadow_multiclient_subscriber
 
 rdpShadowMultiClientEvent* shadow_multiclient_new(void)
 {
-	rdpShadowMultiClientEvent* event =
-	    (rdpShadowMultiClientEvent*)calloc(1, sizeof(rdpShadowMultiClientEvent));
+	rdpShadowMultiClientEvent* event = calloc(1, sizeof(rdpShadowMultiClientEvent));
 	if (!event)
-		goto out_error;
+		goto fail;
 
-	event->event = CreateEvent(NULL, TRUE, FALSE, NULL);
+	if (!InitializeCriticalSectionAndSpinCount(&(event->lock), 4000))
+		goto fail;
+
+	event->event = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 	if (!event->event)
-		goto out_free;
+		goto fail;
 
-	event->barrierEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	event->barrierEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 	if (!event->barrierEvent)
-		goto out_free_event;
+		goto fail;
 
-	event->doneEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+	event->doneEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
 	if (!event->doneEvent)
-		goto out_free_barrierEvent;
+		goto fail;
 
 	event->subscribers = ArrayList_New(TRUE);
 	if (!event->subscribers)
-		goto out_free_doneEvent;
-
-	if (!InitializeCriticalSectionAndSpinCount(&(event->lock), 4000))
-		goto out_free_subscribers;
+		goto fail;
 
 	event->consuming = 0;
 	event->waiting = 0;
 	event->eventid = 0;
-	SetEvent(event->doneEvent);
+	if (!SetEvent(event->doneEvent))
+		goto fail;
 	return event;
 
-out_free_subscribers:
-	ArrayList_Free(event->subscribers);
-out_free_doneEvent:
-	CloseHandle(event->doneEvent);
-out_free_barrierEvent:
-	CloseHandle(event->barrierEvent);
-out_free_event:
-	CloseHandle(event->event);
-out_free:
-	free(event);
-out_error:
-	return (rdpShadowMultiClientEvent*)NULL;
+fail:
+	shadow_multiclient_free(event);
+	return nullptr;
 }
 
 void shadow_multiclient_free(rdpShadowMultiClientEvent* event)
@@ -100,29 +96,28 @@ void shadow_multiclient_free(rdpShadowMultiClientEvent* event)
 	DeleteCriticalSection(&(event->lock));
 
 	ArrayList_Free(event->subscribers);
-	CloseHandle(event->doneEvent);
-	CloseHandle(event->barrierEvent);
-	CloseHandle(event->event);
+	if (event->doneEvent)
+		(void)CloseHandle(event->doneEvent);
+	if (event->barrierEvent)
+		(void)CloseHandle(event->barrierEvent);
+	if (event->event)
+		(void)CloseHandle(event->event);
 	free(event);
-
-	return;
 }
 
-static void _Publish(rdpShadowMultiClientEvent* event)
+static void Publish(rdpShadowMultiClientEvent* event)
 {
-	wArrayList* subscribers;
-	struct rdp_shadow_multiclient_subscriber* subscriber = NULL;
-	size_t i;
+	WINPR_ASSERT(event);
+	wArrayList* subscribers = event->subscribers;
 
-	subscribers = event->subscribers;
-
-	assert(event->consuming == 0);
+	WINPR_ASSERT(event->consuming == 0);
 
 	/* Count subscribing clients */
 	ArrayList_Lock(subscribers);
-	for (i = 0; i < ArrayList_Count(subscribers); i++)
+	for (size_t i = 0; i < ArrayList_Count(subscribers); i++)
 	{
-		subscriber = (struct rdp_shadow_multiclient_subscriber*)ArrayList_GetItem(subscribers, i);
+		struct rdp_shadow_multiclient_subscriber* subscriber =
+		    (struct rdp_shadow_multiclient_subscriber*)ArrayList_GetItem(subscribers, i);
 		/* Set flag to subscriber: I acknowledge and please handle */
 		subscriber->pleaseHandle = TRUE;
 		event->consuming++;
@@ -133,29 +128,66 @@ static void _Publish(rdpShadowMultiClientEvent* event)
 	{
 		event->eventid = (event->eventid & 0xff) + 1;
 		WLog_VRB(TAG, "Server published event %d. %d clients.\n", event->eventid, event->consuming);
-		ResetEvent(event->doneEvent);
-		SetEvent(event->event);
+		(void)ResetEvent(event->doneEvent);
+		(void)SetEvent(event->event);
 	}
-
-	return;
 }
 
-static void _WaitForSubscribers(rdpShadowMultiClientEvent* event)
+static void DiscardRound(rdpShadowMultiClientEvent* event)
 {
+	wArrayList* subscribers = nullptr;
+
+	WINPR_ASSERT(event);
+
+	/* Called with event->lock held after the subscriber wait timed out.
+	 * Reset the round state so that the publisher can continue: subscribers
+	 * waking up late see pleaseHandle == FALSE and skip their consume, and
+	 * clients blocked on the barrier event are released. */
+	subscribers = event->subscribers;
+	ArrayList_Lock(subscribers);
+	for (size_t i = 0; i < ArrayList_Count(subscribers); i++)
+	{
+		struct rdp_shadow_multiclient_subscriber* subscriber =
+		    (struct rdp_shadow_multiclient_subscriber*)ArrayList_GetItem(subscribers, i);
+		subscriber->pleaseHandle = FALSE;
+	}
+	ArrayList_Unlock(subscribers);
+
+	if (event->waiting > 0)
+	{
+		(void)SetEvent(event->barrierEvent);
+	}
+	else
+	{
+		(void)SetEvent(event->doneEvent);
+	}
+
+	WLog_WARN(TAG, "Event %d dropped: %d subscriber(s) unresponsive for %lu ms", event->eventid,
+	          event->consuming, SHADOW_SUBSCRIBER_WAIT_TIMEOUT);
+	event->consuming = 0;
+	(void)ResetEvent(event->event);
+}
+
+static void WaitForSubscribers(rdpShadowMultiClientEvent* event)
+{
+	DWORD status = WAIT_FAILED;
+
 	if (event->consuming > 0)
 	{
 		/* Wait for clients done */
 		WLog_VRB(TAG, "Server wait event %d. %d clients.\n", event->eventid, event->consuming);
 		LeaveCriticalSection(&(event->lock));
-		WaitForSingleObject(event->doneEvent, INFINITE);
+		status = WaitForSingleObject(event->doneEvent, SHADOW_SUBSCRIBER_WAIT_TIMEOUT);
 		EnterCriticalSection(&(event->lock));
+
+		if (status != WAIT_OBJECT_0)
+			DiscardRound(event);
+
 		WLog_VRB(TAG, "Server quit event %d. %d clients.\n", event->eventid, event->consuming);
 	}
 
 	/* Last subscriber should have already reset the event */
-	assert(WaitForSingleObject(event->event, 0) != WAIT_OBJECT_0);
-
-	return;
+	WINPR_ASSERT(WaitForSingleObject(event->event, 0) != WAIT_OBJECT_0);
 }
 
 void shadow_multiclient_publish(rdpShadowMultiClientEvent* event)
@@ -164,10 +196,8 @@ void shadow_multiclient_publish(rdpShadowMultiClientEvent* event)
 		return;
 
 	EnterCriticalSection(&(event->lock));
-	_Publish(event);
+	Publish(event);
 	LeaveCriticalSection(&(event->lock));
-
-	return;
 }
 void shadow_multiclient_wait(rdpShadowMultiClientEvent* event)
 {
@@ -175,10 +205,8 @@ void shadow_multiclient_wait(rdpShadowMultiClientEvent* event)
 		return;
 
 	EnterCriticalSection(&(event->lock));
-	_WaitForSubscribers(event);
+	WaitForSubscribers(event);
 	LeaveCriticalSection(&(event->lock));
-
-	return;
 }
 void shadow_multiclient_publish_and_wait(rdpShadowMultiClientEvent* event)
 {
@@ -186,14 +214,12 @@ void shadow_multiclient_publish_and_wait(rdpShadowMultiClientEvent* event)
 		return;
 
 	EnterCriticalSection(&(event->lock));
-	_Publish(event);
-	_WaitForSubscribers(event);
+	Publish(event);
+	WaitForSubscribers(event);
 	LeaveCriticalSection(&(event->lock));
-
-	return;
 }
 
-static BOOL _Consume(struct rdp_shadow_multiclient_subscriber* subscriber, BOOL wait)
+static BOOL Consume(struct rdp_shadow_multiclient_subscriber* subscriber, BOOL wait)
 {
 	rdpShadowMultiClientEvent* event = subscriber->ref;
 	BOOL ret = FALSE;
@@ -205,22 +231,22 @@ static BOOL _Consume(struct rdp_shadow_multiclient_subscriber* subscriber, BOOL 
 		ret = TRUE;
 	}
 
-	assert(event->consuming >= 0);
+	WINPR_ASSERT(event->consuming >= 0);
 
 	if (event->consuming == 0)
 	{
 		/* Last client reset event before notify clients to continue */
-		ResetEvent(event->event);
+		(void)ResetEvent(event->event);
 
 		if (event->waiting > 0)
 		{
 			/* Notify other clients to continue */
-			SetEvent(event->barrierEvent);
+			(void)SetEvent(event->barrierEvent);
 		}
 		else
 		{
 			/* Only one client. Notify server directly */
-			SetEvent(event->doneEvent);
+			(void)SetEvent(event->doneEvent);
 		}
 	}
 	else /* (event->consuming > 0) */
@@ -234,7 +260,7 @@ static BOOL _Consume(struct rdp_shadow_multiclient_subscriber* subscriber, BOOL 
 			 */
 			event->waiting++;
 			LeaveCriticalSection(&(event->lock));
-			WaitForSingleObject(event->barrierEvent, INFINITE);
+			(void)WaitForSingleObject(event->barrierEvent, INFINITE);
 			EnterCriticalSection(&(event->lock));
 			event->waiting--;
 			if (event->waiting == 0)
@@ -244,8 +270,12 @@ static BOOL _Consume(struct rdp_shadow_multiclient_subscriber* subscriber, BOOL 
 				 * We can now discard barrierEvent and notify
 				 * server to continue.
 				 */
-				ResetEvent(event->barrierEvent);
-				SetEvent(event->doneEvent);
+				(void)ResetEvent(event->barrierEvent);
+
+				/* a round dropped while we waited may be followed by a new one already:
+				 * its own last client tells the server */
+				if (event->consuming == 0)
+					(void)SetEvent(event->doneEvent);
 			}
 		}
 	}
@@ -255,10 +285,10 @@ static BOOL _Consume(struct rdp_shadow_multiclient_subscriber* subscriber, BOOL 
 
 void* shadow_multiclient_get_subscriber(rdpShadowMultiClientEvent* event)
 {
-	struct rdp_shadow_multiclient_subscriber* subscriber;
+	struct rdp_shadow_multiclient_subscriber* subscriber = nullptr;
 
 	if (!event)
-		return NULL;
+		return nullptr;
 
 	EnterCriticalSection(&(event->lock));
 
@@ -270,12 +300,12 @@ void* shadow_multiclient_get_subscriber(rdpShadowMultiClientEvent* event)
 	subscriber->ref = event;
 	subscriber->pleaseHandle = FALSE;
 
-	if (ArrayList_Add(event->subscribers, subscriber) < 0)
+	if (!ArrayList_Append(event->subscribers, subscriber))
 		goto out_free;
 
 	WLog_VRB(TAG, "Get subscriber %p. Wait event %d. %d clients.\n", (void*)subscriber,
 	         event->eventid, event->consuming);
-	(void)_Consume(subscriber, TRUE);
+	(void)Consume(subscriber, TRUE);
 	WLog_VRB(TAG, "Get subscriber %p. Quit event %d. %d clients.\n", (void*)subscriber,
 	         event->eventid, event->consuming);
 
@@ -287,7 +317,7 @@ out_free:
 	free(subscriber);
 out_error:
 	LeaveCriticalSection(&(event->lock));
-	return NULL;
+	return nullptr;
 }
 
 /*
@@ -298,8 +328,8 @@ out_error:
  */
 void shadow_multiclient_release_subscriber(void* subscriber)
 {
-	struct rdp_shadow_multiclient_subscriber* s;
-	rdpShadowMultiClientEvent* event;
+	struct rdp_shadow_multiclient_subscriber* s = nullptr;
+	rdpShadowMultiClientEvent* event = nullptr;
 
 	if (!subscriber)
 		return;
@@ -311,7 +341,7 @@ void shadow_multiclient_release_subscriber(void* subscriber)
 
 	WLog_VRB(TAG, "Release Subscriber %p. Drop event %d. %d clients.\n", subscriber, event->eventid,
 	         event->consuming);
-	(void)_Consume(s, FALSE);
+	(void)Consume(s, FALSE);
 	WLog_VRB(TAG, "Release Subscriber %p. Quit event %d. %d clients.\n", subscriber, event->eventid,
 	         event->consuming);
 
@@ -320,14 +350,12 @@ void shadow_multiclient_release_subscriber(void* subscriber)
 	LeaveCriticalSection(&(event->lock));
 
 	free(subscriber);
-
-	return;
 }
 
 BOOL shadow_multiclient_consume(void* subscriber)
 {
-	struct rdp_shadow_multiclient_subscriber* s;
-	rdpShadowMultiClientEvent* event;
+	struct rdp_shadow_multiclient_subscriber* s = nullptr;
+	rdpShadowMultiClientEvent* event = nullptr;
 	BOOL ret = FALSE;
 
 	if (!subscriber)
@@ -340,7 +368,7 @@ BOOL shadow_multiclient_consume(void* subscriber)
 
 	WLog_VRB(TAG, "Subscriber %p wait event %d. %d clients.\n", subscriber, event->eventid,
 	         event->consuming);
-	ret = _Consume(s, TRUE);
+	ret = Consume(s, TRUE);
 	WLog_VRB(TAG, "Subscriber %p quit event %d. %d clients.\n", subscriber, event->eventid,
 	         event->consuming);
 
@@ -352,7 +380,7 @@ BOOL shadow_multiclient_consume(void* subscriber)
 HANDLE shadow_multiclient_getevent(void* subscriber)
 {
 	if (!subscriber)
-		return (HANDLE)NULL;
+		return (HANDLE) nullptr;
 
 	return ((struct rdp_shadow_multiclient_subscriber*)subscriber)->ref->event;
 }

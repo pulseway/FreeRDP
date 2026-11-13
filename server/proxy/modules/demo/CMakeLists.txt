@@ -3,6 +3,8 @@
 # FreeRDP Proxy Server Demo C++ Module
 #
 # Copyright 2019 Kobi Mizrachi <kmizrachi18@gmail.com>
+# Copyright 2021 Armin Novak <anovak@thincast.com>
+# Copyright 2021 Thincast Technologies GmbH
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,14 +19,32 @@
 # limitations under the License.
 #
 
-set(PLUGIN_NAME "proxy-demo-plugin")
+cmake_minimum_required(VERSION 3.13)
 
-add_library(${PLUGIN_NAME} MODULE
-	demo.cpp
-)
+if(POLICY CMP0091)
+  cmake_policy(SET CMP0091 NEW)
+endif()
+if(NOT FREERDP_DEFAULT_PROJECT_VERSION)
+  set(FREERDP_DEFAULT_PROJECT_VERSION "1.0.0.0")
+endif()
 
-set_target_properties(${PLUGIN_NAME} PROPERTIES CXX_STANDARD 11)
-set_target_properties(${PLUGIN_NAME} PROPERTIES PREFIX "")
-set_target_properties(${PLUGIN_NAME} PROPERTIES NO_SONAME 1)
-set_target_properties(${PLUGIN_NAME} PROPERTIES
-LIBRARY_OUTPUT_DIRECTORY "${FREERDP_PROXY_PLUGINDIR}")
+project(proxy-demo-plugin VERSION ${FREERDP_DEFAULT_PROJECT_VERSION} LANGUAGES CXX)
+
+message("project ${PROJECT_NAME} is using version ${PROJECT_VERSION}")
+
+set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../../../../cmake/)
+include(ProjectCXXStandard)
+include(CommonConfigOptions)
+include(CXXCompilerFlags)
+
+set(SRCS demo.cpp)
+addtargetwithresourcefile(${PROJECT_NAME} FALSE "${PROJECT_VERSION}" SRCS FALSE)
+
+target_compile_definitions(${PROJECT_NAME} PRIVATE $<$<BOOL:${BUILD_SHARED_LIBS}>:BUILD_SHARED_LIBS>)
+target_link_libraries(${PROJECT_NAME} PRIVATE winpr)
+
+installwithrpath(TARGETS ${PROJECT_NAME} DESTINATION ${FREERDP_PROXY_PLUGINDIR})
+
+set(PROJECT_PC_REQUIRES_PRIVATE "winpr${FREERDP_API_VERSION}")
+include(ProxyModuleConfig)
+generate_proxy_module_config()

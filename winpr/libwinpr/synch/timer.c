@@ -18,12 +18,11 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <winpr/config.h>
 
 #include <winpr/crt.h>
 #include <winpr/file.h>
+#include <winpr/assert.h>
 #include <winpr/sysinfo.h>
 
 #include <winpr/synch.h>
@@ -50,15 +49,7 @@ static BOOL TimerCloseHandle(HANDLE handle);
 
 static BOOL TimerIsHandled(HANDLE handle)
 {
-	WINPR_TIMER* pTimer = (WINPR_TIMER*)handle;
-
-	if (!pTimer || (pTimer->Type != HANDLE_TYPE_TIMER))
-	{
-		SetLastError(ERROR_INVALID_HANDLE);
-		return FALSE;
-	}
-
-	return TRUE;
+	return WINPR_HANDLE_IS_HANDLED(handle, HANDLE_TYPE_TIMER, FALSE);
 }
 
 static int TimerGetFd(HANDLE handle)
@@ -73,8 +64,6 @@ static int TimerGetFd(HANDLE handle)
 
 static DWORD TimerCleanupHandle(HANDLE handle)
 {
-	int length;
-	UINT64 expirations;
 	WINPR_TIMER* timer = (WINPR_TIMER*)handle;
 
 	if (!TimerIsHandled(handle))
@@ -84,8 +73,10 @@ static DWORD TimerCleanupHandle(HANDLE handle)
 		return WAIT_OBJECT_0;
 
 #ifdef TIMER_IMPL_TIMERFD
+	SSIZE_T length = 0;
 	do
 	{
+		UINT64 expirations = 0;
 		length = read(timer->fd, (void*)&expirations, sizeof(UINT64));
 	} while (length < 0 && errno == EINTR);
 
@@ -93,6 +84,7 @@ static DWORD TimerCleanupHandle(HANDLE handle)
 	{
 		if (length < 0)
 		{
+			char ebuffer[256] = WINPR_C_ARRAY_INIT;
 			switch (errno)
 			{
 				case ETIMEDOUT:
@@ -103,7 +95,8 @@ static DWORD TimerCleanupHandle(HANDLE handle)
 					break;
 			}
 
-			WLog_ERR(TAG, "timer read() failure [%d] %s", errno, strerror(errno));
+			WLog_ERR(TAG, "timer read() failure [%d] %s", errno,
+			         winpr_strerror(errno, ebuffer, sizeof(ebuffer)));
 		}
 		else
 		{
@@ -112,7 +105,7 @@ static DWORD TimerCleanupHandle(HANDLE handle)
 
 		return WAIT_FAILED;
 	}
-#else
+#elif defined(TIMER_IMPL_POSIX) || defined(TIMER_IMPL_DISPATCH)
 	if (!winpr_event_reset(&timer->event))
 	{
 		WLog_ERR(TAG, "timer reset() failure");
@@ -132,14 +125,17 @@ typedef struct
 static void TimerPostDelete_APC(LPVOID arg)
 {
 	TimerDeleter* deleter = (TimerDeleter*)arg;
-	free(deleter->timer);
+	WINPR_ASSERT(deleter);
+	/* releases the extra reference TimerCloseHandle() took to keep the struct alive until here
+	 * (see APC_REMOVE_DELAY_FREE below) - only actually frees once nothing else still holds it */
+	winpr_Handle_Release((HANDLE)deleter->timer);
 	deleter->apcItem.markedForFree = TRUE;
 	deleter->apcItem.markedForRemove = TRUE;
 }
 
 BOOL TimerCloseHandle(HANDLE handle)
 {
-	WINPR_TIMER* timer;
+	WINPR_TIMER* timer = nullptr;
 	timer = (WINPR_TIMER*)handle;
 
 	if (!TimerIsHandled(handle))
@@ -164,10 +160,11 @@ BOOL TimerCloseHandle(HANDLE handle)
 #endif
 
 	free(timer->name);
+	timer->name = nullptr;
 	if (timer->apcItem.linked)
 	{
-		TimerDeleter* deleter;
-		WINPR_APC_ITEM* apcItem;
+		TimerDeleter* deleter = nullptr;
+		WINPR_APC_ITEM* apcItem = nullptr;
 
 		switch (apc_remove(&timer->apcItem))
 		{
@@ -186,6 +183,11 @@ BOOL TimerCloseHandle(HANDLE handle)
 					return TRUE;
 				}
 
+				/* keeps the struct alive until TimerPostDelete_APC() runs and releases it -
+				 * without this, the winpr_Handle_Release() the generic CloseHandle() wrapper
+				 * makes right after this function returns would free it immediately, while the
+				 * APC list may still be walking it. */
+				winpr_Handle_AddRef(handle);
 				deleter->timer = timer;
 				apcItem = &deleter->apcItem;
 				apcItem->type = APC_TYPE_HANDLE_FREE;
@@ -202,7 +204,6 @@ BOOL TimerCloseHandle(HANDLE handle)
 		}
 	}
 
-	free(timer);
 	return TRUE;
 }
 
@@ -230,7 +231,7 @@ static BOOL InstallTimerSignalHandler(PINIT_ONCE InitOnce, PVOID Parameter, PVOI
 	sigaddset(&action.sa_mask, SIGALRM);
 	action.sa_flags = SA_RESTART | SA_SIGINFO;
 	action.sa_sigaction = WaitableTimerSignalHandler;
-	sigaction(SIGALRM, &action, NULL);
+	sigaction(SIGALRM, &action, nullptr);
 	return TRUE;
 }
 #endif
@@ -238,7 +239,6 @@ static BOOL InstallTimerSignalHandler(PINIT_ONCE InitOnce, PVOID Parameter, PVOI
 #ifdef TIMER_IMPL_DISPATCH
 static void WaitableTimerHandler(void* arg)
 {
-	UINT64 data = 1;
 	WINPR_TIMER* timer = (WINPR_TIMER*)arg;
 
 	if (!timer)
@@ -262,13 +262,14 @@ static int InitializeWaitableTimer(WINPR_TIMER* timer)
 	int result = 0;
 
 #ifdef TIMER_IMPL_TIMERFD
-	timer->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+	timer->fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
 	if (timer->fd <= 0)
 		return -1;
 #elif defined(TIMER_IMPL_POSIX)
-	struct sigevent sigev;
-	InitOnceExecuteOnce(&TimerSignalHandler_InitOnce, InstallTimerSignalHandler, NULL, NULL);
-	ZeroMemory(&sigev, sizeof(struct sigevent));
+	struct sigevent sigev = WINPR_C_ARRAY_INIT;
+	if (!InitOnceExecuteOnce(&TimerSignalHandler_InitOnce, InstallTimerSignalHandler, nullptr,
+	                         nullptr))
+		return -1;
 	sigev.sigev_notify = SIGEV_SIGNAL;
 	sigev.sigev_signo = SIGALRM;
 	sigev.sigev_value.sival_ptr = (void*)timer;
@@ -279,7 +280,7 @@ static int InitializeWaitableTimer(WINPR_TIMER* timer)
 		return -1;
 	}
 #elif !defined(TIMER_IMPL_DISPATCH)
-	WLog_ERR(TAG, "%s: os specific implementation is missing", __FUNCTION__);
+	WLog_ERR(TAG, "os specific implementation is missing");
 	result = -1;
 #endif
 
@@ -289,8 +290,8 @@ static int InitializeWaitableTimer(WINPR_TIMER* timer)
 
 static BOOL timer_drain_fd(int fd)
 {
-	UINT64 expr;
-	int ret;
+	UINT64 expr = 0;
+	SSIZE_T ret = 0;
 
 	do
 	{
@@ -300,16 +301,12 @@ static BOOL timer_drain_fd(int fd)
 	return ret >= 0;
 }
 
-static HANDLE_OPS ops = { TimerIsHandled, TimerCloseHandle,
-	                      TimerGetFd,     TimerCleanupHandle,
-	                      NULL,           NULL,
-	                      NULL,           NULL,
-	                      NULL,           NULL,
-	                      NULL,           NULL,
-	                      NULL,           NULL,
-	                      NULL,           NULL,
-	                      NULL,           NULL,
-	                      NULL,           NULL };
+static HANDLE_OPS ops = { TimerIsHandled, TimerCloseHandle, TimerGetFd, TimerCleanupHandle,
+	                      nullptr,        nullptr,          nullptr,    nullptr,
+	                      nullptr,        nullptr,          nullptr,    nullptr,
+	                      nullptr,        nullptr,          nullptr,    nullptr,
+	                      nullptr,        nullptr,          nullptr,    nullptr,
+	                      nullptr };
 
 /**
  * Waitable Timer
@@ -318,11 +315,11 @@ static HANDLE_OPS ops = { TimerIsHandled, TimerCloseHandle,
 HANDLE CreateWaitableTimerA(LPSECURITY_ATTRIBUTES lpTimerAttributes, BOOL bManualReset,
                             LPCSTR lpTimerName)
 {
-	HANDLE handle = NULL;
-	WINPR_TIMER* timer;
+	HANDLE handle = nullptr;
+	WINPR_TIMER* timer = nullptr;
 
 	if (lpTimerAttributes)
-		WLog_WARN(TAG, "%s [%s] does not support lpTimerAttributes", __FUNCTION__, lpTimerName);
+		WLog_WARN(TAG, "[%s] does not support lpTimerAttributes", lpTimerName);
 
 	timer = (WINPR_TIMER*)calloc(1, sizeof(WINPR_TIMER));
 
@@ -333,14 +330,14 @@ HANDLE CreateWaitableTimerA(LPSECURITY_ATTRIBUTES lpTimerAttributes, BOOL bManua
 		timer->fd = -1;
 		timer->lPeriod = 0;
 		timer->bManualReset = bManualReset;
-		timer->pfnCompletionRoutine = NULL;
-		timer->lpArgToCompletionRoutine = NULL;
+		timer->pfnCompletionRoutine = nullptr;
+		timer->lpArgToCompletionRoutine = nullptr;
 		timer->bInit = FALSE;
 
 		if (lpTimerName)
 			timer->name = strdup(lpTimerName);
 
-		timer->ops = &ops;
+		timer->common.ops = &ops;
 #if defined(TIMER_IMPL_DISPATCH) || defined(TIMER_IMPL_POSIX)
 		if (!winpr_event_init(&timer->event))
 			goto fail;
@@ -368,20 +365,23 @@ HANDLE CreateWaitableTimerA(LPSECURITY_ATTRIBUTES lpTimerAttributes, BOOL bManua
 #if defined(TIMER_IMPL_DISPATCH) || defined(TIMER_IMPL_POSIX)
 fail:
 	TimerCloseHandle(handle);
-	return NULL;
+	free(timer);
+	return nullptr;
 #endif
 }
 
 HANDLE CreateWaitableTimerW(LPSECURITY_ATTRIBUTES lpTimerAttributes, BOOL bManualReset,
                             LPCWSTR lpTimerName)
 {
-	int rc;
-	HANDLE handle;
-	LPSTR name = NULL;
-	rc = ConvertFromUnicode(CP_UTF8, 0, lpTimerName, -1, &name, 0, NULL, NULL);
+	HANDLE handle = nullptr;
+	LPSTR name = nullptr;
 
-	if (rc < 0)
-		return NULL;
+	if (lpTimerName)
+	{
+		name = ConvertWCharToUtf8Alloc(lpTimerName, nullptr);
+		if (!name)
+			return nullptr;
+	}
 
 	handle = CreateWaitableTimerA(lpTimerAttributes, bManualReset, name);
 	free(name);
@@ -391,11 +391,11 @@ HANDLE CreateWaitableTimerW(LPSECURITY_ATTRIBUTES lpTimerAttributes, BOOL bManua
 HANDLE CreateWaitableTimerExA(LPSECURITY_ATTRIBUTES lpTimerAttributes, LPCSTR lpTimerName,
                               DWORD dwFlags, DWORD dwDesiredAccess)
 {
-	BOOL bManualReset = (dwFlags & CREATE_WAITABLE_TIMER_MANUAL_RESET) ? TRUE : FALSE;
+	BOOL bManualReset = (dwFlags & CREATE_WAITABLE_TIMER_MANUAL_RESET) != 0;
 
 	if (dwDesiredAccess != 0)
-		WLog_WARN(TAG, "%s [%s] does not support dwDesiredAccess 0x%08" PRIx32, __FUNCTION__,
-		          lpTimerName, dwDesiredAccess);
+		WLog_WARN(TAG, "[%s] does not support dwDesiredAccess 0x%08" PRIx32, lpTimerName,
+		          dwDesiredAccess);
 
 	return CreateWaitableTimerA(lpTimerAttributes, bManualReset, lpTimerName);
 }
@@ -403,13 +403,15 @@ HANDLE CreateWaitableTimerExA(LPSECURITY_ATTRIBUTES lpTimerAttributes, LPCSTR lp
 HANDLE CreateWaitableTimerExW(LPSECURITY_ATTRIBUTES lpTimerAttributes, LPCWSTR lpTimerName,
                               DWORD dwFlags, DWORD dwDesiredAccess)
 {
-	int rc;
-	HANDLE handle;
-	LPSTR name = NULL;
-	rc = ConvertFromUnicode(CP_UTF8, 0, lpTimerName, -1, &name, 0, NULL, NULL);
+	HANDLE handle = nullptr;
+	LPSTR name = nullptr;
 
-	if (rc < 0)
-		return NULL;
+	if (lpTimerName)
+	{
+		name = ConvertWCharToUtf8Alloc(lpTimerName, nullptr);
+		if (!name)
+			return nullptr;
+	}
 
 	handle = CreateWaitableTimerExA(lpTimerAttributes, name, dwFlags, dwDesiredAccess);
 	free(name);
@@ -419,7 +421,7 @@ HANDLE CreateWaitableTimerExW(LPSECURITY_ATTRIBUTES lpTimerAttributes, LPCWSTR l
 static void timerAPC(LPVOID arg)
 {
 	WINPR_TIMER* timer = (WINPR_TIMER*)arg;
-
+	WINPR_ASSERT(timer);
 	if (!timer->lPeriod)
 	{
 		/* this is a one time shot timer with a completion, let's remove us from
@@ -441,7 +443,7 @@ static void timerAPC(LPVOID arg)
 #ifdef TIMER_IMPL_TIMERFD
 	while (timer_drain_fd(timer->fd))
 		;
-#else
+#elif defined(TIMER_IMPL_POSIX) || defined(TIMER_IMPL_DISPATCH)
 	winpr_event_reset(&timer->event);
 #endif
 }
@@ -450,9 +452,9 @@ BOOL SetWaitableTimer(HANDLE hTimer, const LARGE_INTEGER* lpDueTime, LONG lPerio
                       PTIMERAPCROUTINE pfnCompletionRoutine, LPVOID lpArgToCompletionRoutine,
                       BOOL fResume)
 {
-	ULONG Type;
-	WINPR_HANDLE* Object;
-	WINPR_TIMER* timer;
+	ULONG Type = 0;
+	WINPR_HANDLE* Object = nullptr;
+	WINPR_TIMER* timer = nullptr;
 	LONGLONG seconds = 0;
 	LONGLONG nanoseconds = 0;
 	int status = 0;
@@ -471,7 +473,7 @@ BOOL SetWaitableTimer(HANDLE hTimer, const LARGE_INTEGER* lpDueTime, LONG lPerio
 
 	if (fResume)
 	{
-		WLog_ERR(TAG, "%s does not support fResume", __FUNCTION__);
+		WLog_ERR(TAG, "does not support fResume");
 		return FALSE;
 	}
 
@@ -508,8 +510,8 @@ BOOL SetWaitableTimer(HANDLE hTimer, const LARGE_INTEGER* lpDueTime, LONG lPerio
 
 	if (lPeriod > 0)
 	{
-		timer->timeout.it_interval.tv_sec = (lPeriod / 1000);              /* seconds */
-		timer->timeout.it_interval.tv_nsec = ((lPeriod % 1000) * 1000000); /* nanoseconds */
+		timer->timeout.it_interval.tv_sec = (lPeriod / 1000LL);                /* seconds */
+		timer->timeout.it_interval.tv_nsec = (1000000LL * (lPeriod % 1000LL)); /* nanoseconds */
 	}
 
 	if (lpDueTime->QuadPart != 0)
@@ -524,14 +526,14 @@ BOOL SetWaitableTimer(HANDLE hTimer, const LARGE_INTEGER* lpDueTime, LONG lPerio
 	}
 
 #ifdef TIMER_IMPL_TIMERFD
-	status = timerfd_settime(timer->fd, 0, &(timer->timeout), NULL);
+	status = timerfd_settime(timer->fd, 0, &(timer->timeout), nullptr);
 	if (status)
 	{
 		WLog_ERR(TAG, "timerfd_settime failure: %d", status);
 		return FALSE;
 	}
 #else
-	status = timer_settime(timer->tid, 0, &(timer->timeout), NULL);
+	status = timer_settime(timer->tid, 0, &(timer->timeout), nullptr);
 	if (status != 0)
 	{
 		WLog_ERR(TAG, "timer_settime failure");
@@ -612,31 +614,35 @@ BOOL SetWaitableTimer(HANDLE hTimer, const LARGE_INTEGER* lpDueTime, LONG lPerio
 
 BOOL SetWaitableTimerEx(HANDLE hTimer, const LARGE_INTEGER* lpDueTime, LONG lPeriod,
                         PTIMERAPCROUTINE pfnCompletionRoutine, LPVOID lpArgToCompletionRoutine,
-                        PREASON_CONTEXT WakeContext, ULONG TolerableDelay)
+                        WINPR_ATTR_UNUSED PREASON_CONTEXT WakeContext,
+                        WINPR_ATTR_UNUSED ULONG TolerableDelay)
 {
 	return SetWaitableTimer(hTimer, lpDueTime, lPeriod, pfnCompletionRoutine,
 	                        lpArgToCompletionRoutine, FALSE);
 }
 
-HANDLE OpenWaitableTimerA(DWORD dwDesiredAccess, BOOL bInheritHandle, LPCSTR lpTimerName)
+HANDLE OpenWaitableTimerA(WINPR_ATTR_UNUSED DWORD dwDesiredAccess,
+                          WINPR_ATTR_UNUSED BOOL bInheritHandle,
+                          WINPR_ATTR_UNUSED LPCSTR lpTimerName)
 {
 	/* TODO: Implement */
-	WLog_ERR(TAG, "%s not implemented", __FUNCTION__);
-	return NULL;
+	WLog_ERR(TAG, "not implemented");
+	return nullptr;
 }
 
-HANDLE OpenWaitableTimerW(DWORD dwDesiredAccess, BOOL bInheritHandle, LPCWSTR lpTimerName)
+HANDLE OpenWaitableTimerW(WINPR_ATTR_UNUSED DWORD dwDesiredAccess,
+                          WINPR_ATTR_UNUSED BOOL bInheritHandle,
+                          WINPR_ATTR_UNUSED LPCWSTR lpTimerName)
 {
 	/* TODO: Implement */
-	WLog_ERR(TAG, "%s not implemented", __FUNCTION__);
-	return NULL;
+	WLog_ERR(TAG, "not implemented");
+	return nullptr;
 }
 
 BOOL CancelWaitableTimer(HANDLE hTimer)
 {
-	ULONG Type;
-	WINPR_HANDLE* Object;
-	WINPR_TIMER* timer;
+	ULONG Type = 0;
+	WINPR_HANDLE* Object = nullptr;
 
 	if (!winpr_Handle_GetInfo(hTimer, &Type, &Object))
 		return FALSE;
@@ -644,15 +650,36 @@ BOOL CancelWaitableTimer(HANDLE hTimer)
 	if (Type != HANDLE_TYPE_TIMER)
 		return FALSE;
 
-	timer = (WINPR_TIMER*)Object;
 #if defined(__APPLE__)
+	{
+		WINPR_TIMER* timer = (WINPR_TIMER*)Object;
+		if (timer->running)
+			dispatch_suspend(timer->source);
 
-	if (timer->running)
-		dispatch_suspend(timer->source);
-
-	timer->running = FALSE;
+		timer->running = FALSE;
+	}
 #endif
 	return TRUE;
+}
+
+/*
+ * Returns inner file descriptor for usage with select()
+ * This file descriptor is not usable on Windows
+ */
+
+int GetTimerFileDescriptor(HANDLE hTimer)
+{
+	WINPR_HANDLE* hdl = nullptr;
+	ULONG type = 0;
+
+	if (!winpr_Handle_GetInfo(hTimer, &type, &hdl) || type != HANDLE_TYPE_TIMER)
+	{
+		WLog_ERR(TAG, "GetTimerFileDescriptor: hTimer is not an timer");
+		SetLastError(ERROR_INVALID_PARAMETER);
+		return -1;
+	}
+
+	return winpr_Handle_getFd(hTimer);
 }
 
 /**
@@ -666,21 +693,26 @@ BOOL CancelWaitableTimer(HANDLE hTimer)
 
 static void timespec_add_ms(struct timespec* tspec, UINT32 ms)
 {
-	UINT64 ns = tspec->tv_nsec + (ms * 1000000);
-	tspec->tv_sec += (ns / 1000000000);
-	tspec->tv_nsec = (ns % 1000000000);
+	INT64 ns = 0;
+	WINPR_ASSERT(tspec);
+	ns = tspec->tv_nsec + (ms * 1000000LL);
+	tspec->tv_sec += (ns / 1000000000LL);
+	tspec->tv_nsec = (ns % 1000000000LL);
 }
 
 static void timespec_gettimeofday(struct timespec* tspec)
 {
-	struct timeval tval;
-	gettimeofday(&tval, NULL);
-	tspec->tv_sec = tval.tv_sec;
-	tspec->tv_nsec = tval.tv_usec * 1000;
+	WINPR_ASSERT(tspec);
+
+	const UINT64 ns = winpr_GetUnixTimeNS();
+	tspec->tv_sec = WINPR_TIME_NS_TO_S(ns);
+	tspec->tv_nsec = WINPR_TIME_NS_REM_NS(ns);
 }
 
-static int timespec_compare(const struct timespec* tspec1, const struct timespec* tspec2)
+static INT64 timespec_compare(const struct timespec* tspec1, const struct timespec* tspec2)
 {
+	WINPR_ASSERT(tspec1);
+	WINPR_ASSERT(tspec2);
 	if (tspec1->tv_sec == tspec2->tv_sec)
 		return (tspec1->tv_nsec - tspec2->tv_nsec);
 	else
@@ -689,18 +721,23 @@ static int timespec_compare(const struct timespec* tspec1, const struct timespec
 
 static void timespec_copy(struct timespec* dst, struct timespec* src)
 {
+	WINPR_ASSERT(dst);
+	WINPR_ASSERT(src);
 	dst->tv_sec = src->tv_sec;
 	dst->tv_nsec = src->tv_nsec;
 }
 
 static void InsertTimerQueueTimer(WINPR_TIMER_QUEUE_TIMER** pHead, WINPR_TIMER_QUEUE_TIMER* timer)
 {
-	WINPR_TIMER_QUEUE_TIMER* node;
+	WINPR_TIMER_QUEUE_TIMER* node = nullptr;
+
+	WINPR_ASSERT(pHead);
+	WINPR_ASSERT(timer);
 
 	if (!(*pHead))
 	{
 		*pHead = timer;
-		timer->next = NULL;
+		timer->next = nullptr;
 		return;
 	}
 
@@ -725,25 +762,27 @@ static void InsertTimerQueueTimer(WINPR_TIMER_QUEUE_TIMER** pHead, WINPR_TIMER_Q
 	else
 	{
 		node->next = timer;
-		timer->next = NULL;
+		timer->next = nullptr;
 	}
 }
 
 static void RemoveTimerQueueTimer(WINPR_TIMER_QUEUE_TIMER** pHead, WINPR_TIMER_QUEUE_TIMER* timer)
 {
 	BOOL found = FALSE;
-	WINPR_TIMER_QUEUE_TIMER* node;
-	WINPR_TIMER_QUEUE_TIMER* prevNode;
+	WINPR_TIMER_QUEUE_TIMER* node = nullptr;
+	WINPR_TIMER_QUEUE_TIMER* prevNode = nullptr;
 
+	WINPR_ASSERT(pHead);
+	WINPR_ASSERT(timer);
 	if (timer == *pHead)
 	{
 		*pHead = timer->next;
-		timer->next = NULL;
+		timer->next = nullptr;
 		return;
 	}
 
 	node = *pHead;
-	prevNode = NULL;
+	prevNode = nullptr;
 
 	while (node)
 	{
@@ -764,14 +803,16 @@ static void RemoveTimerQueueTimer(WINPR_TIMER_QUEUE_TIMER** pHead, WINPR_TIMER_Q
 			prevNode->next = timer->next;
 		}
 
-		timer->next = NULL;
+		timer->next = nullptr;
 	}
 }
 
 static int FireExpiredTimerQueueTimers(WINPR_TIMER_QUEUE* timerQueue)
 {
 	struct timespec CurrentTime;
-	WINPR_TIMER_QUEUE_TIMER* node;
+	WINPR_TIMER_QUEUE_TIMER* node = nullptr;
+
+	WINPR_ASSERT(timerQueue);
 
 	if (!timerQueue->activeHead)
 		return 0;
@@ -786,7 +827,7 @@ static int FireExpiredTimerQueueTimers(WINPR_TIMER_QUEUE* timerQueue)
 			node->Callback(node->Parameter, TRUE);
 			node->FireCount++;
 			timerQueue->activeHead = node->next;
-			node->next = NULL;
+			node->next = nullptr;
 
 			if (node->Period)
 			{
@@ -811,10 +852,11 @@ static int FireExpiredTimerQueueTimers(WINPR_TIMER_QUEUE* timerQueue)
 
 static void* TimerQueueThread(void* arg)
 {
-	int status;
+	int status = 0;
 	struct timespec timeout;
 	WINPR_TIMER_QUEUE* timerQueue = (WINPR_TIMER_QUEUE*)arg;
 
+	WINPR_ASSERT(timerQueue);
 	while (1)
 	{
 		pthread_mutex_lock(&(timerQueue->cond_mutex));
@@ -834,23 +876,25 @@ static void* TimerQueueThread(void* arg)
 
 		status = pthread_cond_timedwait(&(timerQueue->cond), &(timerQueue->cond_mutex), &timeout);
 		FireExpiredTimerQueueTimers(timerQueue);
+		const BOOL bCancelled = timerQueue->bCancelled;
 		pthread_mutex_unlock(&(timerQueue->cond_mutex));
 
 		if ((status != ETIMEDOUT) && (status != 0))
 			break;
 
-		if (timerQueue->bCancelled)
+		if (bCancelled)
 			break;
 	}
 
-	return NULL;
+	return nullptr;
 }
 
 static int StartTimerQueueThread(WINPR_TIMER_QUEUE* timerQueue)
 {
-	pthread_cond_init(&(timerQueue->cond), NULL);
-	pthread_mutex_init(&(timerQueue->cond_mutex), NULL);
-	pthread_mutex_init(&(timerQueue->mutex), NULL);
+	WINPR_ASSERT(timerQueue);
+	pthread_cond_init(&(timerQueue->cond), nullptr);
+	pthread_mutex_init(&(timerQueue->cond_mutex), nullptr);
+	pthread_mutex_init(&(timerQueue->mutex), nullptr);
 	pthread_attr_init(&(timerQueue->attr));
 	timerQueue->param.sched_priority = sched_get_priority_max(SCHED_FIFO);
 	pthread_attr_setschedparam(&(timerQueue->attr), &(timerQueue->param));
@@ -861,16 +905,16 @@ static int StartTimerQueueThread(WINPR_TIMER_QUEUE* timerQueue)
 
 HANDLE CreateTimerQueue(void)
 {
-	HANDLE handle = NULL;
-	WINPR_TIMER_QUEUE* timerQueue;
+	HANDLE handle = nullptr;
+	WINPR_TIMER_QUEUE* timerQueue = nullptr;
 	timerQueue = (WINPR_TIMER_QUEUE*)calloc(1, sizeof(WINPR_TIMER_QUEUE));
 
 	if (timerQueue)
 	{
 		WINPR_HANDLE_SET_TYPE_AND_MODE(timerQueue, HANDLE_TYPE_TIMER_QUEUE, WINPR_FD_READ);
 		handle = (HANDLE)timerQueue;
-		timerQueue->activeHead = NULL;
-		timerQueue->inactiveHead = NULL;
+		timerQueue->activeHead = nullptr;
+		timerQueue->inactiveHead = nullptr;
 		timerQueue->bCancelled = FALSE;
 		StartTimerQueueThread(timerQueue);
 	}
@@ -880,10 +924,10 @@ HANDLE CreateTimerQueue(void)
 
 BOOL DeleteTimerQueueEx(HANDLE TimerQueue, HANDLE CompletionEvent)
 {
-	void* rvalue;
-	WINPR_TIMER_QUEUE* timerQueue;
-	WINPR_TIMER_QUEUE_TIMER* node;
-	WINPR_TIMER_QUEUE_TIMER* nextNode;
+	void* rvalue = nullptr;
+	WINPR_TIMER_QUEUE* timerQueue = nullptr;
+	WINPR_TIMER_QUEUE_TIMER* node = nullptr;
+	WINPR_TIMER_QUEUE_TIMER* nextNode = nullptr;
 
 	if (!TimerQueue)
 		return FALSE;
@@ -899,7 +943,7 @@ BOOL DeleteTimerQueueEx(HANDLE TimerQueue, HANDLE CompletionEvent)
 	 * Quote from MSDN regarding CompletionEvent:
 	 * If this parameter is INVALID_HANDLE_VALUE, the function waits for
 	 * all callback functions to complete before returning.
-	 * If this parameter is NULL, the function marks the timer for
+	 * If this parameter is nullptr, the function marks the timer for
 	 * deletion and returns immediately.
 	 *
 	 * Note: The current WinPR implementation implicitly waits for any
@@ -915,7 +959,7 @@ BOOL DeleteTimerQueueEx(HANDLE TimerQueue, HANDLE CompletionEvent)
 			node = node->next;
 		}
 
-		timerQueue->activeHead = NULL;
+		timerQueue->activeHead = nullptr;
 		/* Once all timers are inactive, free them */
 		node = timerQueue->inactiveHead;
 
@@ -926,7 +970,7 @@ BOOL DeleteTimerQueueEx(HANDLE TimerQueue, HANDLE CompletionEvent)
 			node = nextNode;
 		}
 
-		timerQueue->inactiveHead = NULL;
+		timerQueue->inactiveHead = nullptr;
 	}
 	/* Delete timer queue */
 	pthread_cond_destroy(&(timerQueue->cond));
@@ -936,35 +980,33 @@ BOOL DeleteTimerQueueEx(HANDLE TimerQueue, HANDLE CompletionEvent)
 	free(timerQueue);
 
 	if (CompletionEvent && (CompletionEvent != INVALID_HANDLE_VALUE))
-		SetEvent(CompletionEvent);
+		(void)SetEvent(CompletionEvent);
 
 	return TRUE;
 }
 
 BOOL DeleteTimerQueue(HANDLE TimerQueue)
 {
-	return DeleteTimerQueueEx(TimerQueue, NULL);
+	return DeleteTimerQueueEx(TimerQueue, nullptr);
 }
 
-BOOL CreateTimerQueueTimer(PHANDLE phNewTimer, HANDLE TimerQueue, WAITORTIMERCALLBACK Callback,
-                           PVOID Parameter, DWORD DueTime, DWORD Period, ULONG Flags)
+BOOL CreateTimerQueueTimer(HANDLE* phNewTimer, HANDLE TimerQueue, WAITORTIMERCALLBACK Callback,
+                           void* Parameter, DWORD DueTime, DWORD Period, ULONG Flags)
 {
-	struct timespec CurrentTime;
-	WINPR_TIMER_QUEUE* timerQueue;
-	WINPR_TIMER_QUEUE_TIMER* timer;
+	struct timespec CurrentTime = WINPR_C_ARRAY_INIT;
 
 	if (!TimerQueue)
 		return FALSE;
 
 	timespec_gettimeofday(&CurrentTime);
-	timerQueue = (WINPR_TIMER_QUEUE*)TimerQueue;
-	timer = (WINPR_TIMER_QUEUE_TIMER*)malloc(sizeof(WINPR_TIMER_QUEUE_TIMER));
+	WINPR_TIMER_QUEUE* timerQueue = (WINPR_TIMER_QUEUE*)TimerQueue;
+	WINPR_TIMER_QUEUE_TIMER* timer = calloc(1, sizeof(WINPR_TIMER_QUEUE_TIMER));
 
 	if (!timer)
 		return FALSE;
 
 	WINPR_HANDLE_SET_TYPE_AND_MODE(timer, HANDLE_TYPE_TIMER_QUEUE_TIMER, WINPR_FD_READ);
-	*((UINT_PTR*)phNewTimer) = (UINT_PTR)(HANDLE)timer;
+	*phNewTimer = (HANDLE)timer;
 	timespec_copy(&(timer->StartTime), &CurrentTime);
 	timespec_add_ms(&(timer->StartTime), DueTime);
 	timespec_copy(&(timer->ExpirationTime), &(timer->StartTime));
@@ -975,7 +1017,7 @@ BOOL CreateTimerQueueTimer(PHANDLE phNewTimer, HANDLE TimerQueue, WAITORTIMERCAL
 	timer->Parameter = Parameter;
 	timer->timerQueue = (WINPR_TIMER_QUEUE*)TimerQueue;
 	timer->FireCount = 0;
-	timer->next = NULL;
+	timer->next = nullptr;
 	pthread_mutex_lock(&(timerQueue->cond_mutex));
 	InsertTimerQueueTimer(&(timerQueue->activeHead), timer);
 	pthread_cond_signal(&(timerQueue->cond));
@@ -986,8 +1028,8 @@ BOOL CreateTimerQueueTimer(PHANDLE phNewTimer, HANDLE TimerQueue, WAITORTIMERCAL
 BOOL ChangeTimerQueueTimer(HANDLE TimerQueue, HANDLE Timer, ULONG DueTime, ULONG Period)
 {
 	struct timespec CurrentTime;
-	WINPR_TIMER_QUEUE* timerQueue;
-	WINPR_TIMER_QUEUE_TIMER* timer;
+	WINPR_TIMER_QUEUE* timerQueue = nullptr;
+	WINPR_TIMER_QUEUE_TIMER* timer = nullptr;
 
 	if (!TimerQueue || !Timer)
 		return FALSE;
@@ -1000,7 +1042,7 @@ BOOL ChangeTimerQueueTimer(HANDLE TimerQueue, HANDLE Timer, ULONG DueTime, ULONG
 	RemoveTimerQueueTimer(&(timerQueue->inactiveHead), timer);
 	timer->DueTime = DueTime;
 	timer->Period = Period;
-	timer->next = NULL;
+	timer->next = nullptr;
 	timespec_copy(&(timer->StartTime), &CurrentTime);
 	timespec_add_ms(&(timer->StartTime), DueTime);
 	timespec_copy(&(timer->ExpirationTime), &(timer->StartTime));
@@ -1012,8 +1054,8 @@ BOOL ChangeTimerQueueTimer(HANDLE TimerQueue, HANDLE Timer, ULONG DueTime, ULONG
 
 BOOL DeleteTimerQueueTimer(HANDLE TimerQueue, HANDLE Timer, HANDLE CompletionEvent)
 {
-	WINPR_TIMER_QUEUE* timerQueue;
-	WINPR_TIMER_QUEUE_TIMER* timer;
+	WINPR_TIMER_QUEUE* timerQueue = nullptr;
+	WINPR_TIMER_QUEUE_TIMER* timer = nullptr;
 
 	if (!TimerQueue || !Timer)
 		return FALSE;
@@ -1025,7 +1067,7 @@ BOOL DeleteTimerQueueTimer(HANDLE TimerQueue, HANDLE Timer, HANDLE CompletionEve
 	 * Quote from MSDN regarding CompletionEvent:
 	 * If this parameter is INVALID_HANDLE_VALUE, the function waits for
 	 * all callback functions to complete before returning.
-	 * If this parameter is NULL, the function marks the timer for
+	 * If this parameter is nullptr, the function marks the timer for
 	 * deletion and returns immediately.
 	 *
 	 * Note: The current WinPR implementation implicitly waits for any
@@ -1037,7 +1079,7 @@ BOOL DeleteTimerQueueTimer(HANDLE TimerQueue, HANDLE Timer, HANDLE CompletionEve
 	free(timer);
 
 	if (CompletionEvent && (CompletionEvent != INVALID_HANDLE_VALUE))
-		SetEvent(CompletionEvent);
+		(void)SetEvent(CompletionEvent);
 
 	return TRUE;
 }

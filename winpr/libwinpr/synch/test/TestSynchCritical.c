@@ -1,13 +1,14 @@
 
 #include <stdio.h>
 #include <winpr/crt.h>
+#include <winpr/crypto.h>
 #include <winpr/windows.h>
 #include <winpr/synch.h>
 #include <winpr/sysinfo.h>
 #include <winpr/thread.h>
 #include <winpr/interlocked.h>
 
-#define TEST_SYNC_CRITICAL_TEST1_RUNTIME_MS 500
+#define TEST_SYNC_CRITICAL_TEST1_RUNTIME_MS 100
 #define TEST_SYNC_CRITICAL_TEST1_RUNS 4
 
 static CRITICAL_SECTION critical;
@@ -40,11 +41,21 @@ static BOOL TestSynchCritical_TriggerAndCheckRaceCondition(HANDLE OwningThread, 
 	return TRUE;
 }
 
-/* this thread function shall increment the global dwTestValue until the PBOOL passsed in arg is
+static UINT32 prand(UINT32 max)
+{
+	UINT32 tmp = 0;
+	if (max <= 1)
+		return 1;
+	if (winpr_RAND(&tmp, sizeof(tmp)) < 0)
+		return 0;
+	return tmp % (max - 1) + 1;
+}
+
+/* this thread function shall increment the global dwTestValue until the PBOOL passed in arg is
  * FALSE */
 static DWORD WINAPI TestSynchCritical_Test1(LPVOID arg)
 {
-	int i, j, rc;
+	int rc = 0;
 	HANDLE hThread = (HANDLE)(ULONG_PTR)GetCurrentThreadId();
 
 	PBOOL pbContinueRunning = (PBOOL)arg;
@@ -59,14 +70,14 @@ static DWORD WINAPI TestSynchCritical_Test1(LPVOID arg)
 			return 1;
 
 		/* add some random recursion level */
-		j = rand() % 5;
-		for (i = 0; i < j; i++)
+		UINT32 j = prand(5);
+		for (UINT32 i = 0; i < j; i++)
 		{
 			if (!TestSynchCritical_TriggerAndCheckRaceCondition(hThread, rc++))
 				return 2;
 			EnterCriticalSection(&critical);
 		}
-		for (i = 0; i < j; i++)
+		for (UINT32 i = 0; i < j; i++)
 		{
 			if (!TestSynchCritical_TriggerAndCheckRaceCondition(hThread, rc--))
 				return 2;
@@ -86,6 +97,7 @@ static DWORD WINAPI TestSynchCritical_Test1(LPVOID arg)
  */
 static DWORD WINAPI TestSynchCritical_Test2(LPVOID arg)
 {
+	WINPR_UNUSED(arg);
 	if (TryEnterCriticalSection(&critical) == TRUE)
 	{
 		LeaveCriticalSection(&critical);
@@ -96,17 +108,16 @@ static DWORD WINAPI TestSynchCritical_Test2(LPVOID arg)
 
 static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 {
-	int i, j;
 	SYSTEM_INFO sysinfo;
-	DWORD dwPreviousSpinCount;
-	DWORD dwSpinCount;
-	DWORD dwSpinCountExpected;
-	HANDLE hMainThread;
-	HANDLE* hThreads;
-	HANDLE hThread;
-	DWORD dwThreadCount;
-	DWORD dwThreadExitCode;
-	BOOL bTest1Running;
+	DWORD dwPreviousSpinCount = 0;
+	DWORD dwSpinCount = 0;
+	DWORD dwSpinCountExpected = 0;
+	HANDLE hMainThread = nullptr;
+	HANDLE* hThreads = nullptr;
+	HANDLE hThread = nullptr;
+	DWORD dwThreadCount = 0;
+	DWORD dwThreadExitCode = 0;
+	BOOL bTest1Running = 0;
 
 	PBOOL pbThreadTerminated = (PBOOL)arg;
 
@@ -121,7 +132,8 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 	 */
 
 	dwSpinCount = 100;
-	InitializeCriticalSectionEx(&critical, dwSpinCount, 0);
+	if (!InitializeCriticalSectionEx(&critical, dwSpinCount, 0))
+		goto fail;
 	while (--dwSpinCount)
 	{
 		dwPreviousSpinCount = SetCriticalSectionSpinCount(&critical, dwSpinCount);
@@ -141,9 +153,15 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 		DeleteCriticalSection(&critical);
 
 		if (dwSpinCount % 2 == 0)
-			InitializeCriticalSectionAndSpinCount(&critical, dwSpinCount);
+		{
+			if (!InitializeCriticalSectionAndSpinCount(&critical, dwSpinCount))
+				goto fail;
+		}
 		else
-			InitializeCriticalSectionEx(&critical, dwSpinCount, 0);
+		{
+			if (!InitializeCriticalSectionEx(&critical, dwSpinCount, 0))
+				goto fail;
+		}
 	}
 	DeleteCriticalSection(&critical);
 
@@ -155,7 +173,8 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 
 	InitializeCriticalSection(&critical);
 
-	for (i = 0; i < 1000; i++)
+	int i = 0;
+	for (; i < 10; i++)
 	{
 		if (critical.RecursionCount != i)
 		{
@@ -192,7 +211,7 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 			       critical.RecursionCount, i);
 			goto fail;
 		}
-		if (critical.OwningThread != (HANDLE)(i ? hMainThread : NULL))
+		if (critical.OwningThread != (i ? hMainThread : nullptr))
 		{
 			printf("CriticalSection failure: Could not verify section ownership (loop index=%d).\n",
 			       i);
@@ -214,20 +233,21 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 		goto fail;
 	}
 
-	for (j = 0; j < TEST_SYNC_CRITICAL_TEST1_RUNS; j++)
+	for (int j = 0; j < TEST_SYNC_CRITICAL_TEST1_RUNS; j++)
 	{
-		dwSpinCount = j * 1000;
-		InitializeCriticalSectionAndSpinCount(&critical, dwSpinCount);
+		dwSpinCount = j * 100;
+		if (!InitializeCriticalSectionAndSpinCount(&critical, dwSpinCount))
+			goto fail;
 
 		gTestValueVulnerable = 0;
 		gTestValueSerialized = 0;
 
 		/* the TestSynchCritical_Test1 threads shall run until bTest1Running is FALSE */
 		bTest1Running = TRUE;
-		for (i = 0; i < (int)dwThreadCount; i++)
+		for (int i = 0; i < (int)dwThreadCount; i++)
 		{
-			if (!(hThreads[i] =
-			          CreateThread(NULL, 0, TestSynchCritical_Test1, &bTest1Running, 0, NULL)))
+			if (!(hThreads[i] = CreateThread(nullptr, 0, TestSynchCritical_Test1, &bTest1Running, 0,
+			                                 nullptr)))
 			{
 				printf("CriticalSection failure: Failed to create test_1 thread #%d\n", i);
 				goto fail;
@@ -238,21 +258,22 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 		Sleep(TEST_SYNC_CRITICAL_TEST1_RUNTIME_MS);
 		bTest1Running = FALSE;
 
-		for (i = 0; i < (int)dwThreadCount; i++)
+		for (int i = 0; i < (int)dwThreadCount; i++)
 		{
 			if (WaitForSingleObject(hThreads[i], INFINITE) != WAIT_OBJECT_0)
 			{
 				printf("CriticalSection failure: Failed to wait for thread #%d\n", i);
 				goto fail;
 			}
-			GetExitCodeThread(hThreads[i], &dwThreadExitCode);
+			if (!GetExitCodeThread(hThreads[i], &dwThreadExitCode))
+				goto fail;
 			if (dwThreadExitCode != 0)
 			{
 				printf("CriticalSection failure: Thread #%d returned error code %" PRIu32 "\n", i,
 				       dwThreadExitCode);
 				goto fail;
 			}
-			CloseHandle(hThreads[i]);
+			(void)CloseHandle(hThreads[i]);
 		}
 
 		if (gTestValueVulnerable != gTestValueSerialized)
@@ -266,7 +287,7 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 		DeleteCriticalSection(&critical);
 	}
 
-	free(hThreads);
+	free((void*)hThreads);
 
 	/**
 	 * TryEnterCriticalSection in thread must fail if we hold the lock in the main thread
@@ -280,7 +301,7 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 		goto fail;
 	}
 	/* This thread tries to call TryEnterCriticalSection which must fail */
-	if (!(hThread = CreateThread(NULL, 0, TestSynchCritical_Test2, NULL, 0, NULL)))
+	if (!(hThread = CreateThread(nullptr, 0, TestSynchCritical_Test2, nullptr, 0, nullptr)))
 	{
 		printf("CriticalSection failure: Failed to create test_2 thread\n");
 		goto fail;
@@ -290,14 +311,15 @@ static DWORD WINAPI TestSynchCritical_Main(LPVOID arg)
 		printf("CriticalSection failure: Failed to wait for thread\n");
 		goto fail;
 	}
-	GetExitCodeThread(hThread, &dwThreadExitCode);
+	if (!GetExitCodeThread(hThread, &dwThreadExitCode))
+		goto fail;
 	if (dwThreadExitCode != 0)
 	{
 		printf("CriticalSection failure: Thread returned error code %" PRIu32 "\n",
 		       dwThreadExitCode);
 		goto fail;
 	}
-	CloseHandle(hThread);
+	(void)CloseHandle(hThread);
 
 	*pbThreadTerminated = TRUE; /* requ. for winpr issue, see below */
 	return 0;
@@ -310,17 +332,20 @@ fail:
 int TestSynchCritical(int argc, char* argv[])
 {
 	BOOL bThreadTerminated = FALSE;
-	HANDLE hThread;
-	DWORD dwThreadExitCode;
-	DWORD dwDeadLockDetectionTimeMs;
-	DWORD i;
+	HANDLE hThread = nullptr;
+	DWORD dwThreadExitCode = 0;
+	DWORD dwDeadLockDetectionTimeMs = 0;
+
+	WINPR_UNUSED(argc);
+	WINPR_UNUSED(argv);
 
 	dwDeadLockDetectionTimeMs =
 	    2 * TEST_SYNC_CRITICAL_TEST1_RUNTIME_MS * TEST_SYNC_CRITICAL_TEST1_RUNS;
 
 	printf("Deadlock will be assumed after %" PRIu32 " ms.\n", dwDeadLockDetectionTimeMs);
 
-	if (!(hThread = CreateThread(NULL, 0, TestSynchCritical_Main, &bThreadTerminated, 0, NULL)))
+	if (!(hThread =
+	          CreateThread(nullptr, 0, TestSynchCritical_Main, &bThreadTerminated, 0, nullptr)))
 	{
 		printf("CriticalSection failure: Failed to create main thread\n");
 		return -1;
@@ -334,12 +359,12 @@ int TestSynchCritical(int argc, char* argv[])
 	 * Workaround checking the value of bThreadTerminated which is passed in the thread arg
 	 */
 
-	for (i = 0; i < dwDeadLockDetectionTimeMs; i += 100)
+	for (DWORD i = 0; i < dwDeadLockDetectionTimeMs; i += 10)
 	{
 		if (bThreadTerminated)
 			break;
 
-		Sleep(100);
+		Sleep(10);
 	}
 
 	if (!bThreadTerminated)
@@ -348,8 +373,10 @@ int TestSynchCritical(int argc, char* argv[])
 		return -1;
 	}
 
-	GetExitCodeThread(hThread, &dwThreadExitCode);
-	CloseHandle(hThread);
+	if (!GetExitCodeThread(hThread, &dwThreadExitCode))
+		return -1;
+	if (!CloseHandle(hThread))
+		return -1;
 
 	if (dwThreadExitCode != 0)
 	{

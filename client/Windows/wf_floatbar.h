@@ -22,12 +22,13 @@
 
 #include <winpr/crt.h>
 
-typedef struct _FloatBar wfFloatBar;
+typedef struct s_FloatBar wfFloatBar;
 typedef struct wf_context wfContext;
 
 wfFloatBar* wf_floatbar_new(wfContext* wfc, HINSTANCE window, DWORD flags);
 void wf_floatbar_free(wfFloatBar* floatbar);
 
 BOOL wf_floatbar_toggle_fullscreen(wfFloatBar* floatbar, BOOL fullscreen);
+BOOL wf_floatbar_reset_position(wfFloatBar* floatbar);
 
 #endif /* FREERDP_CLIENT_WIN_FLOATBAR_H */

@@ -18,9 +18,7 @@
  * limitations under the License.
  */
 
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
+#include <freerdp/config.h>
 
 #include <freerdp/log.h>
 
@@ -40,17 +38,16 @@
 
 #define TAG FREERDP_TAG("dsp.ffmpeg")
 
-struct _FREERDP_DSP_CONTEXT
+struct S_FREERDP_DSP_CONTEXT
 {
-	AUDIO_FORMAT format;
+	FREERDP_DSP_COMMON_CONTEXT common;
 
 	BOOL isOpen;
-	BOOL encoder;
 
 	UINT32 bufferedSamples;
 
 	enum AVCodecID id;
-	AVCodec* codec;
+	const AVCodec* codec;
 	AVCodecContext* context;
 	AVFrame* frame;
 	AVFrame* resampled;
@@ -63,7 +60,7 @@ struct _FREERDP_DSP_CONTEXT
 #endif
 };
 
-static BOOL ffmpeg_codec_is_filtered(enum AVCodecID id, BOOL encoder)
+static BOOL ffmpeg_codec_is_filtered(enum AVCodecID id, WINPR_ATTR_UNUSED BOOL encoder)
 {
 	switch (id)
 	{
@@ -73,19 +70,17 @@ static BOOL ffmpeg_codec_is_filtered(enum AVCodecID id, BOOL encoder)
 		case AV_CODEC_ID_MP3:
 		case AV_CODEC_ID_ADPCM_MS:
 		case AV_CODEC_ID_G723_1:
+		case AV_CODEC_ID_GSM_MS:
+		case AV_CODEC_ID_PCM_ALAW:
+		case AV_CODEC_ID_PCM_MULAW:
 			return TRUE;
 #endif
 
 		case AV_CODEC_ID_NONE:
 			return TRUE;
 
-		case AV_CODEC_ID_GSM_MS:
 		case AV_CODEC_ID_AAC:
 		case AV_CODEC_ID_AAC_LATM:
-#if !defined(WITH_DSP_EXPERIMENTAL)
-			if (encoder)
-				return TRUE;
-#endif
 			return FALSE;
 
 		default:
@@ -93,14 +88,10 @@ static BOOL ffmpeg_codec_is_filtered(enum AVCodecID id, BOOL encoder)
 	}
 }
 
-static enum AVCodecID ffmpeg_get_avcodec(const AUDIO_FORMAT* format)
+static enum AVCodecID ffmpeg_get_avcodec(const AUDIO_FORMAT* WINPR_RESTRICT format)
 {
-	const char* id;
-
 	if (!format)
 		return AV_CODEC_ID_NONE;
-
-	id = audio_format_get_tag_string(format->wFormatTag);
 
 	switch (format->wFormatTag)
 	{
@@ -141,12 +132,15 @@ static enum AVCodecID ffmpeg_get_avcodec(const AUDIO_FORMAT* format)
 		case WAVE_FORMAT_AAC_MS:
 			return AV_CODEC_ID_AAC;
 
+		case WAVE_FORMAT_OPUS:
+			return AV_CODEC_ID_OPUS;
+
 		default:
 			return AV_CODEC_ID_NONE;
 	}
 }
 
-static int ffmpeg_sample_format(const AUDIO_FORMAT* format)
+static enum AVSampleFormat ffmpeg_sample_format(const AUDIO_FORMAT* WINPR_RESTRICT format)
 {
 	switch (format->wFormatTag)
 	{
@@ -160,7 +154,7 @@ static int ffmpeg_sample_format(const AUDIO_FORMAT* format)
 					return AV_SAMPLE_FMT_S16;
 
 				default:
-					return FALSE;
+					return AV_SAMPLE_FMT_NONE;
 			}
 
 		case WAVE_FORMAT_DVI_ADPCM:
@@ -171,6 +165,9 @@ static int ffmpeg_sample_format(const AUDIO_FORMAT* format)
 		case WAVE_FORMAT_AAC_MS:
 			return AV_SAMPLE_FMT_FLTP;
 
+		case WAVE_FORMAT_OPUS:
+			return AV_SAMPLE_FMT_S16;
+
 		case WAVE_FORMAT_MSG723:
 		case WAVE_FORMAT_GSM610:
 			return AV_SAMPLE_FMT_S16P;
@@ -179,11 +176,11 @@ static int ffmpeg_sample_format(const AUDIO_FORMAT* format)
 			return AV_SAMPLE_FMT_S16;
 
 		default:
-			return FALSE;
+			return AV_SAMPLE_FMT_NONE;
 	}
 }
 
-static void ffmpeg_close_context(FREERDP_DSP_CONTEXT* context)
+static void ffmpeg_close_context(FREERDP_DSP_CONTEXT* WINPR_RESTRICT context)
 {
 	if (context)
 	{
@@ -198,6 +195,7 @@ static void ffmpeg_close_context(FREERDP_DSP_CONTEXT* context)
 
 		if (context->buffered)
 			av_frame_free(&context->buffered);
+		context->bufferedSamples = 0;
 
 		if (context->packet)
 			av_packet_free(&context->packet);
@@ -212,37 +210,61 @@ static void ffmpeg_close_context(FREERDP_DSP_CONTEXT* context)
 		}
 
 		context->id = AV_CODEC_ID_NONE;
-		context->codec = NULL;
+		context->codec = nullptr;
 		context->isOpen = FALSE;
-		context->context = NULL;
-		context->frame = NULL;
-		context->resampled = NULL;
-		context->packet = NULL;
-		context->rcontext = NULL;
+		context->context = nullptr;
+		context->frame = nullptr;
+		context->resampled = nullptr;
+		context->packet = nullptr;
+		context->rcontext = nullptr;
 	}
 }
 
-static BOOL ffmpeg_open_context(FREERDP_DSP_CONTEXT* context)
+static void ffmpeg_setup_resample_frame(FREERDP_DSP_CONTEXT* WINPR_RESTRICT context,
+                                        const AUDIO_FORMAT* WINPR_RESTRICT format)
 {
-	int ret;
-	int layout;
-	const AUDIO_FORMAT* format;
+	if (context->resampled->buf[0] != nullptr)
+		av_frame_unref(context->resampled);
+
+	if (context->common.encoder)
+	{
+		context->resampled->format = context->context->sample_fmt;
+		context->resampled->sample_rate = context->context->sample_rate;
+	}
+	else
+	{
+		context->resampled->format = AV_SAMPLE_FMT_S16;
+
+		WINPR_ASSERT(format->nSamplesPerSec <= INT_MAX);
+		context->resampled->sample_rate = (int)format->nSamplesPerSec;
+	}
+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+	av_channel_layout_default(&context->resampled->ch_layout, format->nChannels);
+#else
+	const int64_t layout = av_get_default_channel_layout(format->nChannels);
+	context->resampled->channel_layout = layout;
+	context->resampled->channels = format->nChannels;
+#endif
+}
+
+static BOOL ffmpeg_open_context(FREERDP_DSP_CONTEXT* WINPR_RESTRICT context)
+{
+	int ret = 0;
 
 	if (!context || context->isOpen)
 		return FALSE;
 
-	format = &context->format;
+	const AUDIO_FORMAT* format = &context->common.format;
 
 	if (!format)
 		return FALSE;
-
-	layout = av_get_default_channel_layout(format->nChannels);
 	context->id = ffmpeg_get_avcodec(format);
 
-	if (ffmpeg_codec_is_filtered(context->id, context->encoder))
+	if (ffmpeg_codec_is_filtered(context->id, context->common.encoder))
 		goto fail;
 
-	if (context->encoder)
+	if (context->common.encoder)
 		context->codec = avcodec_find_encoder(context->id);
 	else
 		context->codec = avcodec_find_decoder(context->id);
@@ -263,22 +285,36 @@ static BOOL ffmpeg_open_context(FREERDP_DSP_CONTEXT* context)
 			break;
 
 		case AV_CODEC_ID_AAC:
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(60, 31, 102)
 			context->context->profile = FF_PROFILE_AAC_MAIN;
+#elif LIBAVCODEC_VERSION_INT < AV_VERSION_INT(62, 11, 100)
+			context->context->profile = AV_PROFILE_AAC_MAIN;
+#else
+			context->context->profile = AV_PROFILE_AAC_LOW;
+#endif
 			break;
 
 		default:
 			break;
 	}
 
+	context->context->max_b_frames = 1;
+	context->context->delay = 0;
+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+	av_channel_layout_default(&context->context->ch_layout, format->nChannels);
+#else
 	context->context->channels = format->nChannels;
+	const int64_t layout = av_get_default_channel_layout(format->nChannels);
 	context->context->channel_layout = layout;
-	context->context->sample_rate = format->nSamplesPerSec;
+#endif
+	context->context->sample_rate = (int)format->nSamplesPerSec;
 	context->context->block_align = format->nBlockAlign;
-	context->context->bit_rate = format->nAvgBytesPerSec * 8;
+	context->context->bit_rate = format->nAvgBytesPerSec * 8LL;
 	context->context->sample_fmt = ffmpeg_sample_format(format);
 	context->context->time_base = av_make_q(1, context->context->sample_rate);
 
-	if ((ret = avcodec_open2(context->context, context->codec, NULL)) < 0)
+	if ((ret = avcodec_open2(context->context, context->codec, nullptr)) < 0)
 	{
 		const char* err = av_err2str(ret);
 		WLog_ERR(TAG, "Error avcodec_open2 %s [%d]", err, ret);
@@ -314,33 +350,33 @@ static BOOL ffmpeg_open_context(FREERDP_DSP_CONTEXT* context)
 	if (!context->rcontext)
 		goto fail;
 
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+	av_channel_layout_default(&context->frame->ch_layout, format->nChannels);
+#else
 	context->frame->channel_layout = layout;
 	context->frame->channels = format->nChannels;
-	context->frame->sample_rate = format->nSamplesPerSec;
+#endif
+	WINPR_ASSERT(format->nSamplesPerSec <= INT_MAX);
+	context->frame->sample_rate = (int)format->nSamplesPerSec;
 	context->frame->format = AV_SAMPLE_FMT_S16;
 
-	if (context->encoder)
-	{
-		context->resampled->format = context->context->sample_fmt;
-		context->resampled->sample_rate = context->context->sample_rate;
-	}
-	else
-	{
-		context->resampled->format = AV_SAMPLE_FMT_S16;
-		context->resampled->sample_rate = format->nSamplesPerSec;
-	}
-
-	context->resampled->channel_layout = layout;
-	context->resampled->channels = format->nChannels;
+	ffmpeg_setup_resample_frame(context, format);
 
 	if (context->context->frame_size > 0)
 	{
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+		ret = av_channel_layout_copy(&context->buffered->ch_layout, &context->resampled->ch_layout);
+		if (ret != 0)
+			goto fail;
+#else
 		context->buffered->channel_layout = context->resampled->channel_layout;
 		context->buffered->channels = context->resampled->channels;
+#endif
 		context->buffered->format = context->resampled->format;
 		context->buffered->nb_samples = context->context->frame_size;
 
-		if ((ret = av_frame_get_buffer(context->buffered, 1)) < 0)
+		ret = av_frame_get_buffer(context->buffered, 1);
+		if (ret < 0)
 			goto fail;
 	}
 
@@ -352,9 +388,10 @@ fail:
 }
 
 #if defined(SWRESAMPLE_FOUND)
-static BOOL ffmpeg_resample_frame(SwrContext* context, AVFrame* in, AVFrame* out)
+static BOOL ffmpeg_resample_frame(SwrContext* WINPR_RESTRICT context, AVFrame* WINPR_RESTRICT in,
+                                  AVFrame* WINPR_RESTRICT out)
 {
-	int ret;
+	int ret = 0;
 
 	if (!swr_is_initialized(context))
 	{
@@ -383,7 +420,8 @@ static BOOL ffmpeg_resample_frame(SwrContext* context, AVFrame* in, AVFrame* out
 	return TRUE;
 }
 #else
-static BOOL ffmpeg_resample_frame(AVAudioResampleContext* context, AVFrame* in, AVFrame* out)
+static BOOL ffmpeg_resample_frame(AVAudioResampleContext* WINPR_RESTRICT context,
+                                  AVFrame* WINPR_RESTRICT in, AVFrame* WINPR_RESTRICT out)
 {
 	int ret;
 
@@ -415,56 +453,106 @@ static BOOL ffmpeg_resample_frame(AVAudioResampleContext* context, AVFrame* in, 
 }
 #endif
 
-static BOOL ffmpeg_encode_frame(AVCodecContext* context, AVFrame* in, AVPacket* packet,
-                                wStream* out)
+static BOOL ffmpeg_encode_frame(AVCodecContext* WINPR_RESTRICT context, AVFrame* WINPR_RESTRICT in,
+                                AVPacket* WINPR_RESTRICT packet, wStream* WINPR_RESTRICT out)
 {
-	int ret;
+	if (in->format == AV_SAMPLE_FMT_FLTP)
+	{
+		uint8_t** pp = in->extended_data;
+#if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(57, 28, 100)
+		const int nr_channels = in->channels;
+#else
+		const int nr_channels = in->ch_layout.nb_channels;
+#endif
+
+		for (int y = 0; y < nr_channels; y++)
+		{
+			float* data = WINPR_PACKED_ALIGN_CAST(float*, pp[y]);
+			for (int x = 0; x < in->nb_samples; x++)
+			{
+				const float val1 = data[x];
+				if (isnan(val1))
+					data[x] = 0.0f;
+				else if (isinf(val1))
+				{
+					if (val1 < 0.0f)
+						data[x] = -1.0f;
+					else
+						data[x] = 1.0f;
+				}
+			}
+		}
+	}
 	/* send the packet with the compressed data to the encoder */
-	ret = avcodec_send_frame(context, in);
+	int ret = avcodec_send_frame(context, in);
 
 	if (ret < 0)
 	{
 		const char* err = av_err2str(ret);
+		// Ignore errors: AAC encoder sometimes returns -22
+		// The log message from ffmpeg is '[aac @ 0x7f140db753c0] Input contains (near) NaN/+-Inf'
+		if (ret == AVERROR(EINVAL))
+		{
+			WLog_DBG(TAG, "Error submitting the packet to the encoder %s [%d], ignoring", err, ret);
+			return TRUE;
+		}
+
 		WLog_ERR(TAG, "Error submitting the packet to the encoder %s [%d]", err, ret);
+
 		return FALSE;
 	}
 
 	/* read all the output frames (in general there may be any number of them */
-	while (ret >= 0)
+	while (TRUE)
 	{
 		ret = avcodec_receive_packet(context, packet);
 
 		if ((ret == AVERROR(EAGAIN)) || (ret == AVERROR_EOF))
-			return TRUE;
-		else if (ret < 0)
+			break;
+
+		if (ret < 0)
 		{
 			const char* err = av_err2str(ret);
 			WLog_ERR(TAG, "Error during encoding %s [%d]", err, ret);
 			return FALSE;
 		}
 
-		if (!Stream_EnsureRemainingCapacity(out, packet->size))
+		WINPR_ASSERT(packet->size >= 0);
+		if (!Stream_EnsureRemainingCapacity(out, (size_t)packet->size))
 			return FALSE;
 
-		Stream_Write(out, packet->data, packet->size);
+		Stream_Write(out, packet->data, (size_t)packet->size);
 		av_packet_unref(packet);
 	}
 
 	return TRUE;
 }
 
-static BOOL ffmpeg_fill_frame(AVFrame* frame, const AUDIO_FORMAT* inputFormat, const BYTE* data,
-                              size_t size)
+static BOOL ffmpeg_fill_frame(AVFrame* WINPR_RESTRICT frame,
+                              const AUDIO_FORMAT* WINPR_RESTRICT inputFormat,
+                              const BYTE* WINPR_RESTRICT data, size_t size)
 {
-	int ret, bpp;
+	int ret = 0;
+#if LIBAVUTIL_VERSION_INT < AV_VERSION_INT(57, 28, 100)
 	frame->channels = inputFormat->nChannels;
-	frame->sample_rate = inputFormat->nSamplesPerSec;
-	frame->format = ffmpeg_sample_format(inputFormat);
 	frame->channel_layout = av_get_default_channel_layout(frame->channels);
-	bpp = av_get_bytes_per_sample(frame->format);
-	frame->nb_samples = size / inputFormat->nChannels / bpp;
+#else
+	av_channel_layout_default(&frame->ch_layout, inputFormat->nChannels);
+#endif
+	WINPR_ASSERT(inputFormat->nSamplesPerSec <= INT_MAX);
+	frame->sample_rate = (int)inputFormat->nSamplesPerSec;
+	frame->format = ffmpeg_sample_format(inputFormat);
 
-	if ((ret = avcodec_fill_audio_frame(frame, frame->channels, frame->format, data, size, 1)) < 0)
+	const int bpp =
+	    av_get_bytes_per_sample(WINPR_ASSERTING_INT_CAST(enum AVSampleFormat, frame->format));
+	WINPR_ASSERT(bpp >= 0);
+	WINPR_ASSERT(size <= INT_MAX);
+	const size_t nb_samples = size / inputFormat->nChannels / (size_t)bpp;
+	frame->nb_samples = (int)nb_samples;
+
+	if ((ret = avcodec_fill_audio_frame(
+	         frame, inputFormat->nChannels,
+	         WINPR_ASSERTING_INT_CAST(enum AVSampleFormat, frame->format), data, (int)size, 1)) < 0)
 	{
 		const char* err = av_err2str(ret);
 		WLog_ERR(TAG, "Error during audio frame fill %s [%d]", err, ret);
@@ -474,16 +562,16 @@ static BOOL ffmpeg_fill_frame(AVFrame* frame, const AUDIO_FORMAT* inputFormat, c
 	return TRUE;
 }
 #if defined(SWRESAMPLE_FOUND)
-static BOOL ffmpeg_decode(AVCodecContext* dec_ctx, AVPacket* pkt, AVFrame* frame,
-                          SwrContext* resampleContext, AVFrame* resampled, wStream* out)
+static BOOL ffmpeg_decode(AVCodecContext* WINPR_RESTRICT dec_ctx, AVPacket* WINPR_RESTRICT pkt,
+                          AVFrame* WINPR_RESTRICT frame, SwrContext* WINPR_RESTRICT resampleContext,
+                          AVFrame* WINPR_RESTRICT resampled, wStream* WINPR_RESTRICT out)
 #else
 static BOOL ffmpeg_decode(AVCodecContext* dec_ctx, AVPacket* pkt, AVFrame* frame,
                           AVAudioResampleContext* resampleContext, AVFrame* resampled, wStream* out)
 #endif
 {
-	int ret;
 	/* send the packet with the compressed data to the decoder */
-	ret = avcodec_send_packet(dec_ctx, pkt);
+	int ret = avcodec_send_packet(dec_ctx, pkt);
 
 	if (ret < 0)
 	{
@@ -498,8 +586,9 @@ static BOOL ffmpeg_decode(AVCodecContext* dec_ctx, AVPacket* pkt, AVFrame* frame
 		ret = avcodec_receive_frame(dec_ctx, frame);
 
 		if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-			return TRUE;
-		else if (ret < 0)
+			break;
+
+		if (ret < 0)
 		{
 			const char* err = av_err2str(ret);
 			WLog_ERR(TAG, "Error during decoding %s [%d]", err, ret);
@@ -523,10 +612,11 @@ static BOOL ffmpeg_decode(AVCodecContext* dec_ctx, AVPacket* pkt, AVFrame* frame
 			}
 
 #if defined(SWRESAMPLE_FOUND)
-			if ((ret = (swr_init(resampleContext))) < 0)
+			ret = (swr_init(resampleContext));
 #else
-			if ((ret = (avresample_open(resampleContext))) < 0)
+			ret = (avresample_open(resampleContext));
 #endif
+			if (ret < 0)
 			{
 				const char* err = av_err2str(ret);
 				WLog_ERR(TAG, "Error during resampling %s [%d]", err, ret);
@@ -535,10 +625,11 @@ static BOOL ffmpeg_decode(AVCodecContext* dec_ctx, AVPacket* pkt, AVFrame* frame
 		}
 
 #if defined(SWRESAMPLE_FOUND)
-		if ((ret = swr_convert_frame(resampleContext, resampled, frame)) < 0)
+		ret = swr_convert_frame(resampleContext, resampled, frame);
 #else
-		if ((ret = avresample_convert_frame(resampleContext, resampled, frame)) < 0)
+		ret = avresample_convert_frame(resampleContext, resampled, frame);
 #endif
+		if (ret < 0)
 		{
 			const char* err = av_err2str(ret);
 			WLog_ERR(TAG, "Error during resampling %s [%d]", err, ret);
@@ -546,8 +637,17 @@ static BOOL ffmpeg_decode(AVCodecContext* dec_ctx, AVPacket* pkt, AVFrame* frame
 		}
 
 		{
-			const size_t data_size = resampled->channels * resampled->nb_samples * 2;
-			Stream_EnsureRemainingCapacity(out, data_size);
+
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+			WINPR_ASSERT(resampled->ch_layout.nb_channels >= 0);
+			const size_t nrchannels = (size_t)resampled->ch_layout.nb_channels;
+#else
+			const size_t nrchannels = resampled->channels;
+#endif
+			WINPR_ASSERT(resampled->nb_samples >= 0);
+			const size_t data_size = nrchannels * (size_t)resampled->nb_samples * 2ull;
+			if (!Stream_EnsureRemainingCapacity(out, data_size))
+				return FALSE;
 			Stream_Write(out, resampled->data[0], data_size);
 		}
 	}
@@ -555,7 +655,7 @@ static BOOL ffmpeg_decode(AVCodecContext* dec_ctx, AVPacket* pkt, AVFrame* frame
 	return TRUE;
 }
 
-BOOL freerdp_dsp_ffmpeg_supports_format(const AUDIO_FORMAT* format, BOOL encode)
+BOOL freerdp_dsp_ffmpeg_supports_format(const AUDIO_FORMAT* WINPR_RESTRICT format, BOOL encode)
 {
 	enum AVCodecID id = ffmpeg_get_avcodec(format);
 
@@ -563,22 +663,33 @@ BOOL freerdp_dsp_ffmpeg_supports_format(const AUDIO_FORMAT* format, BOOL encode)
 		return FALSE;
 
 	if (encode)
-		return avcodec_find_encoder(id) != NULL;
+		return avcodec_find_encoder(id) != nullptr;
 	else
-		return avcodec_find_decoder(id) != NULL;
+		return avcodec_find_decoder(id) != nullptr;
 }
 
 FREERDP_DSP_CONTEXT* freerdp_dsp_ffmpeg_context_new(BOOL encode)
 {
-	FREERDP_DSP_CONTEXT* context;
+	FREERDP_DSP_CONTEXT* context = nullptr;
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 10, 100)
 	avcodec_register_all();
+#endif
 	context = calloc(1, sizeof(FREERDP_DSP_CONTEXT));
 
 	if (!context)
-		return NULL;
+		goto fail;
 
-	context->encoder = encode;
+	if (!freerdp_dsp_common_context_init(&context->common, encode))
+		goto fail;
+
 	return context;
+
+fail:
+	WINPR_PRAGMA_DIAG_PUSH
+	WINPR_PRAGMA_DIAG_IGNORED_MISMATCHED_DEALLOC
+	freerdp_dsp_ffmpeg_context_free(context);
+	WINPR_PRAGMA_DIAG_POP
+	return nullptr;
 }
 
 void freerdp_dsp_ffmpeg_context_free(FREERDP_DSP_CONTEXT* context)
@@ -586,36 +697,136 @@ void freerdp_dsp_ffmpeg_context_free(FREERDP_DSP_CONTEXT* context)
 	if (context)
 	{
 		ffmpeg_close_context(context);
+		freerdp_dsp_common_context_uninit(&context->common);
 		free(context);
 	}
 }
 
-BOOL freerdp_dsp_ffmpeg_context_reset(FREERDP_DSP_CONTEXT* context,
-                                      const AUDIO_FORMAT* targetFormat)
+BOOL freerdp_dsp_ffmpeg_context_reset(FREERDP_DSP_CONTEXT* WINPR_RESTRICT context,
+                                      const AUDIO_FORMAT* WINPR_RESTRICT targetFormat)
 {
 	if (!context || !targetFormat)
 		return FALSE;
 
 	ffmpeg_close_context(context);
-	context->format = *targetFormat;
+	context->common.format = *targetFormat;
 	return ffmpeg_open_context(context);
 }
 
-BOOL freerdp_dsp_ffmpeg_encode(FREERDP_DSP_CONTEXT* context, const AUDIO_FORMAT* format,
-                               const BYTE* data, size_t length, wStream* out)
+static BOOL freerdp_dsp_channel_mix(FREERDP_DSP_CONTEXT* WINPR_RESTRICT context,
+                                    const BYTE* WINPR_RESTRICT src, size_t size,
+                                    const AUDIO_FORMAT* WINPR_RESTRICT srcFormat,
+                                    const BYTE** WINPR_RESTRICT data, size_t* WINPR_RESTRICT length,
+                                    AUDIO_FORMAT* WINPR_RESTRICT dstFormat)
 {
-	int rc;
+	UINT32 bpp = 0;
+	size_t samples = 0;
 
-	if (!context || !format || !data || !out || !context->encoder)
+	if (!context || !data || !length || !dstFormat)
 		return FALSE;
 
-	if (!context || !data || !out)
+	if (srcFormat->wFormatTag != WAVE_FORMAT_PCM)
+		return FALSE;
+
+	bpp = srcFormat->wBitsPerSample > 8 ? 2 : 1;
+	samples = size / bpp / srcFormat->nChannels;
+
+	*dstFormat = *srcFormat;
+	if (context->common.format.nChannels == srcFormat->nChannels)
+	{
+		*data = src;
+		*length = size;
+		return TRUE;
+	}
+
+	Stream_ResetPosition(context->common.channelmix);
+
+	/* Destination has more channels than source */
+	if (context->common.format.nChannels > srcFormat->nChannels)
+	{
+		switch (srcFormat->nChannels)
+		{
+			case 1:
+				if (!Stream_EnsureCapacity(context->common.channelmix, size * 2))
+					return FALSE;
+
+				for (size_t x = 0; x < samples; x++)
+				{
+					for (size_t y = 0; y < bpp; y++)
+						Stream_Write_UINT8(context->common.channelmix, src[x * bpp + y]);
+
+					for (size_t y = 0; y < bpp; y++)
+						Stream_Write_UINT8(context->common.channelmix, src[x * bpp + y]);
+				}
+
+				Stream_SealLength(context->common.channelmix);
+				*data = Stream_Buffer(context->common.channelmix);
+				*length = Stream_Length(context->common.channelmix);
+				dstFormat->nChannels = 2;
+				return TRUE;
+
+			case 2:  /* We only support stereo, so we can not handle this case. */
+			default: /* Unsupported number of channels */
+				WLog_WARN(TAG, "[%s] unsupported source channel count %" PRIu16, __func__,
+				          srcFormat->nChannels);
+				return FALSE;
+		}
+	}
+
+	/* Destination has less channels than source */
+	switch (srcFormat->nChannels)
+	{
+		case 2:
+			if (!Stream_EnsureCapacity(context->common.channelmix, size / 2))
+				return FALSE;
+
+			/* Simply drop second channel.
+			 * TODO: Calculate average */
+			for (size_t x = 0; x < samples; x++)
+			{
+				for (size_t y = 0; y < bpp; y++)
+					Stream_Write_UINT8(context->common.channelmix, src[2 * x * bpp + y]);
+			}
+
+			Stream_SealLength(context->common.channelmix);
+			*data = Stream_Buffer(context->common.channelmix);
+			*length = Stream_Length(context->common.channelmix);
+			dstFormat->nChannels = 1;
+			return TRUE;
+
+		case 1:  /* Invalid, do we want to use a 0 channel sound? */
+		default: /* Unsupported number of channels */
+			WLog_WARN(TAG, "[%s] unsupported channel count %" PRIu16, __func__,
+			          srcFormat->nChannels);
+			return FALSE;
+	}
+
+	return FALSE;
+}
+
+BOOL freerdp_dsp_ffmpeg_encode(FREERDP_DSP_CONTEXT* WINPR_RESTRICT context,
+                               const AUDIO_FORMAT* WINPR_RESTRICT format,
+                               const BYTE* WINPR_RESTRICT sdata, size_t length,
+                               wStream* WINPR_RESTRICT out)
+{
+	AUDIO_FORMAT fmt = WINPR_C_ARRAY_INIT;
+
+	if (!context || !format || !sdata || !out || !context->common.encoder)
+		return FALSE;
+
+	/* https://github.com/FreeRDP/FreeRDP/issues/7607
+	 *
+	 * we get noisy data with channel transformation, so do it ourselves.
+	 */
+	const BYTE* data = nullptr;
+	if (!freerdp_dsp_channel_mix(context, sdata, length, format, &data, &length, &fmt))
 		return FALSE;
 
 	/* Create input frame */
 	if (!ffmpeg_fill_frame(context->frame, format, data, length))
 		return FALSE;
 
+	ffmpeg_setup_resample_frame(context, format);
 	/* Resample to desired format. */
 	if (!ffmpeg_resample_frame(context->rcontext, context->frame, context->resampled))
 		return FALSE;
@@ -639,10 +850,17 @@ BOOL freerdp_dsp_ffmpeg_encode(FREERDP_DSP_CONTEXT* context, const AUDIO_FORMAT*
 			if (inSamples + (int)context->bufferedSamples > context->context->frame_size)
 				inSamples = context->context->frame_size - (int)context->bufferedSamples;
 
-			rc =
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(57, 28, 100)
+			const int nrchannels = context->context->ch_layout.nb_channels;
+#else
+			const int nrchannels = context->context->channels;
+#endif
+			const int rc =
 			    av_samples_copy(context->buffered->extended_data, context->resampled->extended_data,
-			                    (int)context->bufferedSamples, copied, inSamples,
-			                    context->context->channels, context->context->sample_fmt);
+			                    (int)context->bufferedSamples, copied, inSamples, nrchannels,
+			                    context->context->sample_fmt);
+			if (rc < 0)
+				return FALSE;
 			rest -= inSamples;
 			copied += inSamples;
 			context->bufferedSamples += (UINT32)inSamples;
@@ -661,15 +879,21 @@ BOOL freerdp_dsp_ffmpeg_encode(FREERDP_DSP_CONTEXT* context, const AUDIO_FORMAT*
 	}
 }
 
-BOOL freerdp_dsp_ffmpeg_decode(FREERDP_DSP_CONTEXT* context, const AUDIO_FORMAT* srcFormat,
-                               const BYTE* data, size_t length, wStream* out)
+BOOL freerdp_dsp_ffmpeg_decode(FREERDP_DSP_CONTEXT* WINPR_RESTRICT context,
+                               const AUDIO_FORMAT* WINPR_RESTRICT srcFormat,
+                               const BYTE* WINPR_RESTRICT data, size_t length,
+                               wStream* WINPR_RESTRICT out)
 {
-	if (!context || !srcFormat || !data || !out || context->encoder)
+	if (!context || !srcFormat || !data || !out || context->common.encoder)
 		return FALSE;
 
+#if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(58, 133, 100)
 	av_init_packet(context->packet);
-	context->packet->data = (uint8_t*)data;
-	context->packet->size = length;
+#endif
+	context->packet->data = WINPR_CAST_CONST_PTR_AWAY(data, uint8_t*);
+
+	WINPR_ASSERT(length <= INT_MAX);
+	context->packet->size = (int)length;
 	return ffmpeg_decode(context->context, context->packet, context->frame, context->rcontext,
 	                     context->resampled, out);
 }

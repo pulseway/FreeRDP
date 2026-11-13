@@ -21,9 +21,20 @@
 #define FREERDP_CODECS_H
 
 #include <freerdp/api.h>
+#include <freerdp/types.h>
+#include <freerdp/config.h>
 
 #include <freerdp/codec/color.h>
 
+#if defined(WITH_GFX_AV1)
+#include <freerdp/codec/av1.h>
+#endif
+#if defined(WITH_GFX_AV2)
+#include <freerdp/codec/av2.h>
+#endif
+#if defined(WITH_GFX_AZURE)
+#include <freerdp/codec/hevc.h>
+#endif
 #include <freerdp/codec/rfx.h>
 #include <freerdp/codec/nsc.h>
 #include <freerdp/codec/h264.h>
@@ -32,42 +43,105 @@
 #include <freerdp/codec/interleaved.h>
 #include <freerdp/codec/progressive.h>
 
-#define FREERDP_CODEC_INTERLEAVED 0x00000001
-#define FREERDP_CODEC_PLANAR 0x00000002
-#define FREERDP_CODEC_NSCODEC 0x00000004
-#define FREERDP_CODEC_REMOTEFX 0x00000008
-#define FREERDP_CODEC_CLEARCODEC 0x00000010
-#define FREERDP_CODEC_ALPHACODEC 0x00000020
-#define FREERDP_CODEC_PROGRESSIVE 0x00000040
-#define FREERDP_CODEC_AVC420 0x00000080
-#define FREERDP_CODEC_AVC444 0x00000100
-#define FREERDP_CODEC_ALL 0xFFFFFFFF
-
-struct rdp_codecs
+typedef enum
 {
-	rdpContext* context;
-
-	RFX_CONTEXT* rfx;
-	NSC_CONTEXT* nsc;
-	H264_CONTEXT* h264;
-	CLEAR_CONTEXT* clear;
-	PROGRESSIVE_CONTEXT* progressive;
-	BITMAP_PLANAR_CONTEXT* planar;
-	BITMAP_INTERLEAVED_CONTEXT* interleaved;
-};
+	FREERDP_CODEC_INTERLEAVED = 0x00000001u,
+	FREERDP_CODEC_PLANAR = 0x00000002u,
+	FREERDP_CODEC_NSCODEC = 0x00000004u,
+	FREERDP_CODEC_REMOTEFX = 0x00000008u,
+	FREERDP_CODEC_CLEARCODEC = 0x00000010u,
+	FREERDP_CODEC_ALPHACODEC = 0x00000020u,
+	FREERDP_CODEC_PROGRESSIVE = 0x00000040u,
+	FREERDP_CODEC_AVC420 = 0x00000080u,
+	FREERDP_CODEC_AVC444 = 0x00000100u,
+#if defined(WITH_GFX_AV1)
+	FREERDP_CODEC_AV1_I420 = 0x00000200u,
+	FREERDP_CODEC_AV1_I444 = 0x00000400u,
+#endif
+#if defined(WITH_GFX_AV2)
+	FREERDP_CODEC_AV2_I420 = 0x00000800u, /* @since version 3.34.0 */
+	FREERDP_CODEC_AV2_I444 = 0x00001000u, /* @since version 3.34.0 */
+#endif
+#if defined(WITH_GFX_AZURE)
+	FREERDP_CODEC_HEVC_I420 = 0x00002000u, /* @since version 3.34.0 */
+	FREERDP_CODEC_HEVC_I444 = 0x00004000u, /* @since version 3.34.0 */
+#endif
+	FREERDP_CODEC_ALL = 0x7FFFFFFFu /* C enum types are restricted to int */
+} FreeRDP_CodecFlags;
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
+	struct rdp_codecs
+	{
+		UINT32 ThreadingFlags; /** @since version 3.6.0 */
+
+		RFX_CONTEXT* rfx;
+		NSC_CONTEXT* nsc;
+		H264_CONTEXT* h264;
+		CLEAR_CONTEXT* clear;
+		PROGRESSIVE_CONTEXT* progressive;
+		BITMAP_PLANAR_CONTEXT* planar;
+		BITMAP_INTERLEAVED_CONTEXT* interleaved;
+	};
+	typedef struct rdp_codecs rdpCodecs;
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API BOOL freerdp_client_codecs_prepare(rdpCodecs* codecs, UINT32 flags, UINT32 width,
 	                                               UINT32 height);
+
+	WINPR_ATTR_NODISCARD
 	FREERDP_API BOOL freerdp_client_codecs_reset(rdpCodecs* codecs, UINT32 flags, UINT32 width,
 	                                             UINT32 height);
 
-	FREERDP_API rdpCodecs* codecs_new(rdpContext* context);
-	FREERDP_API void codecs_free(rdpCodecs* codecs);
+	/**
+	 * @brief Free a rdpCodecs instance
+	 * @param codecs A pointer to a rdpCodecs instance or nullptr
+	 *  @since version 3.6.0
+	 */
+	FREERDP_API void freerdp_client_codecs_free(rdpCodecs* codecs);
+
+	/**
+	 * @brief Allocate a rdpCodecs instance.
+	 * @return A newly allocated instance or \b nullptr in case of failure.
+	 *  @since version 3.6.0
+	 */
+	WINPR_ATTR_MALLOC(freerdp_client_codecs_free, 1)
+	FREERDP_API rdpCodecs* freerdp_client_codecs_new(UINT32 ThreadingFlags);
+
+#if !defined(WITHOUT_FREERDP_3x_DEPRECATED)
+	WINPR_DEPRECATED_VAR("[since 3.6.0] Use freerdp_client_codecs_free",
+	                     FREERDP_API void codecs_free(rdpCodecs* codecs));
+
+	WINPR_DEPRECATED_VAR(
+	    "[since 3.6.0] Use freerdp_client_codecs_new",
+	    WINPR_ATTR_MALLOC(codecs_free, 1)
+	        WINPR_ATTR_NODISCARD FREERDP_API rdpCodecs* codecs_new(rdpContext* context));
+#endif
+
+	/** @brief return a string representation of the given codecid
+	 * 	 *  @param id The codec to stringify
+	 *  @return The name of the codecid
+	 *  @since version 3.18.0
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API const char* freerdp_codec_id_to_str(UINT32 id);
+
+	/**  @brief Check if a given codec is supported in the build
+	 *
+	 *   @param context The RDP context to use for the check
+	 *   @param codec The codec to check
+	 *   @param encoder If encoding or decoding is required
+	 *
+	 *   @return TRUE if supported, FALSE otherwise
+	 *
+	 *   @since version 3.34.0
+	 */
+	WINPR_ATTR_NODISCARD
+	FREERDP_API BOOL freerdp_codec_supported(rdpContext* context, FreeRDP_CodecFlags codec,
+	                                         BOOL encoder);
 
 #ifdef __cplusplus
 }

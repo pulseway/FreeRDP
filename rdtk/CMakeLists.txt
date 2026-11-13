@@ -15,49 +15,86 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-cmake_minimum_required(VERSION 2.8)
+# Soname versioning
+set(RDTK_VERSION_MAJOR "0")
+set(RDTK_VERSION_MINOR "2")
+set(RDTK_VERSION_REVISION "0")
+set(RDTK_VERSION "${RDTK_VERSION_MAJOR}.${RDTK_VERSION_MINOR}.${RDTK_VERSION_REVISION}")
+set(RDTK_VERSION_FULL "${RDTK_VERSION}")
+set(RDTK_API_VERSION "${RDTK_VERSION_MAJOR}")
 
-project(RdTk C)
+set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/)
+if(NOT FREERDP_UNIFIED_BUILD)
+  cmake_minimum_required(VERSION 3.13)
+  project(RdTk VERSION ${RDTK_VERSION} LANGUAGES C)
 
-set(CMAKE_COLOR_MAKEFILE ON)
+  include(ProjectCStandard)
+
+  set(WINPR_VERSION_MAJOR 3)
+
+  include(ExportAllSymbols)
+else()
+  set(WINPR_VERSION_MAJOR ${FREERDP_VERSION_MAJOR})
+endif()
+
+# Include our extra modules
+include(CommonConfigOptions)
 
 # Include cmake modules
 include(CheckIncludeFiles)
 include(CheckLibraryExists)
 include(CheckStructHasMember)
-include(FindPkgConfig)
 include(TestBigEndian)
-
-# Include our extra modules
-set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/)
 
 # Check for cmake compatibility (enable/disable features)
 include(CheckCmakeCompat)
 include(FindFeature)
-include(ConfigOptions)
 include(CheckCCompilerFlag)
-include(GNUInstallDirsWrapper)
 include(CMakePackageConfigHelpers)
+include(SetFreeRDPCMakeInstallDir)
 
-# Default to release build type
-if(NOT CMAKE_BUILD_TYPE)
-   set(CMAKE_BUILD_TYPE "Release")
+include(WarnUnmaintained)
+warn_unmaintained("RDTK" "-DWITH_RDTK=OFF")
+
+option(RDTK_FORCE_STATIC_BUILD "Force RDTK to be build as static library (recommended)" OFF)
+if(RDTK_FORCE_STATIC_BUILD)
+  set(BUILD_SHARED_LIBS OFF)
 endif()
 
-# Default to build shared libs
-if(NOT DEFINED BUILD_SHARED_LIBS)
-	set(BUILD_SHARED_LIBS ON)
-endif()
+add_compile_definitions(RDTK_EXPORTS)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DRDTK_EXPORTS")
+if(NOT IOS)
+  check_include_files(stdbool.h RDTK_HAVE_STDBOOL_H)
+  if(NOT RDTK_HAVE_STDBOOL_H)
+    include_directories(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/../compat/stdbool)
+  endif()
+endif()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
 
+if(FREERDP_UNIFIED_BUILD)
+  include_directories(${PROJECT_SOURCE_DIR}/winpr/include)
+  include_directories(${PROJECT_BINARY_DIR}/winpr/include)
+else()
+  find_package(WinPR 3 REQUIRED)
+  include_directories(${WinPR_INCLUDE_DIR})
+endif()
+
+setfreerdpcmakeinstalldir(RDTK_CMAKE_INSTALL_DIR "rdtk${RDTK_VERSION_MAJOR}")
+
+set(RDTK_INCLUDE_DIR include/rdtk${RDTK_API_VERSION})
+
 add_subdirectory(librdtk)
+add_subdirectory(templates)
+add_subdirectory(include)
+
+if(NOT RDTK_FORCE_STATIC_BUILD)
+  install(EXPORT rdtk DESTINATION ${RDTK_CMAKE_INSTALL_DIR})
+endif()
 
 if(WITH_SAMPLE)
-	if(WITH_X11)
-		add_subdirectory(sample)
-	endif()
+  if(WITH_X11)
+    add_subdirectory(sample)
+  endif()
 endif()

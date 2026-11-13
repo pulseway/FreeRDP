@@ -18,16 +18,16 @@
 # automatically included by CMake when the -DWITH_THIRD_PARTY=on option is used.
 
 # include proxy header files for proxy modules
-include_directories("${CMAKE_SOURCE_DIR}/server/proxy")
-include_directories("${CMAKE_SOURCE_DIR}/server/proxy/modules")
+include_directories("${PROJECT_SOURCE_DIR}/server/proxy")
+include_directories("${PROJECT_SOURCE_DIR}/server/proxy/modules")
 
 # taken from FreeRDP/third-party/CMakeLists.txt
 file(GLOB all_valid_subdirs RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} "*/CMakeLists.txt")
 
 foreach(dir ${all_valid_subdirs})
-	if(${dir} MATCHES "^([^/]*)/+CMakeLists.txt")
-		string(REGEX REPLACE "^([^/]*)/+CMakeLists.txt" "\\1" dir_trimmed ${dir})
-		message(STATUS "Adding proxy module ${dir_trimmed}")
-		add_subdirectory(${dir_trimmed})
-	endif()
+  if(${dir} MATCHES "^([^/]*)/+CMakeLists.txt")
+    string(REGEX REPLACE "^([^/]*)/+CMakeLists.txt" "\\1" dir_trimmed ${dir})
+    message(STATUS "Adding proxy module ${dir_trimmed}")
+    add_subdirectory(${dir_trimmed})
+  endif()
 endforeach(dir)

@@ -20,8 +20,6 @@
 #ifndef FREERDP_LISTENER_H
 #define FREERDP_LISTENER_H
 
-typedef struct rdp_freerdp_listener freerdp_listener;
-
 #include <freerdp/api.h>
 #include <freerdp/types.h>
 #include <freerdp/settings.h>
@@ -32,12 +30,17 @@ extern "C"
 {
 #endif
 
+	typedef struct rdp_freerdp_listener freerdp_listener;
+
 	typedef BOOL (*psListenerOpen)(freerdp_listener* instance, const char* bind_address,
 	                               UINT16 port);
 	typedef BOOL (*psListenerOpenLocal)(freerdp_listener* instance, const char* path);
 	typedef BOOL (*psListenerOpenFromSocket)(freerdp_listener* instance, int fd);
-	typedef BOOL (*psListenerGetFileDescriptor)(freerdp_listener* instance, void** rfds,
-	                                            int* rcount);
+#if defined(WITH_FREERDP_DEPRECATED)
+	WINPR_DEPRECATED_VAR("Use psListenerGetEventHandles instead",
+	                     typedef BOOL (*psListenerGetFileDescriptor)(freerdp_listener* instance,
+	                                                                 void** rfds, int* rcount);)
+#endif
 	typedef DWORD (*psListenerGetEventHandles)(freerdp_listener* instance, HANDLE* events,
 	                                           DWORD nCount);
 	typedef BOOL (*psListenerCheckFileDescriptor)(freerdp_listener* instance);
@@ -53,19 +56,29 @@ extern "C"
 		void* param3;
 		void* param4;
 
-		psListenerOpen Open;
-		psListenerOpenLocal OpenLocal;
-		psListenerGetFileDescriptor GetFileDescriptor;
-		psListenerGetEventHandles GetEventHandles;
-		psListenerCheckFileDescriptor CheckFileDescriptor;
+		WINPR_ATTR_NODISCARD psListenerOpen Open;
+		WINPR_ATTR_NODISCARD psListenerOpenLocal OpenLocal;
+#if defined(WITH_FREERDP_DEPRECATED)
+		WINPR_DEPRECATED_VAR("Use rdp_freerdp_listener::GetEventHandles instead",
+		                     WINPR_ATTR_NODISCARD psListenerGetFileDescriptor GetFileDescriptor;)
+#else
+	void* reserved;
+#endif
+		WINPR_ATTR_NODISCARD psListenerGetEventHandles GetEventHandles;
+		WINPR_ATTR_NODISCARD psListenerCheckFileDescriptor CheckFileDescriptor;
 		psListenerClose Close;
 
-		psPeerAccepted PeerAccepted;
-		psListenerOpenFromSocket OpenFromSocket;
+		WINPR_ATTR_NODISCARD psPeerAccepted PeerAccepted;
+		WINPR_ATTR_NODISCARD psListenerOpenFromSocket OpenFromSocket;
+
+		WINPR_ATTR_NODISCARD psListenerCheckFileDescriptor CheckPeerAcceptRestrictions;
 	};
 
-	FREERDP_API freerdp_listener* freerdp_listener_new(void);
 	FREERDP_API void freerdp_listener_free(freerdp_listener* instance);
+
+	WINPR_ATTR_MALLOC(freerdp_listener_free, 1)
+	WINPR_ATTR_NODISCARD
+	FREERDP_API freerdp_listener* freerdp_listener_new(void);
 
 #ifdef __cplusplus
 }
